@@ -125,4 +125,8 @@ LangSwitcher가 전역 단축키 입력을 감지하려면 **'손쉬운 사용'*
 ## ⚖️ 라이선스
 이 프로젝트는 **GNU General Public License v3.0 (GPL-3.0)** 라이선스에 따라 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요. Copyright (c) 2026 peepboy.
 
+<<<<<<< HEAD
 </details>
+=======
+</details>
+>>>>>>> 5293c4d (add missing files)
