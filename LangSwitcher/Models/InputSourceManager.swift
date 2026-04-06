@@ -18,93 +18,60 @@
 
 import Foundation
 import Carbon
+import Combine // 🌟 에러 해결: ObservableObject와 @Published를 사용하기 위한 필수 프레임워크
 
-// ✅ 지원하는 모든 언어와 시스템 언어 코드를 매핑합니다.
-enum SupportedLanguage: String, CaseIterable, Identifiable {
-    case english = "영어 (en)"
-    case korean = "한국어 (ko)"
-    case japanese = "일본어 (ja)"
-    case chineseSimp = "중국어 간체 (zh-Hans)"
-    case chineseTrad = "중국어 번체 (zh-Hant)"
-    case german = "독일어 (de)"
-    case french = "프랑스어 (fr)"
-    case spanish = "스페인어 (es)"
-    case italian = "이탈리아어 (it)"
-    case dutch = "네덜란드어 (nl)"
-    case russian = "러시아어 (ru)"
-    
-    var id: String { self.rawValue }
-    
-    // macOS 시스템이 키보드를 인식할 때 사용하는 접두사 코드
-    var tisLanguageCode: String {
-        switch self {
-        case .english: return "en"          // en_US, en_GB, en_AU 등 모두 포함
-        case .korean: return "ko"           // ko_KR
-        case .japanese: return "ja"         // ja_JP
-        case .chineseSimp: return "zh-Hans" // zh_CN (간체)
-        case .chineseTrad: return "zh-Hant" // zh_TW, zh_HK (번체)
-        case .german: return "de"           // de_DE
-        case .french: return "fr"           // fr_FR
-        case .spanish: return "es"          // es_ES
-        case .italian: return "it"          // it_IT
-        case .dutch: return "nl"            // nl_NL
-        case .russian: return "ru"          // ru_RU
-        }
-    }
+// macOS 시스템에 등록된 키보드 정보를 담는 구조체
+struct MacKeyboard: Identifiable, Hashable {
+    let id: String
+    let name: String
 }
 
-class InputSourceManager {
+class InputSourceManager: ObservableObject {
     static let shared = InputSourceManager()
 
-    func switchLanguage(to langName: String) {
-        // UI에서 전달받은 텍스트를 Enum으로 변환 (기본값: 영어)
-        let targetLang = SupportedLanguage(rawValue: langName) ?? .english
-        
-        // 1. 영어와 한국어는 가장 많이 쓰이므로, 명확한 ID로 먼저 1차 시도 (가장 빠르고 정확한 Fallback)
-        if targetLang == .english {
-            if selectSource(byID: "com.apple.keylayout.ABC") || selectSource(byID: "com.apple.keylayout.US") { return }
-        } else if targetLang == .korean {
-            if selectSource(byID: "com.apple.inputmethod.Korean.2SetKorean") { return }
-        }
+    // UI에서 접근할 수 있도록 퍼블리싱된 키보드 배열
+    @Published var availableKeyboards: [MacKeyboard] = []
 
-        // 2. 그 외 다국어 및 ID가 다른 키보드들은 시스템 언어 코드로 2차 정밀 검색
-        if selectSource(byLanguage: targetLang.tisLanguageCode) {
-            print("✅ 언어 전환 성공: \(langName)")
-        } else {
-            print("❌ 언어 전환 실패: \(langName) 키보드를 찾을 수 없습니다.")
+    private init() {
+        fetchKeyboards()
+    }
+
+    func fetchKeyboards() {
+        guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
+
+        var keyboards: [MacKeyboard] = []
+
+        for source in sourceList {
+            guard let isSelectablePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable) else { continue }
+            let isSelectable = Unmanaged<CFBoolean>.fromOpaque(isSelectablePtr).takeUnretainedValue()
+            if !CFBooleanGetValue(isSelectable) { continue }
+
+            guard let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else { continue }
+            let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
+
+            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+            let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
+
+            // 화면 키보드, 받아쓰기 등 제외
+            let excludedIDs = ["com.apple.CharacterPaletteIM", "com.apple.KeyboardViewer", "com.apple.PressAndHold"]
+            if excludedIDs.contains(id) || id.lowercased().contains("dictation") { continue }
+
+            keyboards.append(MacKeyboard(id: id, name: name))
+        }
+        
+        DispatchQueue.main.async {
+            self.availableKeyboards = keyboards
         }
     }
 
-    // ID로 직접 전환 (가장 빠름)
-    private func selectSource(byID id: String) -> Bool {
+    func switchLanguage(to id: String) {
         let filter = [kTISPropertyInputSourceID: id] as CFDictionary
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {
             TISSelectInputSource(target)
-            return true
+            print("✅ 전환 성공: \(id)")
+        } else {
+            print("❌ 전환 실패: \(id) 키보드를 찾을 수 없습니다.")
         }
-        return false
-    }
-
-    // 언어 코드로 전환 (hasPrefix를 사용하여 지역 코드까지 완벽 커버)
-    private func selectSource(byLanguage langCode: String) -> Bool {
-        guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return false }
-        
-        for source in sourceList {
-            let isSelectablePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable)
-            let isSelectable = isSelectablePtr != nil ? Unmanaged<NSNumber>.fromOpaque(isSelectablePtr!).takeUnretainedValue().boolValue : false
-            
-            if isSelectable,
-               let langPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceLanguages),
-               let langs = Unmanaged<AnyObject>.fromOpaque(langPtr).takeUnretainedValue() as? [String] {
-                
-                // 예: "en-US" 문자열이 "en"으로 시작하는지 확인 (국가 상관없이 언어만 맞으면 전환)
-                if langs.contains(where: { $0.hasPrefix(langCode) }) {
-                    TISSelectInputSource(source)
-                    return true
-                }
-            }
-        }
-        return false
     }
 }

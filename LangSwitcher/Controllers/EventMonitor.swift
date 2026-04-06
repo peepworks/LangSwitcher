@@ -25,7 +25,7 @@ class EventMonitor {
 
     func start() {
         if eventTap != nil { return }
-        
+
         let eventMask = (1 << CGEventType.keyDown.rawValue)
 
         eventTap = CGEvent.tapCreate(
@@ -37,14 +37,27 @@ class EventMonitor {
                 if type == .keyDown {
                     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
                     let flags = event.flags
-                    
-                    if keyCode == 49 { // Space Bar
-                        // ✅ 하드디스크(UserDefaults) 대신 메모리(SettingsManager)를 즉시 읽습니다.
-                        let settings = SettingsManager.shared
-                        var targetLang: String? = nil
-                        
-                        let modifierFlags = flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
-                        
+
+                    let settings = SettingsManager.shared
+                    var targetLang: String? = nil
+
+                    let modifierFlags = flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
+
+                    // --- 1. 커스텀 단축키 우선 검사 ---
+                    for shortcut in settings.customShortcuts {
+                        if shortcut.keyCode == UInt16(keyCode) && !shortcut.displayString.isEmpty {
+                            let savedFlags = CGEventFlags(rawValue: shortcut.modifierFlags)
+                            let savedModifierFlags = savedFlags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
+
+                            if modifierFlags == savedModifierFlags {
+                                targetLang = shortcut.targetLanguage
+                                break
+                            }
+                        }
+                    }
+
+                    // --- 2. 기존 고정 단축키 검사 ---
+                    if targetLang == nil && keyCode == 49 {
                         if modifierFlags == .maskControl && settings.isCtrlActive {
                             targetLang = settings.ctrlLang
                         } else if modifierFlags == .maskCommand && settings.isCmdActive {
@@ -52,11 +65,13 @@ class EventMonitor {
                         } else if modifierFlags == .maskAlternate && settings.isOptActive {
                             targetLang = settings.optLang
                         }
+                    }
 
-                        if let lang = targetLang {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                InputSourceManager.shared.switchLanguage(to: lang)
-                            }
+                    // --- 3. InputSourceManager 호출 ---
+                    // 🌟 비어있는 초기값("") 이 아닐 때만 동작하도록 처리
+                    if let lang = targetLang, !lang.isEmpty {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            InputSourceManager.shared.switchLanguage(to: lang)
                         }
                     }
                 }
