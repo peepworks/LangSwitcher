@@ -8,7 +8,7 @@ A lightweight, open-source macOS menu bar application that allows you to instant
 ![License](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)
 
 ## ✨ Features
-* **Modifier Key Tap Support (New in v0.2.1!):** You can now switch languages simply by tapping a single modifier key (e.g., `Left ⌘`, `Right ⌥`, `⇪ Caps Lock`) or a combination of modifiers (e.g., `⌘ + ⌥`). 
+* **Modifier Key Tap Support (New in v0.2.1):** You can now switch languages simply by tapping a single modifier key (e.g., `Left ⌘`, `Right ⌥`, `⇪ Caps Lock`) or a combination of modifiers (e.g., `⌘ + ⌥`). 
   * *Smart Detection:* LangSwitcher intelligently distinguishes between a "Tap" (press and release) and a "Hold", ensuring that native system shortcuts (like `⌘ + C`) remain completely unaffected.
 * **System Keyboard Integration:** Automatically detects and lists all active input sources directly from your Mac's system settings. No need to manage language lists manually!
 * **Default Shortcuts:** Easily enable or disable familiar combinations like `⌃ Control + Space`, `⌘ Command + Space`, or `⌥ Option + Space`.
