@@ -29,7 +29,6 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
     }
     
-    // 🌟 방어 로직: 단축키가 비어있거나, 언어가 선택되지 않은("") 항목이 있으면 true 반환
     var hasIncompleteShortcut: Bool {
         settings.customShortcuts.contains { $0.displayString.isEmpty || $0.targetLanguage.isEmpty }
     }
@@ -63,7 +62,6 @@ struct SettingsView: View {
                 
                 Button(action: {
                     if !hasIncompleteShortcut {
-                        // 🌟 빈 문자열("")로 초기화하여 '언어 선택'을 유도합니다.
                         let newShortcut = CustomShortcut(keyCode: 0, modifierFlags: 0, displayString: "", targetLanguage: "")
                         settings.customShortcuts.append(newShortcut)
                     }
@@ -134,13 +132,12 @@ struct SettingsView: View {
     }
 }
 
-// 고정 단축키용 Row
 struct LanguageRow: View {
     let title: String
     @Binding var isActive: Bool
     @Binding var selection: String
     
-    @StateObject private var inputManager = InputSourceManager.shared // 🌟 시스템 키보드 연동
+    @StateObject private var inputManager = InputSourceManager.shared
 
     var body: some View {
         HStack {
@@ -157,11 +154,9 @@ struct LanguageRow: View {
             
             if isActive {
                 Picker("", selection: $selection) {
-                    // 🌟 선택값이 비어있으면 Placeholder 표시
                     if selection.isEmpty {
                         Text(String(localized: "Select Keyboard")).tag("")
                     }
-                    // 🌟 맥 시스템에 설치된 키보드 목록 표시
                     ForEach(inputManager.availableKeyboards) { kb in
                         Text(kb.name).tag(kb.id)
                     }
@@ -176,7 +171,6 @@ struct LanguageRow: View {
     }
 }
 
-// 커스텀 단축키 녹화용 Row
 struct CustomShortcutRow: View {
     @Binding var shortcut: CustomShortcut
     var onDelete: () -> Void
@@ -184,7 +178,7 @@ struct CustomShortcutRow: View {
     @State private var isRecording = false
     @State private var showDuplicateWarning = false
     @State private var monitor: Any?
-    @StateObject private var inputManager = InputSourceManager.shared // 🌟 시스템 키보드 연동
+    @StateObject private var inputManager = InputSourceManager.shared
     
     private let QWERTYKeyMap: [UInt16: String] = [
         0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X", 8: "C", 9: "V",
@@ -197,7 +191,6 @@ struct CustomShortcutRow: View {
     var body: some View {
         HStack {
             Button(action: {
-                // 클릭 시 데이터 즉시 초기화하여 'Add' 버튼 비활성화 유도
                 shortcut.displayString = ""
                 shortcut.keyCode = 0
                 shortcut.modifierFlags = 0
@@ -222,11 +215,9 @@ struct CustomShortcutRow: View {
             Spacer()
             
             Picker("", selection: $shortcut.targetLanguage) {
-                // 🌟 선택값이 비어있으면 Placeholder 표시
                 if shortcut.targetLanguage.isEmpty {
                     Text(String(localized: "Select Keyboard")).tag("")
                 }
-                // 🌟 맥 시스템에 설치된 키보드 목록 표시
                 ForEach(inputManager.availableKeyboards) { kb in
                     Text(kb.name).tag(kb.id)
                 }
@@ -244,54 +235,125 @@ struct CustomShortcutRow: View {
     }
     
     private func startRecording() {
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // 🌟 다중 수식어 단축키(Cmd+Opt 등) 입력을 추적하기 위한 내부 클래스
+        class RecordingState {
+            var pressedModifiers = Set<UInt16>()
+            var maxFlags: NSEvent.ModifierFlags = []
+            var didPressRegularKey = false
+        }
+        let state = RecordingState()
+
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             let keyCode = event.keyCode
-            let newModifierFlags = UInt64(flags.rawValue)
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             
-            // 🌟 중복 검사
-            let isDuplicate = SettingsManager.shared.customShortcuts.contains { existing in
-                existing.id != shortcut.id &&
-                existing.keyCode == keyCode &&
-                existing.modifierFlags == newModifierFlags &&
-                !existing.displayString.isEmpty
-            }
-            
-            if isDuplicate {
-                NSSound.beep() // 에러음
-                showDuplicateWarning = true
-                isRecording = false
-                stopRecording()
+            if event.type == .flagsChanged {
+                if keyCode == 57 {
+                    // 🌟 Caps Lock 강제종료 방지: 메인 스레드로 안전하게 상태변경 위임
+                    DispatchQueue.main.async {
+                        self.registerShortcut(keyCode: 57, modifiers: 0, display: "⇪ Caps Lock")
+                    }
+                    return nil
+                }
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    if showDuplicateWarning { showDuplicateWarning = false }
+                if !flags.isEmpty {
+                    // 수식어 키가 눌릴 때마다 누적
+                    state.pressedModifiers.insert(keyCode)
+                    state.maxFlags.formUnion(flags)
+                    return nil
+                } else {
+                    // 수식어 키에서 손을 완전히 뗐을 때 (일반 키가 안 눌렸다면)
+                    if !state.didPressRegularKey && !state.pressedModifiers.isEmpty {
+                        if state.pressedModifiers.count == 1 {
+                            // 🌟 1개만 눌렸을 때 (단일 수식어: 좌우 구분 O)
+                            let modCode = state.pressedModifiers.first!
+                            var str = ""
+                            switch modCode {
+                            case 54: str = "Right ⌘"
+                            case 55: str = "Left ⌘"
+                            case 56: str = "Left ⇧"
+                            case 60: str = "Right ⇧"
+                            case 58: str = "Left ⌥"
+                            case 61: str = "Right ⌥"
+                            case 59: str = "Left ⌃"
+                            case 62: str = "Right ⌃"
+                            case 63: str = "fn"
+                            default: str = "Mod(\(modCode))"
+                            }
+                            DispatchQueue.main.async {
+                                self.registerShortcut(keyCode: modCode, modifiers: 0, display: str)
+                            }
+                        } else {
+                            // 🌟 여러 개 눌렸을 때 (다중 수식어 조합: Cmd+Opt 등)
+                            let modsRaw = UInt64(state.maxFlags.rawValue)
+                            var str = ""
+                            if state.maxFlags.contains(.control) { str += "⌃ " }
+                            if state.maxFlags.contains(.option) { str += "⌥ " }
+                            if state.maxFlags.contains(.shift) { str += "⇧ " }
+                            if state.maxFlags.contains(.command) { str += "⌘ " }
+                            
+                            DispatchQueue.main.async {
+                                self.registerShortcut(keyCode: 0, modifiers: modsRaw, display: str.trimmingCharacters(in: .whitespaces))
+                            }
+                        }
+                        return nil
+                    }
+                    // 일반키가 눌린 거라면 상태 초기화
+                    state.pressedModifiers.removeAll()
+                    state.maxFlags = []
+                    state.didPressRegularKey = false
+                    return nil
+                }
+            } else if event.type == .keyDown {
+                state.didPressRegularKey = true // 일반 키가 눌렸음을 마킹
+                let modsRaw = UInt64(flags.rawValue)
+                var str = ""
+                if flags.contains(.control) { str += "⌃ " }
+                if flags.contains(.option) { str += "⌥ " }
+                if flags.contains(.shift) { str += "⇧ " }
+                if flags.contains(.command) { str += "⌘ " }
+                
+                if keyCode == 49 { str += "Space" }
+                else if let mapped = QWERTYKeyMap[keyCode] { str += mapped }
+                else if let chars = event.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
+                else { str += "Key(\(keyCode))" }
+                
+                DispatchQueue.main.async {
+                    self.registerShortcut(keyCode: keyCode, modifiers: modsRaw, display: str)
                 }
                 return nil
             }
-            
-            var str = ""
-            if flags.contains(.control) { str += "⌃ " }
-            if flags.contains(.option) { str += "⌥ " }
-            if flags.contains(.shift) { str += "⇧ " }
-            if flags.contains(.command) { str += "⌘ " }
-            
-            if keyCode == 49 {
-                str += "Space"
-            } else if let mappedChar = QWERTYKeyMap[keyCode] {
-                str += mappedChar
-            } else if let chars = event.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty {
-                str += chars
-            } else {
-                str += "Key(\(keyCode))"
-            }
-            
+            return event
+        }
+    }
+    
+    // 🌟 안전한 상태 관리를 위해 별도 함수로 분리
+    private func registerShortcut(keyCode: UInt16, modifiers: UInt64, display: String) {
+        let isDuplicate = SettingsManager.shared.customShortcuts.contains { existing in
+            existing.id != shortcut.id &&
+            existing.keyCode == keyCode &&
+            existing.modifierFlags == modifiers &&
+            !existing.displayString.isEmpty
+        }
+        
+        if isDuplicate {
+            triggerDuplicateWarning()
+        } else {
             shortcut.keyCode = keyCode
-            shortcut.modifierFlags = newModifierFlags
-            shortcut.displayString = str
-            
+            shortcut.modifierFlags = modifiers
+            shortcut.displayString = display
             isRecording = false
             stopRecording()
-            return nil
+        }
+    }
+    
+    private func triggerDuplicateWarning() {
+        NSSound.beep()
+        showDuplicateWarning = true
+        isRecording = false
+        stopRecording()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if showDuplicateWarning { showDuplicateWarning = false }
         }
     }
     
