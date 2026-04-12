@@ -18,7 +18,7 @@
 
 import Cocoa
 
-class EventMonitor {
+class EventMonitor { 
     static let shared = EventMonitor()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?

@@ -23,7 +23,7 @@ class AccessibilityManager: ObservableObject {
     static let shared = AccessibilityManager()
     
     @Published var isTrusted: Bool = false
-    private var timer: Timer? // 상태를 주기적으로 감지할 타이머
+    private var timer: Timer?
 
     init() {
         self.isTrusted = AXIsProcessTrusted()
@@ -35,17 +35,15 @@ class AccessibilityManager: ObservableObject {
         let trusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
         
         DispatchQueue.main.async {
-            // UI 업데이트
             if self.isTrusted != trusted {
                 self.isTrusted = trusted
             }
             
             if trusted {
-                // ✅ 권한이 확인되는 순간 즉시 키보드 이벤트 모니터 시작!
                 EventMonitor.shared.start()
-                self.stopMonitoring() // 감지 타이머 종료
+                AppMonitor.shared.start() // 🌟 앱 활성화 감지 모니터 시작!
+                self.stopMonitoring()
             } else {
-                // ❌ 권한이 없으면 사용자가 켤 때까지 1초마다 백그라운드에서 감지
                 self.startMonitoring()
             }
         }
@@ -55,7 +53,6 @@ class AccessibilityManager: ObservableObject {
     private func startMonitoring() {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            // 시스템 창을 띄우지 않고 조용히 권한만 확인
             self?.checkPermission(prompt: false)
         }
     }

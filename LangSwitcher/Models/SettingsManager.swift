@@ -27,6 +27,14 @@ struct CustomShortcut: Identifiable, Codable {
     var targetLanguage: String
 }
 
+// 🌟 사용자 지정 앱 저장을 위한 구조체 추가
+struct CustomApp: Identifiable, Codable {
+    var id = UUID()
+    var bundleIdentifier: String
+    var appName: String
+    var targetLanguage: String
+}
+
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     
@@ -46,13 +54,21 @@ class SettingsManager: ObservableObject {
         }
     }
     
+    // 🌟 사용자 지정 앱 배열 추가
+    @Published var customApps: [CustomApp] = [] {
+        didSet {
+            if let encoded = try? JSONEncoder().encode(customApps) {
+                save("customApps", encoded)
+            }
+        }
+    }
+    
     private init() {
         let d = UserDefaults.standard
         isCtrlActive = d.bool(forKey: "isCtrlActive")
         isCmdActive = d.bool(forKey: "isCmdActive")
         isOptActive = d.bool(forKey: "isOptActive")
         
-        // 🌟 초기값을 무조건 빈 문자열("")로 설정합니다. SupportedLanguage 등은 더이상 쓰지 않습니다.
         ctrlLang = d.string(forKey: "ctrlLang") ?? ""
         cmdLang = d.string(forKey: "cmdLang") ?? ""
         optLang = d.string(forKey: "optLang") ?? ""
@@ -60,6 +76,12 @@ class SettingsManager: ObservableObject {
         if let data = d.data(forKey: "customShortcuts"),
            let decoded = try? JSONDecoder().decode([CustomShortcut].self, from: data) {
             customShortcuts = decoded
+        }
+        
+        // 🌟 사용자 지정 앱 데이터 로드
+        if let data = d.data(forKey: "customApps"),
+           let decoded = try? JSONDecoder().decode([CustomApp].self, from: data) {
+            customApps = decoded
         }
     }
     

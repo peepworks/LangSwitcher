@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */; };
 		125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */; };
 		125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D32F658001005DAB0C /* EventMonitor.swift */; };
 		125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D52F658024005DAB0C /* SettingsView.swift */; };
@@ -14,6 +15,7 @@
 		125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF5092F658975005DAB0C /* LangSwitcherApp.swift */; };
 		125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */; };
 		125FF5242F6599E0005DAB0C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 129E052E2F657B6A00F34ABE /* Assets.xcassets */; };
+		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
 		12F080502F679423005A8424 /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12F0804F2F679423005A8424 /* ServiceManagement.framework */; };
 		12F080522F67942F005A8424 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12F080512F67942F005A8424 /* Carbon.framework */; };
@@ -22,12 +24,14 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMonitor.swift; sourceTree = "<group>"; };
 		125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputSourceManager.swift; sourceTree = "<group>"; };
 		125FF4D32F658001005DAB0C /* EventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventMonitor.swift; sourceTree = "<group>"; };
 		125FF4D52F658024005DAB0C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		125FF4D72F658041005DAB0C /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		125FF5092F658975005DAB0C /* LangSwitcherApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherApp.swift; sourceTree = "<group>"; };
 		125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityManager.swift; sourceTree = "<group>"; };
+		12744D562F89E66A0033C06A /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		129930792F679EBC00878827 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		129E052E2F657B6A00F34ABE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -63,6 +67,7 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				12744D562F89E66A0033C06A /* UpdateManager.swift */,
 				125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */,
 				125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */,
 				129930792F679EBC00878827 /* SettingsManager.swift */,
@@ -73,6 +78,7 @@
 		125FF4CB2F657F1A005DAB0C /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
+				1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */,
 				125FF4D32F658001005DAB0C /* EventMonitor.swift */,
 			);
 			path = Controllers;
@@ -215,9 +221,11 @@
 				125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
 				1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */,
+				1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */,
 				125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */,
 				125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */,
 				125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */,
+				12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -376,7 +384,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;
@@ -414,7 +422,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;
