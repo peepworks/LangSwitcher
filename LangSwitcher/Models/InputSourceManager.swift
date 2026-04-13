@@ -18,9 +18,8 @@
 
 import Foundation
 import Carbon
-import Combine // 🌟 에러 해결: ObservableObject와 @Published를 사용하기 위한 필수 프레임워크
+import Combine
 
-// macOS 시스템에 등록된 키보드 정보를 담는 구조체
 struct MacKeyboard: Identifiable, Hashable {
     let id: String
     let name: String
@@ -29,7 +28,6 @@ struct MacKeyboard: Identifiable, Hashable {
 class InputSourceManager: ObservableObject {
     static let shared = InputSourceManager()
 
-    // UI에서 접근할 수 있도록 퍼블리싱된 키보드 배열
     @Published var availableKeyboards: [MacKeyboard] = []
 
     private init() {
@@ -52,7 +50,6 @@ class InputSourceManager: ObservableObject {
             guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
             let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
 
-            // 화면 키보드, 받아쓰기 등 제외
             let excludedIDs = ["com.apple.CharacterPaletteIM", "com.apple.KeyboardViewer", "com.apple.PressAndHold"]
             if excludedIDs.contains(id) || id.lowercased().contains("dictation") { continue }
 
@@ -69,9 +66,16 @@ class InputSourceManager: ObservableObject {
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {
             TISSelectInputSource(target)
-            print("✅ 전환 성공: \(id)")
-        } else {
-            print("❌ 전환 실패: \(id) 키보드를 찾을 수 없습니다.")
+            
+            // 🌟 설정이 켜져있을 때만 HUD 띄우기
+            if SettingsManager.shared.showVisualFeedback {
+                if let namePtr = TISGetInputSourceProperty(target, kTISPropertyLocalizedName) {
+                    let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
+                    DispatchQueue.main.async {
+                        HUDManager.shared.showHUD(languageName: name)
+                    }
+                }
+            }
         }
     }
 }
