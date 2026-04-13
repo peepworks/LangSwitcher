@@ -44,6 +44,14 @@
 		12F1EF5C2F67BDD3003B94B0 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		12CCEA7F2F8CAAF2007FBD74 /* Settings */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Settings;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		129E051D2F657B5200F34ABE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -90,6 +98,7 @@
 		125FF4CC2F657F22005DAB0C /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				12CCEA7F2F8CAAF2007FBD74 /* Settings */,
 				125FF4D52F658024005DAB0C /* SettingsView.swift */,
 			);
 			path = Views;
@@ -158,6 +167,9 @@
 			buildRules = (
 			);
 			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				12CCEA7F2F8CAAF2007FBD74 /* Settings */,
 			);
 			name = LangSwitcher;
 			packageProductDependencies = (

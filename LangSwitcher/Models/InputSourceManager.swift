@@ -27,16 +27,12 @@ struct MacKeyboard: Identifiable, Hashable {
 
 class InputSourceManager: ObservableObject {
     static let shared = InputSourceManager()
-
     @Published var availableKeyboards: [MacKeyboard] = []
 
-    private init() {
-        fetchKeyboards()
-    }
+    private init() { fetchKeyboards() }
 
     func fetchKeyboards() {
         guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
-
         var keyboards: [MacKeyboard] = []
 
         for source in sourceList {
@@ -55,10 +51,7 @@ class InputSourceManager: ObservableObject {
 
             keyboards.append(MacKeyboard(id: id, name: name))
         }
-        
-        DispatchQueue.main.async {
-            self.availableKeyboards = keyboards
-        }
+        DispatchQueue.main.async { self.availableKeyboards = keyboards }
     }
 
     func switchLanguage(to id: String) {
@@ -66,16 +59,29 @@ class InputSourceManager: ObservableObject {
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {
             TISSelectInputSource(target)
-            
-            // 🌟 설정이 켜져있을 때만 HUD 띄우기
             if SettingsManager.shared.showVisualFeedback {
                 if let namePtr = TISGetInputSourceProperty(target, kTISPropertyLocalizedName) {
                     let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
-                    DispatchQueue.main.async {
-                        HUDManager.shared.showHUD(languageName: name)
-                    }
+                    DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: name) }
                 }
             }
+        }
+    }
+    
+    // 🌟 새로운 기능: 다음 입력 소스로 순환(Toggle)하는 함수
+    func switchToNextInputSource() {
+        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let idPtr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return }
+        let currentID = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
+
+        guard !availableKeyboards.isEmpty else { return }
+
+        // 현재 언어의 인덱스를 찾아 다음 인덱스로 넘어갑니다 (끝에 도달하면 처음으로)
+        if let currentIndex = availableKeyboards.firstIndex(where: { $0.id == currentID }) {
+            let nextIndex = (currentIndex + 1) % availableKeyboards.count
+            switchLanguage(to: availableKeyboards[nextIndex].id)
+        } else {
+            switchLanguage(to: availableKeyboards[0].id)
         }
     }
 }
