@@ -1,24 +1,20 @@
 # 🌐 LangSwitcher
 
-A lightweight, open-source macOS menu bar application that allows you to instantly switch input languages using customizable global keyboard shortcuts.
+A lightweight, open-source macOS menu bar application that allows you to instantly switch input languages using customizable global keyboard shortcuts and app-specific profiles.
 
 ![macOS](https://img.shields.io/badge/macOS-13.5+-007ACC?style=flat-square)
 ![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square)
-![Version](https://img.shields.io/badge/Version-v0.2.1-success?style=flat-square)
+![Version](https://img.shields.io/badge/Version-v0.3.0-success?style=flat-square)
 ![License](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)
 
 ## ✨ Features
-* **Modifier Key Tap Support (New in v0.2.1):** You can now switch languages simply by tapping a single modifier key (e.g., `Left ⌘`, `Right ⌥`, `⇪ Caps Lock`) or a combination of modifiers (e.g., `⌘ + ⌥`). 
-  * *Smart Detection:* LangSwitcher intelligently distinguishes between a "Tap" (press and release) and a "Hold", ensuring that native system shortcuts (like `⌘ + C`) remain completely unaffected.
-* **System Keyboard Integration:** Automatically detects and lists all active input sources directly from your Mac's system settings. No need to manage language lists manually!
-* **Default Shortcuts:** Easily enable or disable familiar combinations like `⌃ Control + Space`, `⌘ Command + Space`, or `⌥ Option + Space`.
-* **Advanced Custom Shortcuts:**
-  * **Unlimited Combinations:** Record your own multi-key global shortcuts to switch to any specific language instantly.
-  * **Hardware Key Mapping:** Accurately recognizes and records keys based on the QWERTY layout, even if your current input method is set to a non-Latin language (e.g., Korean).
-  * **Conflict Prevention:** Built-in duplicate detection warns you with an alert sound and visual feedback if a shortcut is already in use.
-* **Menu Bar App:** Runs quietly in the background without cluttering your Dock.
-* **Launch at Login:** Option to automatically start the app when your Mac boots.
-* **Localization:** Fully supports multiple languages, seamlessly adapting to your system language using `Localizable.xcstrings`.
+* **App-Specific Keyboards (New in v0.3.0!):** Automatically switch to your preferred language when a specific application (e.g., Google Chrome, Terminal) becomes active.
+* **Modern Native UI:** A beautifully redesigned settings window using macOS native sidebar navigation, matching the modern System Settings experience.
+* **Auto-Update Checker:** Built-in background updater checks the GitHub releases every 24 hours to keep your app up to date silently.
+* **Modifier Key Tap Support:** Switch languages simply by tapping a single modifier key (e.g., `Left ⌘`, `Right ⌥`, `⇪ Caps Lock`) or a combination of modifiers (e.g., `⌘ + ⌥`). 
+* **System Keyboard Integration:** Automatically detects and lists all active input sources directly from your Mac's system settings.
+* **Advanced Custom Shortcuts:** Record unlimited multi-key global shortcuts. Hardware key mapping (QWERTY) accurately recognizes and records special keys like F1-F20, Arrows, Esc, and Return.
+* **Conflict Prevention:** Built-in duplicate detection warns you with an alert sound and visual feedback if a shortcut is already in use.
 
 ## 💻 System Requirements
 * **OS:** macOS 13.5 or later
@@ -27,8 +23,8 @@ A lightweight, open-source macOS menu bar application that allows you to instant
 ## 📥 Installation & Running the App
 ⚠️ **Note:** Because this is a free, open-source project and not signed with a paid Apple Developer account, macOS Gatekeeper will flag it as being from an "unidentified developer" on the first launch. Please follow these steps to open it safely:
 
-1. Go to the [Releases](../../releases) page.
-2. Download the latest `LangSwitcher_v0.2.1.zip` file and extract it.
+1. Go to the [Releases](https://github.com/peepworks/LangSwitcher/releases) page.
+2. Download the latest `LangSwitcher_v0.3.0.zip` file and extract it.
 3. Move `LangSwitcher.app` to your `Applications` folder.
 4. **Bypassing the Gatekeeper warning (GUI Method):**
    * Open Finder and go to the `Applications` folder.
@@ -40,20 +36,15 @@ A lightweight, open-source macOS menu bar application that allows you to instant
      ```bash
      sudo xattr -r -d com.apple.quarantine /Applications/LangSwitcher.app
      ```
-   * Enter your Mac password when prompted, then try launching the app again.
 
 ## ⚙️ Accessibility Permissions (Important)
 LangSwitcher requires **Accessibility** permissions to detect your keyboard shortcuts globally.
 
 1. Open **System Settings** > **Privacy & Security** > **Accessibility**.
-2. Click the `+` button at the bottom (you may need to enter your Mac password) and select `LangSwitcher.app` from your Applications folder.
+2. Click the `+` button at the bottom and select `LangSwitcher.app` from your Applications folder.
 3. Ensure the toggle next to LangSwitcher is turned **ON**.
 
-🔄 **When Updating to a New Version:**
-Because this app does not use a paid developer signature, macOS may invalidate the accessibility permission when you overwrite it with a new version. If shortcuts stop working after an update:
-1. Go back to the Accessibility settings.
-2. Select the existing `LangSwitcher` and click the `-` button to **remove it completely**.
-3. Click the `+` button to **add the newly installed version** again.
+🔄 **When Updating:** If shortcuts stop working after replacing an old version, go to the Accessibility settings, select `LangSwitcher`, click `-` to remove it, and click `+` to add the new version again.
 
 ## ☕️ Donations
 If you find this app helpful, consider buying me a coffee! Your support is greatly appreciated and helps maintain this project.
@@ -75,60 +66,45 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**
 
 # 🌐 LangSwitcher
 
-LangSwitcher는 사용자 지정 전역 키보드 단축키를 사용하여 입력 언어를 즉시 전환할 수 있는 가볍고 빠른 macOS 메뉴바 전용 오픈소스 애플리케이션입니다.
+LangSwitcher는 전역 단축키와 앱별 자동 프로필을 통해 입력 언어를 즉시 전환할 수 있는 강력한 macOS 메뉴바 전용 오픈소스 애플리케이션입니다.
 
 ![macOS](https://img.shields.io/badge/macOS-13.5+-007ACC?style=flat-square)
 ![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square)
-![Version](https://img.shields.io/badge/Version-v0.2.1-success?style=flat-square)
+![Version](https://img.shields.io/badge/Version-v0.3.0-success?style=flat-square)
 ![License](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)
 
 ## ✨ 주요 기능
-* **수식어 키 탭(Tap) 전환 지원 (v0.2.1 신규):** 이제 다른 키 조합 없이 `⌘ Command`, `⌥ Option`, `⇧ Shift`, `⇪ Caps Lock` 등의 수식어 키 하나만 '짧게 눌렀다 떼는(Tap)' 동작만으로 언어를 전환할 수 있습니다!
-  * *스마트 감지:* 좌/우 수식어 키를 완벽하게 구분하며, 길게 누르거나 다른 키와 조합할 때(`⌘ + C` 등)는 작동하지 않으므로 기존 시스템 단축키를 전혀 방해하지 않습니다. 다중 수식어(`⌘ + ⌥`) 탭 기능도 지원합니다.
-* **시스템 키보드 완벽 연동:** 사용자의 Mac 시스템 환경설정에 등록된 입력기(키보드) 목록을 실시간으로 자동 감지하여 제공합니다.
-* **기본 단축키:** `⌃ Control + Space`, `⌘ Command + Space`, `⌥ Option + Space` 등 익숙한 조합을 쉽게 켜고 끌 수 있습니다.
-* **강력한 사용자 지정 단축키 (Custom Shortcuts):**
-  * **무제한 추가:** 원하는 키 조합을 마음대로 추가하여 특정 언어로 즉시 전환하세요.
-  * **하드웨어 키 매핑:** 한글 등 다른 언어 입력 상태에서 단축키를 지정해도 영문(QWERTY) 배열을 기준으로 정확하게 기록됩니다.
-  * **중복 단축키 방지:** 이미 사용 중인 키 조합 입력 시 경고음과 붉은색 시각적 피드백을 제공하여 충돌을 원천 차단합니다.
-* **메뉴바 전용 앱:** Dock 공간을 차지하지 않고 백그라운드에서 조용히 실행됩니다.
-* **자동 실행:** Mac 부팅 시 앱이 자동으로 실행되도록 설정할 수 있습니다.
-* **다국어 지원:** 시스템 언어 설정에 맞춰 UI가 자연스럽게 변환됩니다.
+* **앱별 키보드 자동 전환 (v0.3.0 신규):** 특정 앱(예: 구글 크롬, 터미널)이 활성화될 때마다 사용자가 지정한 언어로 즉시 자동 전환됩니다.
+* **모던 네이티브 UI:** macOS 최신 시스템 설정과 동일한 사이드바 디자인으로 설정 창이 전면 개편되었습니다.
+* **자동 업데이트 알림:** 백그라운드에서 24시간마다 GitHub 릴리즈를 확인하여 새로운 버전이 있을 때만 알림을 제공합니다.
+* **수식어 키 탭(Tap) 전환 지원:** `⌘ Command`, `⌥ Option`, `⇪ Caps Lock` 등 수식어 키 하나만 '짧게 눌렀다 떼는' 동작으로 언어를 전환할 수 있습니다.
+* **시스템 키보드 완벽 연동:** 사용자의 Mac 시스템 환경설정에 등록된 입력기(키보드) 목록을 실시간으로 감지합니다.
+* **강력한 단축키 설정:** 무제한 조합 추가가 가능하며, F1~F20, 방향키, Esc, Return 등의 특수 키도 완벽하게 화면에 표시됩니다.
+* **중복 단축키 방지:** 이미 사용 중인 키 조합 입력 시 경고음과 시각적 피드백으로 충돌을 차단합니다.
 
 ## 💻 시스템 요구사항
 * **운영체제:** macOS 13.5 이상
-* **지원 기기:** Apple Silicon (M1, M2, M3 등) 탑재 Mac 전용 *(현재 버전은 인텔 Mac을 지원하지 않습니다.)*
+* **지원 기기:** Apple Silicon (M1, M2, M3 등) 탑재 Mac 전용 *(현재 인텔 Mac 미지원)*
 
 ## 📥 설치 및 실행 방법
-⚠️ **참고:** 이 앱은 개인 오픈소스 프로젝트이며 유료 애플 개발자 프로그램에 등록되어 있지 않습니다. 따라서 처음 실행 시 macOS에서 '확인되지 않은 개발자' 경고가 나타납니다. 아래의 방법으로 안전하게 실행해 주세요.
+⚠️ **참고:** 이 앱은 개인 오픈소스 프로젝트로, 최초 실행 시 '확인되지 않은 개발자' 경고가 나타납니다.
 
-1. [Releases](../../releases) 페이지로 이동합니다.
-2. 최신 버전의 `LangSwitcher_v0.2.1.zip` 파일을 다운로드하고 압축을 풉니다.
-3. `LangSwitcher.app` 파일을 `응용 프로그램(Applications)` 폴더로 이동합니다.
-4. **확인되지 않은 개발자 경고 우회하기 (마우스 사용):**
-   * Finder를 열고 `응용 프로그램` 폴더로 이동합니다.
-   * `LangSwitcher.app`을 **마우스 우클릭(또는 Control-클릭)** 한 후 메뉴에서 **"열기"**를 선택합니다.
-   * 경고창이 나타나면 다시 한번 **"열기"** 버튼을 클릭합니다.
-5. **터미널을 이용한 확실한 방법 (앱이 손상되었다고 나오는 경우):**
-   * 만약 위 방법으로도 실행되지 않거나 앱이 손상되었다는 오류가 뜬다면, **터미널(Terminal)** 앱을 엽니다.
-   * 아래 명령어를 복사하여 붙여넣고 엔터를 쳐서 앱의 격리 속성을 제거합니다:
+1. [Releases](https://github.com/peepworks/LangSwitcher/releases) 페이지에서 최신 `LangSwitcher_v0.3.0.zip` 파일을 다운로드 및 압축 해제합니다.
+2. `LangSwitcher.app`을 `응용 프로그램(Applications)` 폴더로 이동합니다.
+3. **확인되지 않은 개발자 경고 우회하기:**
+   * Finder에서 `응용 프로그램` 폴더로 이동합니다.
+   * `LangSwitcher.app`을 **우클릭(Control-클릭)** 한 후 **"열기"**를 선택합니다. 경고창에서 다시 **"열기"**를 클릭합니다.
+4. **앱이 손상되었다고 나오는 경우 (터미널 우회):**
+   * 터미널 앱을 열고 아래 명령어를 실행하여 격리 속성을 제거합니다.
      ```bash
      sudo xattr -r -d com.apple.quarantine /Applications/LangSwitcher.app
      ```
-   * 맥의 비밀번호를 입력한 뒤(화면에 보이지 않아도 입력됩니다) 엔터를 치고, 앱을 다시 실행해 보세요.
 
 ## ⚙️ 손쉬운 사용 권한 설정 (중요)
-LangSwitcher가 전역 단축키 입력을 감지하려면 **'손쉬운 사용'** 권한이 반드시 필요합니다.
+1. **시스템 설정** > **개인정보 보호 및 보안** > **손쉬운 사용**으로 이동합니다.
+2. 하단의 `+` 버튼을 눌러 `LangSwitcher.app`을 추가하고 스위치를 켭니다.
 
-1. 맥의 **시스템 설정** > **개인정보 보호 및 보안** > **손쉬운 사용**으로 이동합니다.
-2. 하단의 `+` 버튼을 누르고 (또는 비밀번호 입력) 응용 프로그램 폴더에 있는 `LangSwitcher.app`을 추가합니다.
-3. LangSwitcher 옆의 스위치가 **켜짐(활성화)** 상태인지 확인합니다.
-
-🔄 **새 버전으로 앱 업데이트 시 주의사항:**
-이 앱은 유료 애플 개발자 서명이 되어 있지 않기 때문에, 새 버전으로 덮어쓰기(업데이트)를 하면 macOS가 보안상 기존 권한을 무효화할 수 있습니다. 업데이트 후 단축키가 작동하지 않는다면 아래 과정을 진행해 주세요.
-1. 손쉬운 사용 설정 창으로 다시 이동합니다.
-2. 기존에 등록된 `LangSwitcher`를 선택하고 `-` 버튼을 눌러 **목록에서 완전히 지웁니다**.
-3. `+` 버튼을 눌러 새로 설치한 앱을 **다시 추가**해 줍니다.
+🔄 **업데이트 시:** 덮어쓰기 후 단축키가 작동하지 않으면 손쉬운 사용 목록에서 앱을 완전히 삭제(-)한 후 다시 추가(+)해 주세요.
 
 ## ☕️ 후원 (Donations)
 이 앱이 도움이 되셨다면 커피 한 잔을 후원해 주실 수 있습니다! 보내주신 후원은 프로젝트 유지보수에 큰 힘이 됩니다.
