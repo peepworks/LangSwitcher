@@ -15,6 +15,7 @@
 //  You should have received a copy of the GNU General Public License
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
+//
 
 import Cocoa
 
@@ -28,8 +29,10 @@ class EventMonitor {
     private var didPressOtherKey = false
     private var singleModifierKeyCode: UInt16? = nil
     
-    // 🌟 안전 코드: 단축키 녹화 중 전역 감지를 멈추기 위한 플래그
     var isPaused = false
+    
+    private var lastActionTime: Date = Date.distantPast
+    private let actionCooldown: TimeInterval = 0.15
 
     func start() {
         if eventTap != nil { return }
@@ -39,12 +42,12 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                 
-                // 🌟 안전 코드: 녹화 중(isPaused == true)이면 모든 감지를 무시하고 키 입력을 통과시킴
                 if EventMonitor.shared.isPaused { return Unmanaged.passRetained(event) }
                 
                 let settings = SettingsManager.shared
                 var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
                 var isToggle = false
+                var appliedRule = "" // 🌟 적용된 규칙 추적 변수
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
@@ -54,10 +57,10 @@ class EventMonitor {
 
                     if keyCode == 57 {
                         if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
-                            isToggle = true
+                            isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; break }
-                            if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; break } }
+                            for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                            if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
                         }
                     } else {
                         if !flags.isEmpty {
@@ -68,18 +71,18 @@ class EventMonitor {
                             if !EventMonitor.shared.didPressOtherKey {
                                 if let singleCode = EventMonitor.shared.singleModifierKeyCode {
                                     if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == singleCode && !settings.toggleDisplayString.isEmpty {
-                                        isToggle = true
+                                        isToggle = true; appliedRule = "Toggle Key"
                                     } else {
-                                        for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; break }
-                                        if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; break } }
+                                        for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                                        if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
                                     }
                                 } else if !EventMonitor.shared.maxModifiers.isEmpty {
                                     let modsRaw = UInt64(EventMonitor.shared.maxModifiers.rawValue)
                                     if settings.toggleKeyCode == 0 && settings.toggleModifierFlags == modsRaw && !settings.toggleDisplayString.isEmpty {
-                                        isToggle = true
+                                        isToggle = true; appliedRule = "Toggle Key"
                                     } else {
-                                        for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; break }
-                                        if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; break } }
+                                        for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                                        if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
                                     }
                                 }
                             }
@@ -87,7 +90,7 @@ class EventMonitor {
                         }
                     }
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
-                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle)
+                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule) // 🌟 규칙 파라미터 추가
                         return Unmanaged.passRetained(event)
                     }
                 }
@@ -99,7 +102,7 @@ class EventMonitor {
 
                     if settings.toggleKeyCode == keyCode && !settings.toggleDisplayString.isEmpty {
                         let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(settings.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
-                        if modifierFlags == savedModifierFlags { isToggle = true }
+                        if modifierFlags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
                     }
 
                     if !isToggle {
@@ -109,7 +112,7 @@ class EventMonitor {
                             if !isSingleModifier && !isMultiModifierOnly {
                                 if appLaunch.keyCode == keyCode && !appLaunch.displayString.isEmpty {
                                     let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(appLaunch.modifierFlags)).intersection([.command, .control, .option, .shift])
-                                    if modifierFlags == savedModifierFlags { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; break }
+                                    if modifierFlags == savedModifierFlags { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
                                 }
                             }
                         }
@@ -122,20 +125,20 @@ class EventMonitor {
                             if !isSingleModifier && !isMultiModifierOnly {
                                 if shortcut.keyCode == keyCode && !shortcut.displayString.isEmpty {
                                     let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(shortcut.modifierFlags)).intersection([.command, .control, .option, .shift])
-                                    if modifierFlags == savedModifierFlags { targetLang = shortcut.targetLanguage; break }
+                                    if modifierFlags == savedModifierFlags { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
                                 }
                             }
                         }
                     }
 
                     if !isToggle && targetAppBundleID == nil && targetLang == nil && keyCode == 49 {
-                        if modifierFlags == .control && settings.isCtrlActive { targetLang = settings.ctrlLang }
-                        else if modifierFlags == .command && settings.isCmdActive { targetLang = settings.cmdLang }
-                        else if modifierFlags == .option && settings.isOptActive { targetLang = settings.optLang }
+                        if modifierFlags == .control && settings.isCtrlActive { targetLang = settings.ctrlLang; appliedRule = "Default Shortcut" }
+                        else if modifierFlags == .command && settings.isCmdActive { targetLang = settings.cmdLang; appliedRule = "Default Shortcut" }
+                        else if modifierFlags == .option && settings.isOptActive { targetLang = settings.optLang; appliedRule = "Default Shortcut" }
                     }
 
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
-                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle)
+                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule) // 🌟 규칙 파라미터 추가
                         return Unmanaged.passRetained(event)
                     }
                 }
@@ -155,8 +158,26 @@ class EventMonitor {
         eventTap = nil; runLoopSource = nil
     }
     
-    private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool) {
+    // 🌟 실행 처리 및 로그 기록 함수
+    private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
+        
+        // 1. 접근 권한 상실 (Failure Log)
+        if !AccessibilityManager.shared.isTrusted {
+            SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue))
+            return
+        }
+        
+        // 2. 쿨타임 검사 (Condition Mismatch / Throttle Log)
+        let now = Date()
+        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown {
+            SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: "Ignored (Cooldown)", result: .failure, failureReason: .conditionMismatch))
+            return
+        }
+        EventMonitor.shared.lastActionTime = now
+        
         let settings = SettingsManager.shared
+        
+        // 3. 테스트 모드 처리
         if settings.isTestMode {
             var testLabel = ""
             if isToggle { testLabel = "[Test] Toggle Language" }
@@ -166,7 +187,15 @@ class EventMonitor {
                 testLabel = "[Test] \(langName)"
             }
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
+            
+            // 테스트 모드 실행 로그 남기기
+            SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "Test Mode", appliedRule: rule, finalInputSource: "Test Triggered", result: .success, failureReason: .none))
+            
         } else {
+            // 4. 실제 실행 및 성공 로그 (Success Log)
+            let finalTargetName = isToggle ? "Next Source" : (targetAppName ?? targetLang ?? "Unknown")
+            SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: finalTargetName, result: .success, failureReason: .none))
+            
             if isToggle {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource() }
             } else if let bundleID = targetAppID {

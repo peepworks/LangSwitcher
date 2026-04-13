@@ -87,8 +87,13 @@ struct ToggleShortcutRow: View {
 
     var body: some View {
         HStack {
-            Text(String(localized: "Next Input Source")).font(.body).foregroundColor(.secondary)
+            // 🌟 행 제목 변경
+            Text(String(localized: "Toggle Key"))
+                .font(.body)
+                .foregroundColor(.secondary)
+            
             Spacer()
+            
             Button(action: {
                 settings.toggleDisplayString = ""
                 settings.toggleKeyCode = 0
@@ -97,26 +102,41 @@ struct ToggleShortcutRow: View {
                 isRecording = true
                 startRecording()
             }) {
-                Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Press any keys...") : (settings.toggleDisplayString.isEmpty ? String(localized: "Click to Record") : settings.toggleDisplayString)))
-                    .frame(width: 140).padding(.vertical, 4)
+                // 🌟 버튼 기본 문구를 "변경..."으로 수정
+                Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Press any keys...") : (settings.toggleDisplayString.isEmpty ? String(localized: "Change...") : settings.toggleDisplayString)))
+                    .frame(width: 140)
+                    .padding(.vertical, 4)
                     .background(showDuplicateWarning ? Color.red.opacity(0.15) : (isRecording ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.1)))
-                    .foregroundColor(showDuplicateWarning ? .red : .primary).cornerRadius(6)
-            }.buttonStyle(.plain)
+                    .foregroundColor(showDuplicateWarning ? .red : .primary)
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
             
             Button(role: .destructive, action: {
                 settings.toggleDisplayString = ""
                 settings.toggleKeyCode = 0
                 settings.toggleModifierFlags = 0
-            }) { Image(systemName: "trash").foregroundColor(.red) }.buttonStyle(.plain).padding(.leading, 10)
+            }) {
+                Image(systemName: "trash").foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 10)
+            .help(String(localized: "Reset toggle key")) // 🌟 마우스 호버 툴팁 추가
         }
-        .padding(.horizontal, 15).padding(.vertical, 10)
-        .onDisappear { stopRecording() }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 10)
+        .onDisappear {
+            stopRecording()
+        }
     }
     
     private func startRecording() {
-        EventMonitor.shared.isPaused = true // 🌟 안전 코드: 녹화 시작 시 전역 감지 일시 정지
-        
-        class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
+        EventMonitor.shared.isPaused = true
+        class RState {
+            var m = Set<UInt16>()
+            var f: NSEvent.ModifierFlags = []
+            var r = false
+        }
         let state = RState()
         
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { e in
@@ -124,24 +144,40 @@ struct ToggleShortcutRow: View {
             let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
             
             if e.type == .flagsChanged {
-                if code == 57 { DispatchQueue.main.async { self.registerShortcut(keyCode: 57, modifiers: 0, display: "⇪ Caps Lock") }; return nil }
-                if !flags.isEmpty { state.m.insert(code); state.f.formUnion(flags); return nil }
-                else if !state.r && !state.m.isEmpty {
+                if code == 57 {
+                    DispatchQueue.main.async {
+                        self.registerShortcut(keyCode: 57, modifiers: 0, display: "⇪ Caps Lock")
+                    }
+                    return nil
+                }
+                
+                if !flags.isEmpty {
+                    state.m.insert(code)
+                    state.f.formUnion(flags)
+                    return nil
+                } else if !state.r && !state.m.isEmpty {
                     if state.m.count == 1 {
                         let c = state.m.first!
                         let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
-                        DispatchQueue.main.async { self.registerShortcut(keyCode: c, modifiers: 0, display: str) }
+                        DispatchQueue.main.async {
+                            self.registerShortcut(keyCode: c, modifiers: 0, display: str)
+                        }
                     } else {
                         var str = ""
                         if state.f.contains(.control) { str += "⌃ " }
                         if state.f.contains(.option) { str += "⌥ " }
                         if state.f.contains(.shift) { str += "⇧ " }
                         if state.f.contains(.command) { str += "⌘ " }
-                        DispatchQueue.main.async { self.registerShortcut(keyCode: 0, modifiers: UInt64(state.f.rawValue), display: str.trimmingCharacters(in: .whitespaces)) }
+                        DispatchQueue.main.async {
+                            self.registerShortcut(keyCode: 0, modifiers: UInt64(state.f.rawValue), display: str.trimmingCharacters(in: .whitespaces))
+                        }
                     }
                     return nil
                 }
-                state.m.removeAll(); state.f = []; state.r = false; return nil
+                state.m.removeAll()
+                state.f = []
+                state.r = false
+                return nil
             } else if e.type == .keyDown {
                 state.r = true
                 var str = ""
@@ -150,12 +186,19 @@ struct ToggleShortcutRow: View {
                 if flags.contains(.shift) { str += "⇧ " }
                 if flags.contains(.command) { str += "⌘ " }
                 
-                if code == 49 { str += "Space" }
-                else if let mapped = keyMap[code] { str += mapped }
-                else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
-                else { str += "Key(\(code))" }
+                if code == 49 {
+                    str += "Space"
+                } else if let mapped = keyMap[code] {
+                    str += mapped
+                } else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty {
+                    str += chars
+                } else {
+                    str += "Key(\(code))"
+                }
                 
-                DispatchQueue.main.async { self.registerShortcut(keyCode: code, modifiers: UInt64(flags.rawValue), display: str) }
+                DispatchQueue.main.async {
+                    self.registerShortcut(keyCode: code, modifiers: UInt64(flags.rawValue), display: str)
+                }
                 return nil
             }
             return e
@@ -170,17 +213,24 @@ struct ToggleShortcutRow: View {
             isRecording = false
             stopRecording()
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { showDuplicateWarning = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showDuplicateWarning = false
+            }
         } else {
-            settings.toggleKeyCode = keyCode; settings.toggleModifierFlags = modifiers; settings.toggleDisplayString = display
+            settings.toggleKeyCode = keyCode
+            settings.toggleModifierFlags = modifiers
+            settings.toggleDisplayString = display
             isRecording = false
             stopRecording()
         }
     }
     
     private func stopRecording() {
-        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
-        EventMonitor.shared.isPaused = false // 🌟 안전 코드: 녹화 종료 시 전역 감지 재개
+        if let m = monitor {
+            NSEvent.removeMonitor(m)
+            monitor = nil
+        }
+        EventMonitor.shared.isPaused = false
     }
 }
 

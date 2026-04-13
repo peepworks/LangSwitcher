@@ -32,7 +32,7 @@ struct GeneralSettingsView: View {
             VStack(alignment: .leading, spacing: 15) {
                 Text(String(localized: "General")).font(.title2.bold())
                 
-                // Startup & Updates
+                // 1. Startup & Updates
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Startup & Updates")).font(.headline)
                     VStack(spacing: 0) {
@@ -40,34 +40,40 @@ struct GeneralSettingsView: View {
                         Divider().padding(.horizontal, 15)
                         HStack { Text(String(localized: "Automatically check for updates")); Spacer(); Toggle("", isOn: $updateManager.isAutoUpdateEnabled).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
                         Divider().padding(.horizontal, 15)
-                        HStack { Text(String(localized: "Show visual feedback (HUD)")); Spacer(); Toggle("", isOn: $settings.showVisualFeedback).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        HStack { Text(String(localized: "Show visual feedback")); Spacer(); Toggle("", isOn: $settings.showVisualFeedback).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
                         Divider().padding(.horizontal, 15)
-                        HStack { Text(String(localized: "Rules Test Mode")); Spacer(); Toggle("", isOn: $settings.isTestMode).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        HStack { Text(String(localized: "Rule Test")); Spacer(); Toggle("", isOn: $settings.isTestMode).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
                     }
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 
-                // Global Toggle Key
+                // 2. 🌟 입력 소스 전환 키 영역
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(String(localized: "Global Toggle Key (Han/Eng)")).font(.headline)
+                    Text(String(localized: "Input Source Toggle Key")).font(.headline) // 섹션 제목
                     VStack(spacing: 0) {
                         ToggleShortcutRow()
                     }
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    
+                    // 🌟 도움말 텍스트 변경
+                    Text(String(localized: "Set the key to switch input sources."))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 5)
                 }
                 
-                // Backup & Restore
+                // 3. Backup & Restore (버튼 텍스트 변경)
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Backup & Restore")).font(.headline)
                     VStack(spacing: 0) {
-                        HStack { Text(String(localized: "Export Settings")); Spacer(); Button(String(localized: "Export...")) { exportSettings() }.padding(.trailing, -2) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        HStack { Text(String(localized: "Export Settings")); Spacer(); Button(String(localized: "Export Settings...")) { exportSettings() }.padding(.trailing, -2) }.padding(.horizontal, 15).padding(.vertical, 6)
                         Divider().padding(.horizontal, 15)
-                        HStack { Text(String(localized: "Import Settings")); Spacer(); Button(String(localized: "Import...")) { importSettings() }.padding(.trailing, -2) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        HStack { Text(String(localized: "Import Settings")); Spacer(); Button(String(localized: "Import Settings...")) { importSettings() }.padding(.trailing, -2) }.padding(.horizontal, 15).padding(.vertical, 6)
                     }
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 
-                // Default Shortcuts
+                // 4. Default Shortcuts
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Default Shortcuts")).font(.headline)
                     VStack(spacing: 0) {
@@ -85,6 +91,6 @@ struct GeneralSettingsView: View {
         }
     }
     
-    private func exportSettings() { let panel = NSSavePanel(); panel.allowedContentTypes = [.json]; let f = DateFormatter(); f.dateFormat = "yyyyMMdd_HHmm"; panel.nameFieldStringValue = "LangSwitcher_Backup_\(f.string(from: Date())).json"; panel.prompt = String(localized: "Export"); if panel.runModal() == .OK, let url = panel.url { do { try settings.exportBackup(to: url); showBackupSuccess = true } catch {} } }
-    private func importSettings() { let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.prompt = String(localized: "Import"); if panel.runModal() == .OK, let url = panel.url { do { try settings.importBackup(from: url); showRestoreSuccess = true } catch {} } }
+    private func exportSettings() { let panel = NSSavePanel(); panel.allowedContentTypes = [.json]; let f = DateFormatter(); f.dateFormat = "yyyyMMdd_HHmm"; panel.nameFieldStringValue = "LangSwitcher_Backup_\(f.string(from: Date())).json"; panel.prompt = String(localized: "Export Settings"); if panel.runModal() == .OK, let url = panel.url { do { try settings.exportBackup(to: url); showBackupSuccess = true } catch {} } }
+    private func importSettings() { let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.prompt = String(localized: "Import Settings"); if panel.runModal() == .OK, let url = panel.url { do { try settings.importBackup(from: url); showRestoreSuccess = true } catch {} } }
 }
