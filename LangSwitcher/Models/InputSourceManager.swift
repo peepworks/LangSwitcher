@@ -55,6 +55,21 @@ class InputSourceManager: ObservableObject {
     }
 
     func switchLanguage(to id: String) {
+        // 🌟 1. 현재 사용 중인 시스템 입력 소스의 ID를 가져와서 비교합니다.
+        if let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+           let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) {
+            let currentID = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+            
+            // 🌟 2. 현재 언어와 변경하려는 목표 언어가 이미 같다면 조용히 취소합니다. (HUD 표시 생략)
+            if currentID == id {
+                #if DEBUG
+                print("💡 이미 해당 언어(\(id))를 사용 중입니다. 전환 및 HUD 표시를 생략합니다.")
+                #endif
+                return
+            }
+        }
+        
+        // 3. 기존 전환 로직 및 HUD 표시
         let filter = [kTISPropertyInputSourceID: id] as CFDictionary
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {

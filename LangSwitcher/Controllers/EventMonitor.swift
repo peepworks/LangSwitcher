@@ -15,7 +15,6 @@
 //  You should have received a copy of the GNU General Public License
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
-//
 
 import Cocoa
 
@@ -36,26 +35,46 @@ class EventMonitor {
 
     func start() {
         if eventTap != nil { return }
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+        
+        // 🌟 1. 이벤트 마스크에 타임아웃 및 시스템 차단 타입 추가
+        let eventMask = (1 << CGEventType.keyDown.rawValue) |
+                        (1 << CGEventType.flagsChanged.rawValue) |
+                        (1 << CGEventType.tapDisabledByTimeout.rawValue) |
+                        (1 << CGEventType.tapDisabledByUserInput.rawValue)
 
         eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                 
+                // 🌟 2. 타임아웃 감지 및 즉시 재활성화 (생존 로직)
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = EventMonitor.shared.eventTap {
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                        #if DEBUG
+                        print("⚠️ EventTap restored from timeout or user input disable.")
+                        #endif
+                    }
+                    return Unmanaged.passRetained(event)
+                }
+                
+                // 3. 녹화 중 안전 잠금
                 if EventMonitor.shared.isPaused { return Unmanaged.passRetained(event) }
                 
                 let settings = SettingsManager.shared
                 var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
                 var isToggle = false
-                var appliedRule = "" // 🌟 적용된 규칙 추적 변수
+                var appliedRule = ""
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
+                // ----------------------------------------------------
+                // 4. 수식어 키 (Cmd, Option, Ctrl, Shift, Caps Lock 등) 처리
+                // ----------------------------------------------------
                 if type == .flagsChanged {
                     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let flags = nsModifierFlags.intersection(.deviceIndependentFlagsMask)
 
-                    if keyCode == 57 {
+                    if keyCode == 57 { // Caps Lock
                         if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
@@ -90,11 +109,15 @@ class EventMonitor {
                         }
                     }
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
-                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule) // 🌟 규칙 파라미터 추가
+                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+                        if keyCode == 57 { return nil } // Caps Lock 대소문자 기본 변경 차단
                         return Unmanaged.passRetained(event)
                     }
                 }
 
+                // ----------------------------------------------------
+                // 5. 일반 키 (Tab, Space, 알파벳, F키 등) 처리
+                // ----------------------------------------------------
                 if type == .keyDown {
                     EventMonitor.shared.didPressOtherKey = true; EventMonitor.shared.singleModifierKeyCode = nil
                     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
@@ -138,8 +161,14 @@ class EventMonitor {
                     }
 
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
-                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule) // 🌟 규칙 파라미터 추가
-                        return Unmanaged.passRetained(event)
+                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+                        
+                        // 🌟 '입력 소스 전환 키(isToggle)'일 때만 이벤트를 소멸(기본 기능 차단)
+                        if isToggle {
+                            return nil
+                        } else {
+                            return Unmanaged.passRetained(event)
+                        }
                     }
                 }
                 return Unmanaged.passRetained(event)
@@ -158,16 +187,12 @@ class EventMonitor {
         eventTap = nil; runLoopSource = nil
     }
     
-    // 🌟 실행 처리 및 로그 기록 함수
     private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
-        
-        // 1. 접근 권한 상실 (Failure Log)
         if !AccessibilityManager.shared.isTrusted {
             SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue))
             return
         }
         
-        // 2. 쿨타임 검사 (Condition Mismatch / Throttle Log)
         let now = Date()
         if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown {
             SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: "Ignored (Cooldown)", result: .failure, failureReason: .conditionMismatch))
@@ -177,7 +202,6 @@ class EventMonitor {
         
         let settings = SettingsManager.shared
         
-        // 3. 테스트 모드 처리
         if settings.isTestMode {
             var testLabel = ""
             if isToggle { testLabel = "[Test] Toggle Language" }
@@ -187,12 +211,8 @@ class EventMonitor {
                 testLabel = "[Test] \(langName)"
             }
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
-            
-            // 테스트 모드 실행 로그 남기기
             SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "Test Mode", appliedRule: rule, finalInputSource: "Test Triggered", result: .success, failureReason: .none))
-            
         } else {
-            // 4. 실제 실행 및 성공 로그 (Success Log)
             let finalTargetName = isToggle ? "Next Source" : (targetAppName ?? targetLang ?? "Unknown")
             SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: finalTargetName, result: .success, failureReason: .none))
             
