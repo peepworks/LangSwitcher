@@ -23,20 +23,21 @@ class EventMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     
+    // 🌟 1. UI(설정 창)로 이벤트를 쏴줄 콜백 함수 변수 추가
+    var shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
+    
     private var currentModifiers: NSEvent.ModifierFlags = []
     private var maxModifiers: NSEvent.ModifierFlags = []
     private var didPressOtherKey = false
     private var singleModifierKeyCode: UInt16? = nil
     
     var isPaused = false
-    
     private var lastActionTime: Date = Date.distantPast
     private let actionCooldown: TimeInterval = 0.15
 
     func start() {
         if eventTap != nil { return }
         
-        // 🌟 1. 이벤트 마스크에 타임아웃 및 시스템 차단 타입 추가
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.flagsChanged.rawValue) |
                         (1 << CGEventType.tapDisabledByTimeout.rawValue) |
@@ -46,18 +47,22 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                 
-                // 🌟 2. 타임아웃 감지 및 즉시 재활성화 (생존 로직)
+                // 타임아웃 감지 및 즉시 재활성화 (생존 로직)
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    if let tap = EventMonitor.shared.eventTap {
-                        CGEvent.tapEnable(tap: tap, enable: true)
-                        #if DEBUG
-                        print("⚠️ EventTap restored from timeout or user input disable.")
-                        #endif
-                    }
+                    if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passRetained(event)
                 }
                 
-                // 3. 녹화 중 안전 잠금
+                // 🌟 2. 단축키 녹화 중일 때: 이벤트를 가로채서 시스템에 안 넘기고 UI로만 보냄!
+                if let callback = EventMonitor.shared.shortcutRecordingCallback {
+                    if type == .keyDown || type == .flagsChanged {
+                        if let nsEvent = NSEvent(cgEvent: event) {
+                            DispatchQueue.main.async { callback(nsEvent) }
+                        }
+                        return nil // 이벤트를 완전히 소멸시킴 (Spotlight, Gemini 실행 차단)
+                    }
+                }
+                
                 if EventMonitor.shared.isPaused { return Unmanaged.passRetained(event) }
                 
                 let settings = SettingsManager.shared
@@ -68,13 +73,13 @@ class EventMonitor {
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
                 // ----------------------------------------------------
-                // 4. 수식어 키 (Cmd, Option, Ctrl, Shift, Caps Lock 등) 처리
+                // 수식어 키 (Cmd, Option, Ctrl, Shift, Caps Lock 등) 처리
                 // ----------------------------------------------------
                 if type == .flagsChanged {
                     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let flags = nsModifierFlags.intersection(.deviceIndependentFlagsMask)
 
-                    if keyCode == 57 { // Caps Lock
+                    if keyCode == 57 {
                         if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
@@ -116,7 +121,7 @@ class EventMonitor {
                 }
 
                 // ----------------------------------------------------
-                // 5. 일반 키 (Tab, Space, 알파벳, F키 등) 처리
+                // 일반 키 (Tab, Space, 알파벳, F키 등) 처리
                 // ----------------------------------------------------
                 if type == .keyDown {
                     EventMonitor.shared.didPressOtherKey = true; EventMonitor.shared.singleModifierKeyCode = nil
@@ -163,12 +168,8 @@ class EventMonitor {
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
                         EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
                         
-                        // 🌟 '입력 소스 전환 키(isToggle)'일 때만 이벤트를 소멸(기본 기능 차단)
-                        if isToggle {
-                            return nil
-                        } else {
-                            return Unmanaged.passRetained(event)
-                        }
+                        if isToggle { return nil } // 전환 키일 때만 시스템 이벤트 소멸
+                        return Unmanaged.passRetained(event)
                     }
                 }
                 return Unmanaged.passRetained(event)
