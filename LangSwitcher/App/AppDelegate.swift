@@ -92,12 +92,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 네이티브 사이드바 설정창 비율에 맞게 창을 와이드(Wide)하게 설정
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 650), // 높이를 좀 더 여유 있게 조정
+            contentRect: NSRect(x: 0, y: 0, width: 750, height: 720), // 높이를 좀 더 여유 있게 조정
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
 
         // 최소 크기 지정 (UI 깨짐 방지)
-        window.minSize = NSSize(width: 700, height: 500)
+        window.minSize = NSSize(width: 700, height: 600)
         
         window.center()
         window.title = String(localized: "LangSwitcher Settings")

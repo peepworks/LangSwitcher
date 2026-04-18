@@ -25,7 +25,8 @@ struct LangSwitcherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup {
+        // WindowGroup 대신 Settings를 사용하면 앱 실행 시 창이 자동으로 열리지 않습니다.
+        Settings {
             SettingsView()
         }
     }

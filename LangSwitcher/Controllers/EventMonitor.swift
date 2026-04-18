@@ -64,9 +64,14 @@ class EventMonitor {
                     return Unmanaged.passRetained(event)
                 }
                 
+                // EventMonitor.swift 내 수정 제안
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
-                        if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
+                        if let nsEvent = NSEvent(cgEvent: event) {
+                            DispatchQueue.main.async { callback(nsEvent) }
+                        }
+                        // 녹화 중에는 시스템 이벤트를 차단하되,
+                        // 만약의 사태를 대비해 아주 짧은 시간(예: 5초) 후에는 콜백을 자동 해제하는 타이머를 UI단에서 돌리는 것이 좋습니다.
                         return nil
                     }
                 }

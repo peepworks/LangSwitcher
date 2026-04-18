@@ -18,62 +18,81 @@
 
 import SwiftUI
 import ServiceManagement
-import UniformTypeIdentifiers
+import UniformTypeIdentifiers // 🌟 에러 해결: .json 타입을 사용하기 위해 필수 추가
 
 struct GeneralSettingsView: View {
     @StateObject private var settings = SettingsManager.shared
-    @StateObject private var updateManager = UpdateManager.shared
+    @ObservedObject private var updateManager = UpdateManager.shared
     @State private var isAutoLaunchEnabled: Bool = SMAppService.mainApp.status == .enabled
     @State private var showBackupSuccess = false
     @State private var showRestoreSuccess = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 15) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text(String(localized: "General")).font(.title2.bold())
                 
-                // 1. Startup & Updates
+                // 1. 시작 및 옵션 섹션
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(String(localized: "Startup & Updates")).font(.headline)
+                    Text(String(localized: "Startup & Options")).font(.headline)
                     VStack(spacing: 0) {
-                        HStack { Text(String(localized: "Launch at login")); Spacer(); Toggle("", isOn: $isAutoLaunchEnabled).toggleStyle(.switch).labelsHidden().controlSize(.small).onChange(of: isAutoLaunchEnabled) { newValue in do { if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } } catch {} } }.padding(.horizontal, 15).padding(.vertical, 6)
+                        // 로그인 시 자동 실행
+                        SettingToggleRow(title: String(localized: "Launch at login"), isOn: $isAutoLaunchEnabled)
+                            .onChange(of: isAutoLaunchEnabled) { newValue in
+                                do {
+                                    if newValue { try SMAppService.mainApp.register() }
+                                    else { try SMAppService.mainApp.unregister() }
+                                } catch { print("Auto-launch error: \(error)") }
+                            }
+                        
                         Divider().padding(.horizontal, 15)
-                        HStack { Text(String(localized: "Automatically check for updates")); Spacer(); Toggle("", isOn: $updateManager.isAutoUpdateEnabled).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        
+                        // 자동 업데이트 확인
+                        SettingToggleRow(title: String(localized: "Automatically check for updates"), isOn: $updateManager.isAutoUpdateEnabled)
+                        
                         Divider().padding(.horizontal, 15)
-                        HStack { Text(String(localized: "Show visual feedback")); Spacer(); Toggle("", isOn: $settings.showVisualFeedback).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        
+                        // 시각적 피드백 (HUD)
+                        SettingToggleRow(title: String(localized: "Show visual feedback"), isOn: $settings.showVisualFeedback)
+                        
                         Divider().padding(.horizontal, 15)
-                        HStack { Text(String(localized: "Rule Test")); Spacer(); Toggle("", isOn: $settings.isTestMode).toggleStyle(.switch).labelsHidden().controlSize(.small) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        
+                        // 규칙 테스트 모드
+                        SettingToggleRow(title: String(localized: "Rule Test"), isOn: $settings.isTestMode)
                     }
-                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 
-                // 2. 🌟 입력 소스 전환 키 영역
+                // 2. 입력 소스 전환 키 섹션
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(String(localized: "Input Source Toggle Key")).font(.headline) // 섹션 제목
+                    Text(String(localized: "Input Source Toggle Key")).font(.headline)
                     VStack(spacing: 0) {
                         ToggleShortcutRow()
                     }
-                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-                    
-                    // 🌟 도움말 텍스트 변경
-                    Text(String(localized: "Set the key to switch input sources."))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 5)
+                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 
-                // 3. Backup & Restore (버튼 텍스트 변경)
+                // 3. 백업 및 복구 섹션
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Backup & Restore")).font(.headline)
                     VStack(spacing: 0) {
-                        HStack { Text(String(localized: "Export Settings")); Spacer(); Button(String(localized: "Export Settings...")) { exportSettings() }.padding(.trailing, -2) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        SettingButtonRow(title: String(localized: "Export Settings"), buttonTitle: String(localized: "Export...")) {
+                            exportSettings()
+                        }
+                        
                         Divider().padding(.horizontal, 15)
-                        HStack { Text(String(localized: "Import Settings")); Spacer(); Button(String(localized: "Import Settings...")) { importSettings() }.padding(.trailing, -2) }.padding(.horizontal, 15).padding(.vertical, 6)
+                        
+                        SettingButtonRow(title: String(localized: "Import Settings"), buttonTitle: String(localized: "Import...")) {
+                            importSettings()
+                        }
                     }
-                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 
-                // 4. Default Shortcuts
+                // 4. 기본 단축키 섹션
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Default Shortcuts")).font(.headline)
                     VStack(spacing: 0) {
@@ -83,14 +102,89 @@ struct GeneralSettingsView: View {
                         Divider().padding(.horizontal, 15)
                         LanguageRow(title: "⌥ Option + Space", isActive: $settings.isOptActive, selection: $settings.optLang)
                     }
-                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
-            }.padding(.horizontal, 25).padding(.vertical, 15)
-            .alert(String(localized: "Backup Successful"), isPresented: $showBackupSuccess) { Button("OK", role: .cancel) { } }
-            .alert(String(localized: "Restore Successful"), isPresented: $showRestoreSuccess) { Button("OK", role: .cancel) { } }
+            }
+            .padding(.horizontal, 25)
+            .padding(.vertical, 12)
+            .alert(String(localized: "Backup Successful"), isPresented: $showBackupSuccess) {
+                Button("OK", role: .cancel) { }
+            }
+            .alert(String(localized: "Restore Successful"), isPresented: $showRestoreSuccess) {
+                Button("OK", role: .cancel) { }
+            }
         }
     }
     
-    private func exportSettings() { let panel = NSSavePanel(); panel.allowedContentTypes = [.json]; let f = DateFormatter(); f.dateFormat = "yyyyMMdd_HHmm"; panel.nameFieldStringValue = "LangSwitcher_Backup_\(f.string(from: Date())).json"; panel.prompt = String(localized: "Export Settings"); if panel.runModal() == .OK, let url = panel.url { do { try settings.exportBackup(to: url); showBackupSuccess = true } catch {} } }
-    private func importSettings() { let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.prompt = String(localized: "Import Settings"); if panel.runModal() == .OK, let url = panel.url { do { try settings.importBackup(from: url); showRestoreSuccess = true } catch {} } }
+    // MARK: - Actions
+    
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmm"
+        panel.nameFieldStringValue = "LangSwitcher_Backup_\(formatter.string(from: Date())).json"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try settings.exportBackup(to: url)
+                showBackupSuccess = true
+            } catch {
+                print("Export failed: \(error)")
+            }
+        }
+    }
+    
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try settings.importBackup(from: url)
+                showRestoreSuccess = true
+            } catch {
+                print("Import failed: \(error)")
+            }
+        }
+    }
+}
+
+// MARK: - Helper Views
+
+struct SettingToggleRow: View {
+    let title: String
+    @Binding var isOn: Bool
+    
+    var body: some View {
+        HStack {
+            Text(title).font(.body)
+            Spacer()
+            Toggle("", isOn: $isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 7)
+    }
+}
+
+struct SettingButtonRow: View {
+    let title: String
+    let buttonTitle: String
+    let action: () -> Void
+    
+    var body: some View {
+        HStack {
+            Text(title).font(.body)
+            Spacer()
+            Button(buttonTitle) {
+                action()
+            }
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 6)
+    }
 }

@@ -56,7 +56,7 @@ struct BackupData: Codable {
     let typoKeyCode: UInt16?
     let typoModifierFlags: UInt64?
     let typoDisplayString: String?
-    let isSentenceMode: Bool? // 🌟 문장 단위 변환 옵션 추가
+    let isSentenceMode: Bool?
 }
 
 class SettingsManager: ObservableObject {
@@ -86,7 +86,7 @@ class SettingsManager: ObservableObject {
     @Published var typoKeyCode: UInt16 { didSet { save("typoKeyCode", typoKeyCode) } }
     @Published var typoModifierFlags: UInt64 { didSet { save("typoModifierFlags", typoModifierFlags) } }
     @Published var typoDisplayString: String { didSet { save("typoDisplayString", typoDisplayString) } }
-    @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode) } } // 🌟 문장 단위 변환 옵션 추가
+    @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode) } }
     
     @Published var recentLogs: [ActionLog] = []
     
@@ -108,7 +108,7 @@ class SettingsManager: ObservableObject {
         typoKeyCode = UInt16(d.integer(forKey: "typoKeyCode"))
         typoModifierFlags = UInt64(d.integer(forKey: "typoModifierFlags"))
         typoDisplayString = d.string(forKey: "typoDisplayString") ?? ""
-        isSentenceMode = d.object(forKey: "isSentenceMode") as? Bool ?? false // 🌟 문장 단위 변환 초기화
+        isSentenceMode = d.object(forKey: "isSentenceMode") as? Bool ?? false
     }
     
     private func save(_ key: String, _ value: Any) { UserDefaults.standard.set(value, forKey: key) }
@@ -132,7 +132,7 @@ class SettingsManager: ObservableObject {
             typoKeyCode: typoKeyCode,
             typoModifierFlags: typoModifierFlags,
             typoDisplayString: typoDisplayString,
-            isSentenceMode: isSentenceMode // 🌟 문장 단위 변환 내보내기
+            isSentenceMode: isSentenceMode
         )
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         let data = try encoder.encode(backup); try data.write(to: url)
@@ -145,7 +145,11 @@ class SettingsManager: ObservableObject {
         DispatchQueue.main.async {
             self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
             self.ctrlLang = backup.ctrlLang; self.cmdLang = backup.cmdLang; self.optLang = backup.optLang
-            self.showVisualFeedback = backup.showVisualFeedback; self.isTestMode = backup.isTestMode
+            self.showVisualFeedback = backup.showVisualFeedback
+            
+            // 🌟 개선됨: 백업 데이터의 값에 상관없이 임포트 시 테스트 모드는 항상 false로 강제 리셋합니다.
+            self.isTestMode = false
+            
             self.toggleKeyCode = backup.toggleKeyCode; self.toggleModifierFlags = backup.toggleModifierFlags; self.toggleDisplayString = backup.toggleDisplayString
             self.customShortcuts = backup.customShortcuts; self.customApps = backup.customApps; self.appLaunchShortcuts = backup.appLaunchShortcuts
             self.excludedApps = backup.excludedApps ?? []
@@ -153,7 +157,7 @@ class SettingsManager: ObservableObject {
             self.typoKeyCode = backup.typoKeyCode ?? 0
             self.typoModifierFlags = backup.typoModifierFlags ?? 0
             self.typoDisplayString = backup.typoDisplayString ?? ""
-            self.isSentenceMode = backup.isSentenceMode ?? false // 🌟 문장 단위 변환 가져오기
+            self.isSentenceMode = backup.isSentenceMode ?? false
         }
     }
 }
