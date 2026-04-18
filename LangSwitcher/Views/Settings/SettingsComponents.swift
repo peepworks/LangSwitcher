@@ -416,3 +416,24 @@ struct AppLaunchShortcutRow: View {
         EventMonitor.shared.isPaused = false
     }
 }
+
+// 🌟 6. 예외 앱 리스트 행 컴포넌트
+struct ExcludedAppRow: View {
+    let app: ExcludedApp
+    var onDelete: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(app.appName)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+            
+            Button(role: .destructive, action: onDelete) {
+                Image(systemName: "trash").foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 10)
+        }
+    }
+}

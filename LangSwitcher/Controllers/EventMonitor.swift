@@ -23,8 +23,11 @@ class EventMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     
-    // 🌟 1. UI(설정 창)로 이벤트를 쏴줄 콜백 함수 변수 추가
     var shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
+    
+    // 🌟 최적화를 위한 활성 앱 추적 변수
+    var activeAppBundleID: String = ""
+    private var workspaceObserver: NSObjectProtocol?
     
     private var currentModifiers: NSEvent.ModifierFlags = []
     private var maxModifiers: NSEvent.ModifierFlags = []
@@ -38,6 +41,15 @@ class EventMonitor {
     func start() {
         if eventTap != nil { return }
         
+        // 🌟 앱 시작 시 현재 활성화된 앱 저장 및 변경 감지기 등록
+        activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { notification in
+            if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+                EventMonitor.shared.activeAppBundleID = app.bundleIdentifier ?? ""
+            }
+        }
+        
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.flagsChanged.rawValue) |
                         (1 << CGEventType.tapDisabledByTimeout.rawValue) |
@@ -47,19 +59,24 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                 
-                // 타임아웃 감지 및 즉시 재활성화 (생존 로직)
+                // 타임아웃 감지 및 생존 로직
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passRetained(event)
                 }
                 
-                // 🌟 2. 단축키 녹화 중일 때: 이벤트를 가로채서 시스템에 안 넘기고 UI로만 보냄!
+                // 단축키 녹화 중 시스템 차단 로직
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
-                        if let nsEvent = NSEvent(cgEvent: event) {
-                            DispatchQueue.main.async { callback(nsEvent) }
-                        }
-                        return nil // 이벤트를 완전히 소멸시킴 (Spotlight, Gemini 실행 차단)
+                        if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
+                        return nil
+                    }
+                }
+                
+                // 🌟 예외 앱 바이패스 로직: 활성화된 앱이 예외 목록에 있으면 즉시 시스템 통과
+                if !EventMonitor.shared.activeAppBundleID.isEmpty {
+                    if SettingsManager.shared.excludedApps.contains(where: { $0.bundleIdentifier == EventMonitor.shared.activeAppBundleID }) {
+                        return Unmanaged.passRetained(event)
                     }
                 }
                 
@@ -67,14 +84,10 @@ class EventMonitor {
                 
                 let settings = SettingsManager.shared
                 var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
-                var isToggle = false
-                var appliedRule = ""
+                var isToggle = false; var appliedRule = ""
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
-                // ----------------------------------------------------
-                // 수식어 키 (Cmd, Option, Ctrl, Shift, Caps Lock 등) 처리
-                // ----------------------------------------------------
                 if type == .flagsChanged {
                     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let flags = nsModifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -115,14 +128,11 @@ class EventMonitor {
                     }
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
                         EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-                        if keyCode == 57 { return nil } // Caps Lock 대소문자 기본 변경 차단
+                        if keyCode == 57 { return nil }
                         return Unmanaged.passRetained(event)
                     }
                 }
 
-                // ----------------------------------------------------
-                // 일반 키 (Tab, Space, 알파벳, F키 등) 처리
-                // ----------------------------------------------------
                 if type == .keyDown {
                     EventMonitor.shared.didPressOtherKey = true; EventMonitor.shared.singleModifierKeyCode = nil
                     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
@@ -167,8 +177,7 @@ class EventMonitor {
 
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
                         EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-                        
-                        if isToggle { return nil } // 전환 키일 때만 시스템 이벤트 소멸
+                        if isToggle { return nil }
                         return Unmanaged.passRetained(event)
                     }
                 }
@@ -186,53 +195,32 @@ class EventMonitor {
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
         eventTap = nil; runLoopSource = nil
+        
+        // 🌟 옵저버 메모리 해제
+        if let obs = workspaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs); workspaceObserver = nil }
     }
     
     private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
-        if !AccessibilityManager.shared.isTrusted {
-            SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue))
-            return
-        }
+        if !AccessibilityManager.shared.isTrusted { SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue)); return }
         
         let now = Date()
-        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown {
-            SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: "Ignored (Cooldown)", result: .failure, failureReason: .conditionMismatch))
-            return
-        }
+        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown { SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: "Ignored (Cooldown)", result: .failure, failureReason: .conditionMismatch)); return }
         EventMonitor.shared.lastActionTime = now
         
         let settings = SettingsManager.shared
-        
         if settings.isTestMode {
             var testLabel = ""
-            if isToggle { testLabel = "[Test] Toggle Language" }
-            else if let appName = targetAppName { testLabel = "[Test] \(appName)" }
-            else if let langID = targetLang {
-                let langName = InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID
-                testLabel = "[Test] \(langName)"
-            }
+            if isToggle { testLabel = "[Test] Toggle Language" } else if let appName = targetAppName { testLabel = "[Test] \(appName)" } else if let langID = targetLang { testLabel = "[Test] \(InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID)" }
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
             SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "Test Mode", appliedRule: rule, finalInputSource: "Test Triggered", result: .success, failureReason: .none))
         } else {
             let finalTargetName = isToggle ? "Next Source" : (targetAppName ?? targetLang ?? "Unknown")
             SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: finalTargetName, result: .success, failureReason: .none))
-            
-            if isToggle {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource() }
-            } else if let bundleID = targetAppID {
-                launchApp(bundleID: bundleID)
-            } else if let lang = targetLang {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchLanguage(to: lang) }
-            }
+            if isToggle { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource() } }
+            else if let bundleID = targetAppID { launchApp(bundleID: bundleID) }
+            else if let lang = targetLang { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchLanguage(to: lang) } }
         }
     }
 
-    private static func launchApp(bundleID: String) {
-        DispatchQueue.main.async {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                let config = NSWorkspace.OpenConfiguration()
-                NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
-            }
-        }
-    }
+    private static func launchApp(bundleID: String) { DispatchQueue.main.async { if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil) } } }
 }

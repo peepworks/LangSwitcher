@@ -23,6 +23,7 @@ enum SettingsTab: Hashable {
     case customShortcuts
     case appSpecific
     case appLaunch
+    case excludedApps // 🌟 1. 열거형에 예외 앱(excludedApps) 탭 추가
     case about
 }
 
@@ -42,6 +43,10 @@ struct SettingsView: View {
                         .tag(SettingsTab.appSpecific)
                     Label(String(localized: "App Launch Shortcuts"), systemImage: "square.grid.2x2")
                         .tag(SettingsTab.appLaunch)
+                    
+                    // 🌟 2. 사이드바 리스트 메뉴에 '예외 앱' 버튼 추가 (.tag로 연결)
+                    Label(String(localized: "Excluded Apps"), systemImage: "nosign")
+                        .tag(SettingsTab.excludedApps)
                 }
                 Section(header: Text(String(localized: "System"))) {
                     Label(String(localized: "About & Support"), systemImage: "info.circle")
@@ -56,6 +61,7 @@ struct SettingsView: View {
                 case .customShortcuts: CustomShortcutsSettingsView()
                 case .appSpecific: AppSpecificSettingsView()
                 case .appLaunch: AppLaunchSettingsView()
+                case .excludedApps: ExcludedAppsSettingsView() // 🌟 3. 선택 시 예외 앱 상세 화면을 띄움
                 case .about: AboutSettingsView()
                 case nil: Text(String(localized: "Select a menu item.")).foregroundColor(.secondary)
                 }
@@ -63,7 +69,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(NSColor.controlBackgroundColor))
         }
-        // 🌟 이 부분을 추가하여 설정 창의 최소 크기를 여유 있게 키웁니다. (스크롤바 제거)
+        // 설정 창의 최소 크기를 여유 있게 키웁니다. (스크롤바 제거)
         .frame(minWidth: 750, minHeight: 650)
         .onAppear {
             accManager.checkPermission()

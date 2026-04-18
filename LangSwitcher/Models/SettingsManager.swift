@@ -23,7 +23,9 @@ struct CustomShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UIn
 struct CustomApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String; var targetLanguage: String }
 struct AppLaunchShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var bundleIdentifier: String; var appName: String }
 
-// 🌟 1. 실행 로그 구조체 및 실패 항목 정의
+// 🌟 예외 앱 전용 구조체
+struct ExcludedApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String }
+
 enum LogResult: String, Codable { case success, failure }
 
 enum FailureReason: String, Codable {
@@ -44,20 +46,18 @@ struct ActionLog: Identifiable, Codable {
     let failureReason: FailureReason
 }
 
-// 🌟 2. 백업 파일에 버전 필드 추가
 struct BackupData: Codable {
-    let version: String? // 구버전 백업 파일과의 호환성을 위해 Optional(?)로 선언
+    let version: String?
     let isCtrlActive: Bool; let isCmdActive: Bool; let isOptActive: Bool
     let ctrlLang: String; let cmdLang: String; let optLang: String
     let showVisualFeedback: Bool; let isTestMode: Bool
     let toggleKeyCode: UInt16; let toggleModifierFlags: UInt64; let toggleDisplayString: String
     let customShortcuts: [CustomShortcut]; let customApps: [CustomApp]; let appLaunchShortcuts: [AppLaunchShortcut]
+    let excludedApps: [ExcludedApp]? // 🌟 백업에 예외 앱 추가
 }
 
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
-    
-    // 🌟 현재 앱의 설정 버전 (업데이트 시 변경 가능)
     let currentSettingsVersion = "1.0.0"
     
     @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive) } }
@@ -78,46 +78,45 @@ class SettingsManager: ObservableObject {
     @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e) } } }
     @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e) } } }
     
-    // 🌟 3. 최근 로그 50개를 저장하는 배열 (메모리 부담 최소화)
+    // 🌟 예외 앱 리스트 (자동 저장)
+    @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e) } } }
+    
     @Published var recentLogs: [ActionLog] = []
     
     private init() {
         let d = UserDefaults.standard
         isCtrlActive = d.bool(forKey: "isCtrlActive"); isCmdActive = d.bool(forKey: "isCmdActive"); isOptActive = d.bool(forKey: "isOptActive")
         showVisualFeedback = d.object(forKey: "showVisualFeedback") as? Bool ?? true; isTestMode = d.bool(forKey: "isTestMode")
-        
         toggleKeyCode = UInt16(d.integer(forKey: "toggleKeyCode"))
         toggleModifierFlags = UInt64(d.integer(forKey: "toggleModifierFlags"))
         toggleDisplayString = d.string(forKey: "toggleDisplayString") ?? ""
-        
         ctrlLang = d.string(forKey: "ctrlLang") ?? ""; cmdLang = d.string(forKey: "cmdLang") ?? ""; optLang = d.string(forKey: "optLang") ?? ""
+        
         if let data = d.data(forKey: "customShortcuts"), let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { customShortcuts = dec }
         if let data = d.data(forKey: "customApps"), let dec = try? JSONDecoder().decode([CustomApp].self, from: data) { customApps = dec }
         if let data = d.data(forKey: "appLaunchShortcuts"), let dec = try? JSONDecoder().decode([AppLaunchShortcut].self, from: data) { appLaunchShortcuts = dec }
+        
+        // 🌟 예외 앱 불러오기
+        if let data = d.data(forKey: "excludedApps"), let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { excludedApps = dec }
     }
     
     private func save(_ key: String, _ value: Any) { UserDefaults.standard.set(value, forKey: key) }
     
-    // 🌟 4. 로그 추가 헬퍼 함수
     func addLog(_ log: ActionLog) {
         DispatchQueue.main.async {
             self.recentLogs.insert(log, at: 0)
-            if self.recentLogs.count > 50 { self.recentLogs.removeLast() } // 50개 유지
-            
-            // 개발자 디버깅용 콘솔 출력
-            #if DEBUG
-            print("[\(log.result == .success ? "✅" : "❌")] App: \(log.targetApp) | Rule: \(log.appliedRule) | Source: \(log.finalInputSource) | Reason: \(log.failureReason.rawValue)")
-            #endif
+            if self.recentLogs.count > 50 { self.recentLogs.removeLast() }
         }
     }
     
     func exportBackup(to url: URL) throws {
         let backup = BackupData(
-            version: currentSettingsVersion, // 🌟 백업 시 버전 명시
+            version: currentSettingsVersion,
             isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive, ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
             toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
-            customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts
+            customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts,
+            excludedApps: excludedApps // 🌟 내보내기에 포함
         )
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         let data = try encoder.encode(backup); try data.write(to: url)
@@ -127,15 +126,13 @@ class SettingsManager: ObservableObject {
         let data = try Data(contentsOf: url)
         let backup = try JSONDecoder().decode(BackupData.self, from: data)
         
-        // 🌟 향후 버전별 마이그레이션이 필요하다면 여기서 분기 처리 가능
-        // print("Importing settings version: \(backup.version ?? "Legacy")")
-        
         DispatchQueue.main.async {
             self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
             self.ctrlLang = backup.ctrlLang; self.cmdLang = backup.cmdLang; self.optLang = backup.optLang
             self.showVisualFeedback = backup.showVisualFeedback; self.isTestMode = backup.isTestMode
             self.toggleKeyCode = backup.toggleKeyCode; self.toggleModifierFlags = backup.toggleModifierFlags; self.toggleDisplayString = backup.toggleDisplayString
             self.customShortcuts = backup.customShortcuts; self.customApps = backup.customApps; self.appLaunchShortcuts = backup.appLaunchShortcuts
+            self.excludedApps = backup.excludedApps ?? [] // 🌟 가져오기에 포함 (구버전 호환)
         }
     }
 }
