@@ -35,7 +35,7 @@ LangSwitcher helps solve that by combining direct language switching, app-specif
 ## 🖼 Screenshots
 
 <p align="center">
-  <img src="images/screen_v0.4.0.png" width="300" alt="LangSwitcher Logo">
+  <img src="images/screen_v0.4.0.png" width="500" alt="LangSwitcher Logo">
 </p>
 
 ### Settings
@@ -165,7 +165,7 @@ LangSwitcher는 직접 언어 전환, 앱별 자동 전환, 앱 실행 단축키
 ### 설정 화면
 
 <p align="center">
-  <img src="images/screen_v0.4.0.png" width="300" alt="LangSwitcher Logo">
+  <img src="images/screen_v0.4.0.png" width="500" alt="LangSwitcher Logo">
 </p>
 
 ## 💻 시스템 요구사항
