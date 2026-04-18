@@ -23,13 +23,19 @@ enum SettingsTab: Hashable {
     case customShortcuts
     case appSpecific
     case appLaunch
-    case excludedApps // 🌟 1. 열거형에 예외 앱(excludedApps) 탭 추가
+    case typoCorrection
+    case excludedApps
     case about
 }
 
 struct SettingsView: View {
     @StateObject private var accManager = AccessibilityManager.shared
     @State private var selectedTab: SettingsTab? = .general
+
+    // 🌟 한국어 사용자 여부 확인 (OS 선호 언어 목록에 한국어가 있는지 체크)
+    private var isKoreanUser: Bool {
+        Locale.preferredLanguages.contains { $0.hasPrefix("ko") }
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -44,7 +50,12 @@ struct SettingsView: View {
                     Label(String(localized: "App Launch Shortcuts"), systemImage: "square.grid.2x2")
                         .tag(SettingsTab.appLaunch)
                     
-                    // 🌟 2. 사이드바 리스트 메뉴에 '예외 앱' 버튼 추가 (.tag로 연결)
+                    // 🌟 한국어 사용자일 때만 '한/영 오타 변환' 메뉴를 사이드바에 표시합니다.
+                    if isKoreanUser {
+                        Label(String(localized: "Typo Correction"), systemImage: "text.cursor")
+                            .tag(SettingsTab.typoCorrection)
+                    }
+                    
                     Label(String(localized: "Excluded Apps"), systemImage: "nosign")
                         .tag(SettingsTab.excludedApps)
                 }
@@ -61,7 +72,10 @@ struct SettingsView: View {
                 case .customShortcuts: CustomShortcutsSettingsView()
                 case .appSpecific: AppSpecificSettingsView()
                 case .appLaunch: AppLaunchSettingsView()
-                case .excludedApps: ExcludedAppsSettingsView() // 🌟 3. 선택 시 예외 앱 상세 화면을 띄움
+                case .typoCorrection:
+                    // 🌟 화면 접근 시에도 안전하게 한 번 더 체크합니다.
+                    if isKoreanUser { TypoCorrectionSettingsView() }
+                case .excludedApps: ExcludedAppsSettingsView()
                 case .about: AboutSettingsView()
                 case nil: Text(String(localized: "Select a menu item.")).foregroundColor(.secondary)
                 }
@@ -69,10 +83,14 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(NSColor.controlBackgroundColor))
         }
-        // 설정 창의 최소 크기를 여유 있게 키웁니다. (스크롤바 제거)
         .frame(minWidth: 750, minHeight: 650)
         .onAppear {
             accManager.checkPermission()
+            
+            // 만약 한국어 사용자가 아닌데 초기 탭이 오타 변환으로 꼬여있을 경우 General로 초기화
+            if !isKoreanUser && selectedTab == .typoCorrection {
+                selectedTab = .general
+            }
         }
     }
 }

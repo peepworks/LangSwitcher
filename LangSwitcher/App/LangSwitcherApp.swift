@@ -20,11 +20,13 @@ import SwiftUI
 
 @main
 struct LangSwitcherApp: App {
+    
+    // 🌟 분리된 AppDelegate.swift 파일을 여기서 앱에 연결해 줍니다!
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Settings {
-            EmptyView()
+        WindowGroup {
+            SettingsView()
         }
     }
 }

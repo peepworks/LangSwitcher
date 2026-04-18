@@ -23,9 +23,10 @@ class EventMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     
+    // UI(설정 창)로 이벤트를 쏴줄 콜백 함수 변수
     var shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
     
-    // 🌟 최적화를 위한 활성 앱 추적 변수
+    // 예외 앱 바이패스용 활성 앱 추적 변수
     var activeAppBundleID: String = ""
     private var workspaceObserver: NSObjectProtocol?
     
@@ -41,7 +42,6 @@ class EventMonitor {
     func start() {
         if eventTap != nil { return }
         
-        // 🌟 앱 시작 시 현재 활성화된 앱 저장 및 변경 감지기 등록
         activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { notification in
@@ -59,13 +59,11 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                 
-                // 타임아웃 감지 및 생존 로직
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passRetained(event)
                 }
                 
-                // 단축키 녹화 중 시스템 차단 로직
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
                         if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
@@ -73,7 +71,6 @@ class EventMonitor {
                     }
                 }
                 
-                // 🌟 예외 앱 바이패스 로직: 활성화된 앱이 예외 목록에 있으면 즉시 시스템 통과
                 if !EventMonitor.shared.activeAppBundleID.isEmpty {
                     if SettingsManager.shared.excludedApps.contains(where: { $0.bundleIdentifier == EventMonitor.shared.activeAppBundleID }) {
                         return Unmanaged.passRetained(event)
@@ -84,15 +81,25 @@ class EventMonitor {
                 
                 let settings = SettingsManager.shared
                 var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
-                var isToggle = false; var appliedRule = ""
+                var isToggle = false
+                var appliedRule = ""
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
+                // ----------------------------------------------------
+                // 5. 수식어 키 (Cmd, Option, Ctrl, Shift, Caps Lock 등) 처리 (.flagsChanged)
+                // ----------------------------------------------------
                 if type == .flagsChanged {
                     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let flags = nsModifierFlags.intersection(.deviceIndependentFlagsMask)
 
-                    if keyCode == 57 {
+                    if keyCode == 57 { // Caps Lock 처리
+                        // 🌟 오타 변환: Caps Lock 단독 매칭
+                        if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == 57 && !settings.typoDisplayString.isEmpty {
+                            TypoConverter.shared.executeCorrection()
+                            return nil
+                        }
+                        
                         if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
@@ -101,12 +108,25 @@ class EventMonitor {
                         }
                     } else {
                         if !flags.isEmpty {
-                            if EventMonitor.shared.currentModifiers.isEmpty { EventMonitor.shared.didPressOtherKey = false; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = keyCode
-                            } else { EventMonitor.shared.singleModifierKeyCode = nil }
+                            // 수식어 키가 눌렸을 때
+                            if EventMonitor.shared.currentModifiers.isEmpty {
+                                EventMonitor.shared.didPressOtherKey = false; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = keyCode
+                            } else {
+                                EventMonitor.shared.singleModifierKeyCode = nil
+                            }
                             EventMonitor.shared.currentModifiers = flags; EventMonitor.shared.maxModifiers.formUnion(flags)
                         } else {
+                            // 수식어 키에서 손을 뗐을 때
                             if !EventMonitor.shared.didPressOtherKey {
                                 if let singleCode = EventMonitor.shared.singleModifierKeyCode {
+                                    
+                                    // 🌟 오타 변환: 단독 수식어 키 매칭 (Right Ctrl 등)
+                                    if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == singleCode && !settings.typoDisplayString.isEmpty {
+                                        TypoConverter.shared.executeCorrection()
+                                        EventMonitor.shared.currentModifiers = []; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = nil
+                                        return nil
+                                    }
+                                    
                                     if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == singleCode && !settings.toggleDisplayString.isEmpty {
                                         isToggle = true; appliedRule = "Toggle Key"
                                     } else {
@@ -115,6 +135,14 @@ class EventMonitor {
                                     }
                                 } else if !EventMonitor.shared.maxModifiers.isEmpty {
                                     let modsRaw = UInt64(EventMonitor.shared.maxModifiers.rawValue)
+                                    
+                                    // 🌟 오타 변환: 다중 수식어 키 단독 매칭 (Cmd+Opt 만 누를 때 등)
+                                    if settings.isTypoCorrectionEnabled && settings.typoKeyCode == 0 && settings.typoModifierFlags == modsRaw && !settings.typoDisplayString.isEmpty {
+                                        TypoConverter.shared.executeCorrection()
+                                        EventMonitor.shared.currentModifiers = []; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = nil
+                                        return nil
+                                    }
+                                    
                                     if settings.toggleKeyCode == 0 && settings.toggleModifierFlags == modsRaw && !settings.toggleDisplayString.isEmpty {
                                         isToggle = true; appliedRule = "Toggle Key"
                                     } else {
@@ -128,15 +156,28 @@ class EventMonitor {
                     }
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
                         EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-                        if keyCode == 57 { return nil }
+                        if keyCode == 57 { return nil } // Caps Lock 차단
                         return Unmanaged.passRetained(event)
                     }
                 }
 
+                // ----------------------------------------------------
+                // 6. 일반 키 (Tab, Space, 알파벳, F키 등) 처리 (.keyDown)
+                // ----------------------------------------------------
                 if type == .keyDown {
                     EventMonitor.shared.didPressOtherKey = true; EventMonitor.shared.singleModifierKeyCode = nil
                     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let modifierFlags = nsModifierFlags.intersection([.command, .control, .option, .shift])
+
+                    // 🌟 오타 변환: 일반 단축키 매칭 (Ctrl + Shift + Space 등)
+                    if settings.isTypoCorrectionEnabled &&
+                       settings.typoKeyCode == keyCode &&
+                       NSEvent.ModifierFlags(rawValue: UInt(settings.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == modifierFlags &&
+                       !settings.typoDisplayString.isEmpty {
+                        
+                        TypoConverter.shared.executeCorrection()
+                        return nil
+                    }
 
                     if settings.toggleKeyCode == keyCode && !settings.toggleDisplayString.isEmpty {
                         let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(settings.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
@@ -196,31 +237,39 @@ class EventMonitor {
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
         eventTap = nil; runLoopSource = nil
         
-        // 🌟 옵저버 메모리 해제
         if let obs = workspaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs); workspaceObserver = nil }
     }
     
     private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
-        if !AccessibilityManager.shared.isTrusted { SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue)); return }
+        if !AccessibilityManager.shared.isTrusted {
+            SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue))
+            return
+        }
         
         let now = Date()
-        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown { SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: "Ignored (Cooldown)", result: .failure, failureReason: .conditionMismatch)); return }
+        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown { return }
         EventMonitor.shared.lastActionTime = now
         
         let settings = SettingsManager.shared
         if settings.isTestMode {
             var testLabel = ""
-            if isToggle { testLabel = "[Test] Toggle Language" } else if let appName = targetAppName { testLabel = "[Test] \(appName)" } else if let langID = targetLang { testLabel = "[Test] \(InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID)" }
+            if isToggle { testLabel = "[Test] Toggle Language" }
+            else if let appName = targetAppName { testLabel = "[Test] \(appName)" }
+            else if let langID = targetLang { testLabel = "[Test] \(InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID)" }
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
-            SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "Test Mode", appliedRule: rule, finalInputSource: "Test Triggered", result: .success, failureReason: .none))
         } else {
-            let finalTargetName = isToggle ? "Next Source" : (targetAppName ?? targetLang ?? "Unknown")
-            SettingsManager.shared.addLog(ActionLog(timestamp: now, targetApp: targetAppName ?? "System", appliedRule: rule, finalInputSource: finalTargetName, result: .success, failureReason: .none))
             if isToggle { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource() } }
             else if let bundleID = targetAppID { launchApp(bundleID: bundleID) }
             else if let lang = targetLang { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchLanguage(to: lang) } }
         }
     }
 
-    private static func launchApp(bundleID: String) { DispatchQueue.main.async { if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil) } } }
+    private static func launchApp(bundleID: String) {
+        DispatchQueue.main.async {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                let config = NSWorkspace.OpenConfiguration()
+                NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+            }
+        }
+    }
 }

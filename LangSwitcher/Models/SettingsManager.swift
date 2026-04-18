@@ -22,8 +22,6 @@ import Combine
 struct CustomShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var targetLanguage: String }
 struct CustomApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String; var targetLanguage: String }
 struct AppLaunchShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var bundleIdentifier: String; var appName: String }
-
-// 🌟 예외 앱 전용 구조체
 struct ExcludedApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String }
 
 enum LogResult: String, Codable { case success, failure }
@@ -53,7 +51,12 @@ struct BackupData: Codable {
     let showVisualFeedback: Bool; let isTestMode: Bool
     let toggleKeyCode: UInt16; let toggleModifierFlags: UInt64; let toggleDisplayString: String
     let customShortcuts: [CustomShortcut]; let customApps: [CustomApp]; let appLaunchShortcuts: [AppLaunchShortcut]
-    let excludedApps: [ExcludedApp]? // 🌟 백업에 예외 앱 추가
+    let excludedApps: [ExcludedApp]?
+    let isTypoCorrectionEnabled: Bool?
+    let typoKeyCode: UInt16?
+    let typoModifierFlags: UInt64?
+    let typoDisplayString: String?
+    let isSentenceMode: Bool? // 🌟 문장 단위 변환 옵션 추가
 }
 
 class SettingsManager: ObservableObject {
@@ -77,9 +80,13 @@ class SettingsManager: ObservableObject {
     @Published var customShortcuts: [CustomShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(customShortcuts) { save("customShortcuts", e) } } }
     @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e) } } }
     @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e) } } }
-    
-    // 🌟 예외 앱 리스트 (자동 저장)
     @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e) } } }
+    
+    @Published var isTypoCorrectionEnabled: Bool { didSet { save("isTypoCorrectionEnabled", isTypoCorrectionEnabled) } }
+    @Published var typoKeyCode: UInt16 { didSet { save("typoKeyCode", typoKeyCode) } }
+    @Published var typoModifierFlags: UInt64 { didSet { save("typoModifierFlags", typoModifierFlags) } }
+    @Published var typoDisplayString: String { didSet { save("typoDisplayString", typoDisplayString) } }
+    @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode) } } // 🌟 문장 단위 변환 옵션 추가
     
     @Published var recentLogs: [ActionLog] = []
     
@@ -95,9 +102,13 @@ class SettingsManager: ObservableObject {
         if let data = d.data(forKey: "customShortcuts"), let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { customShortcuts = dec }
         if let data = d.data(forKey: "customApps"), let dec = try? JSONDecoder().decode([CustomApp].self, from: data) { customApps = dec }
         if let data = d.data(forKey: "appLaunchShortcuts"), let dec = try? JSONDecoder().decode([AppLaunchShortcut].self, from: data) { appLaunchShortcuts = dec }
-        
-        // 🌟 예외 앱 불러오기
         if let data = d.data(forKey: "excludedApps"), let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { excludedApps = dec }
+        
+        isTypoCorrectionEnabled = d.object(forKey: "isTypoCorrectionEnabled") as? Bool ?? false
+        typoKeyCode = UInt16(d.integer(forKey: "typoKeyCode"))
+        typoModifierFlags = UInt64(d.integer(forKey: "typoModifierFlags"))
+        typoDisplayString = d.string(forKey: "typoDisplayString") ?? ""
+        isSentenceMode = d.object(forKey: "isSentenceMode") as? Bool ?? false // 🌟 문장 단위 변환 초기화
     }
     
     private func save(_ key: String, _ value: Any) { UserDefaults.standard.set(value, forKey: key) }
@@ -116,7 +127,12 @@ class SettingsManager: ObservableObject {
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
             toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
             customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts,
-            excludedApps: excludedApps // 🌟 내보내기에 포함
+            excludedApps: excludedApps,
+            isTypoCorrectionEnabled: isTypoCorrectionEnabled,
+            typoKeyCode: typoKeyCode,
+            typoModifierFlags: typoModifierFlags,
+            typoDisplayString: typoDisplayString,
+            isSentenceMode: isSentenceMode // 🌟 문장 단위 변환 내보내기
         )
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         let data = try encoder.encode(backup); try data.write(to: url)
@@ -132,7 +148,12 @@ class SettingsManager: ObservableObject {
             self.showVisualFeedback = backup.showVisualFeedback; self.isTestMode = backup.isTestMode
             self.toggleKeyCode = backup.toggleKeyCode; self.toggleModifierFlags = backup.toggleModifierFlags; self.toggleDisplayString = backup.toggleDisplayString
             self.customShortcuts = backup.customShortcuts; self.customApps = backup.customApps; self.appLaunchShortcuts = backup.appLaunchShortcuts
-            self.excludedApps = backup.excludedApps ?? [] // 🌟 가져오기에 포함 (구버전 호환)
+            self.excludedApps = backup.excludedApps ?? []
+            self.isTypoCorrectionEnabled = backup.isTypoCorrectionEnabled ?? false
+            self.typoKeyCode = backup.typoKeyCode ?? 0
+            self.typoModifierFlags = backup.typoModifierFlags ?? 0
+            self.typoDisplayString = backup.typoDisplayString ?? ""
+            self.isSentenceMode = backup.isSentenceMode ?? false // 🌟 문장 단위 변환 가져오기
         }
     }
 }

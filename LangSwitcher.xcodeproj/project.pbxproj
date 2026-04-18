@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12242E2C2F933CA300690095 /* TypoConverter.swift */; };
 		1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */; };
 		125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */; };
 		125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D32F658001005DAB0C /* EventMonitor.swift */; };
@@ -25,6 +26,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		12242E2C2F933CA300690095 /* TypoConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoConverter.swift; sourceTree = "<group>"; };
 		1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMonitor.swift; sourceTree = "<group>"; };
 		125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputSourceManager.swift; sourceTree = "<group>"; };
 		125FF4D32F658001005DAB0C /* EventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventMonitor.swift; sourceTree = "<group>"; };
@@ -77,6 +79,7 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				12242E2C2F933CA300690095 /* TypoConverter.swift */,
 				12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */,
 				12744D562F89E66A0033C06A /* UpdateManager.swift */,
 				125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */,
@@ -235,6 +238,7 @@
 				125FF4D82F658041005DAB0C /* AppDelegate.swift in Sources */,
 				125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
+				12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */,
 				1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */,
 				1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */,
 				125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */,

@@ -24,13 +24,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 앱이 메뉴바 전용(Accessory)으로 동작하도록 설정
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         
-        AccessibilityManager.shared.checkPermission(prompt: true)
+        // 🌟 1. 앱 실행 시 접근성 권한이 있다면 즉시 키보드 감지(EventMonitor) 시작
+        if AccessibilityManager.shared.isTrusted {
+            EventMonitor.shared.start()
+        } else {
+            // 권한이 없다면 사용자에게 권한 요청 알림을 띄웁니다.
+            AccessibilityManager.shared.checkPermission(prompt: true)
+        }
         
-        // 🌟 백그라운드 24시간 단위 자동 업데이트 확인 타이머 가동
+        // 백그라운드 24시간 단위 자동 업데이트 확인 타이머 가동
         UpdateManager.shared.setupAutoUpdateCheck()
+    }
+
+    // 🌟 2. 앱 종료 시 감지기를 안전하게 중지하여 시스템 자원 반환
+    func applicationWillTerminate(_ notification: Notification) {
+        EventMonitor.shared.stop()
     }
 
     func setupMenu() {
@@ -77,15 +89,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let contentView = SettingsView()
-        
-        // 🌟 네이티브 사이드바 설정창 비율에 맞게 창을 와이드(Wide)하게 변경
+
+        // 네이티브 사이드바 설정창 비율에 맞게 창을 와이드(Wide)하게 설정
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 550),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView], // resizable 추가
+            contentRect: NSRect(x: 0, y: 0, width: 750, height: 650), // 높이를 좀 더 여유 있게 조정
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        
-        // 최소 크기 지정 (너무 줄여서 UI가 깨지는 것 방지)
-        window.minSize = NSSize(width: 600, height: 400)
+
+        // 최소 크기 지정 (UI 깨짐 방지)
+        window.minSize = NSSize(width: 700, height: 500)
         
         window.center()
         window.title = String(localized: "LangSwitcher Settings")
