@@ -25,40 +25,59 @@ class TypoConverter {
         let pb = NSPasteboard.general
         let initialCount = pb.changeCount
         let oldString = pb.string(forType: .string)
-        
+
         // 1. 설정에 따라 블록 지정 시뮬레이션
         if SettingsManager.shared.isSentenceMode {
             simulateKey(keyCode: 123, modifiers: [.maskCommand, .maskShift]) // Cmd + Shift + Left
         } else {
             simulateKey(keyCode: 123, modifiers: [.maskAlternate, .maskShift]) // Opt + Shift + Left
         }
-        
+
         // 2. 블록 지정이 완료될 시간을 위해 아주 짧게 대기 후 복사 실행
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             self.simulateKey(keyCode: 8, modifiers: [.maskCommand]) // Cmd + C
-            
-            // 3. 클립보드 변화 감지 (최대 0.2초)
+
+            // 3. 클립보드 변화 감지 (최대 0.5초 대기)
             var attempts = 0
-            Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { timer in
-                attempts += 1
                 
-                if pb.changeCount != initialCount || attempts > 20 {
-                    timer.invalidate()
-                    
-                    guard let selectedText = pb.string(forType: .string), !selectedText.isEmpty else { return }
-                    
+            // 🌟 수정됨: 간격을 0.01초에서 0.05초로 변경 (CPU 부하 최적화)
+            Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+                attempts += 1
+
+                // 🌟 수정됨: 10번 시도(0.5초) 후 포기 또는 클립보드가 변경되었을 때
+                if pb.changeCount != initialCount || attempts > 10 {
+                    timer.invalidate() // 타이머 안전하게 종료
+
+                    guard let selectedText = pb.string(forType: .string), !selectedText.isEmpty else {
+                        // 🌟 [핵심] 복사에 실패했거나 빈 텍스트일 경우에도 기존 클립보드 원상복구!
+                        if let old = oldString {
+                            pb.clearContents()
+                            pb.setString(old, forType: .string)
+                        } else {
+                            pb.clearContents()
+                        }
+                        return
+                    }
+
                     // 4. 한/영 판단 및 변환 실행
                     let isEnglish = selectedText.contains { $0.isASCII && $0.isLetter }
                     let convertedText = isEnglish ? self.convertToKo(selectedText) : self.convertToEn(selectedText)
-                    
-                    if selectedText == convertedText { return }
-                    
+
+                    // 변환할 게 없으면 복구하고 종료
+                    if selectedText == convertedText {
+                        if let old = oldString {
+                            pb.clearContents()
+                            pb.setString(old, forType: .string)
+                        }
+                        return
+                    }
+
                     // 5. 변환된 텍스트 붙여넣기
                     pb.clearContents()
                     pb.setString(convertedText, forType: .string)
                     self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
-                    
-                    // 6. 원래 클립보드 데이터 복구
+
+                    // 6. 0.15초 후 원래 클립보드 데이터로 복구
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                         if let old = oldString {
                             pb.clearContents()
