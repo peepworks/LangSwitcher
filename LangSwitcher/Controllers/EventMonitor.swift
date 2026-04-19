@@ -104,6 +104,13 @@ class EventMonitor {
                     if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passRetained(event)
                 }
+                
+                // 🌟 [추가된 부분] HyperKey 로직을 가장 먼저 통과시킵니다.
+                let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+                if SettingsManager.shared.isHyperKeyEnabled {
+                    let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
+                    if shouldBlock { return nil } // HyperKey가 처리했으므로 시스템에 안 넘김
+                }
 
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {

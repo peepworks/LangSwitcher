@@ -21,7 +21,7 @@ import AppKit
 import UniformTypeIdentifiers // 🌟 에러 해결: 이 줄이 추가되었습니다!
 
 struct ExcludedAppsSettingsView: View {
-    @StateObject private var settings = SettingsManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
 
     var body: some View {
         ScrollView {
@@ -35,7 +35,7 @@ struct ExcludedAppsSettingsView: View {
                         .foregroundColor(.secondary)
                 }
                 .padding(.bottom, 10)
-                
+
                 // 예외 앱 리스트 영역
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -100,5 +100,37 @@ struct ExcludedAppsSettingsView: View {
                 settings.excludedApps.append(ExcludedApp(bundleIdentifier: bundleId, appName: appName))
             }
         }
+    }
+}
+
+// 🌟 에러 해결: 누락되었던 ExcludedAppRow 컴포넌트를 추가했습니다!
+struct ExcludedAppRow: View {
+    let app: ExcludedApp
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack {
+            // macOS 시스템에서 앱 아이콘을 동적으로 불러와 표시합니다.
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleIdentifier) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .frame(width: 24, height: 24)
+            } else {
+                // 아이콘을 찾을 수 없을 때의 기본 아이콘 처리
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .frame(width: 24, height: 24)
+                    .foregroundColor(.secondary)
+            }
+            
+            Text(app.appName)
+            Spacer()
+            Button(action: onDelete) {
+                Image(systemName: "trash").foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 10)
     }
 }

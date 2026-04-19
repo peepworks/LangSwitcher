@@ -19,7 +19,7 @@
 import SwiftUI
 
 struct CustomShortcutsSettingsView: View {
-    @StateObject private var settings = SettingsManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
     var hasIncomplete: Bool { settings.customShortcuts.contains { $0.displayString.isEmpty || $0.targetLanguage.isEmpty } }
 
     var body: some View {
@@ -34,10 +34,14 @@ struct CustomShortcutsSettingsView: View {
             }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 15)
             
             ScrollView {
-                VStack(spacing: 10) {
-                    if settings.customShortcuts.isEmpty { Text(String(localized: "No custom shortcuts added.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20) }
+                VStack(spacing: 4) {
+                    if settings.customShortcuts.isEmpty {
+                        Text(String(localized: "No custom shortcuts added.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20)
+                    }
+                    
+                    // 🌟 에러 해결: 꼬리표처럼 붙어있던 삭제 클로저 로직을 제거했습니다.
                     ForEach($settings.customShortcuts) { $shortcut in
-                        CustomShortcutRow(shortcut: $shortcut) { settings.customShortcuts.removeAll { $0.id == shortcut.id } }
+                        CustomShortcutRow(shortcut: $shortcut)
                     }
                 }.padding(15).frame(maxWidth: .infinity, alignment: .top)
             }

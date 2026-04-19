@@ -21,7 +21,7 @@ import ServiceManagement
 import UniformTypeIdentifiers // 🌟 에러 해결: .json 타입을 사용하기 위해 필수 추가
 
 struct GeneralSettingsView: View {
-    @StateObject private var settings = SettingsManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
     @ObservedObject private var updateManager = UpdateManager.shared
     @State private var isAutoLaunchEnabled: Bool = SMAppService.mainApp.status == .enabled
     @State private var showBackupSuccess = false
@@ -105,6 +105,7 @@ struct GeneralSettingsView: View {
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
+                
                 // 5. 고급 기능 (Hyper Key) 섹션
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Advanced Features")).font(.headline)
@@ -116,14 +117,14 @@ struct GeneralSettingsView: View {
                             isOn: $settings.isHyperKeyEnabled
                         )
                                         
-                        // 🌟 추가된 친절한 설명 텍스트
+                        // 🌟 친절한 설명 텍스트
                         Text(String(localized: "Mapped instantly in the background. Short press toggles input source, long press acts as Hyper Key."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineSpacing(2)
                             .padding(.horizontal, 15)
                             .padding(.bottom, 12)
-                            .padding(.top, -2) // 토글과의 간격을 살짝 좁혀서 한 묶음처럼 보이게 함
+                            .padding(.top, -2)
                     }
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
@@ -173,39 +174,36 @@ struct GeneralSettingsView: View {
     }
 }
 
-// MARK: - Helper Views
-
-struct SettingToggleRow: View {
+// 🌟 에러 해결: 누락되었던 LanguageRow 컴포넌트를 추가했습니다.
+struct LanguageRow: View {
     let title: String
-    @Binding var isOn: Bool
-    
+    @Binding var isActive: Bool
+    @Binding var selection: String
+    @ObservedObject private var inputManager = InputSourceManager.shared
+
     var body: some View {
         HStack {
-            Text(title).font(.body)
-            Spacer()
-            Toggle("", isOn: $isOn)
-                .toggleStyle(.switch)
+            Toggle("", isOn: $isActive)
+                .toggleStyle(.checkbox) // 🌟 네모난 체크박스로 복구
                 .labelsHidden()
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 15)
-        .padding(.vertical, 7)
-    }
-}
+            
+            Text(title).font(.body).padding(.leading, 5)
+            Spacer(minLength: 20)
 
-struct SettingButtonRow: View {
-    let title: String
-    let buttonTitle: String
-    let action: () -> Void
-    
-    var body: some View {
-        HStack {
-            Text(title).font(.body)
-            Spacer()
-            Button(buttonTitle) {
-                action()
+            ZStack(alignment: .trailing) {
+                if isActive {
+                    Picker("", selection: $selection) {
+                        if selection.isEmpty { Text(String(localized: "Select Keyboard")).tag("") }
+                        ForEach(inputManager.availableKeyboards) { kb in Text(kb.name).tag(kb.id) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                } else {
+                    Text(String(localized: "Disabled")).font(.subheadline).foregroundColor(.secondary).padding(.trailing, 16)
+                }
             }
-            .controlSize(.small)
+            .frame(width: 130, alignment: .trailing)
+            .padding(.trailing, -3)
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 6)

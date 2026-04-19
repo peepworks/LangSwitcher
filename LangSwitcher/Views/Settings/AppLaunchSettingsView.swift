@@ -20,7 +20,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AppLaunchSettingsView: View {
-    @StateObject private var settings = SettingsManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
     var hasIncomplete: Bool { settings.appLaunchShortcuts.contains { $0.displayString.isEmpty || $0.bundleIdentifier.isEmpty } }
 
     var body: some View {
@@ -35,9 +35,14 @@ struct AppLaunchSettingsView: View {
             }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 15)
             
             ScrollView {
-                VStack(spacing: 10) {
-                    if settings.appLaunchShortcuts.isEmpty { Text(String(localized: "No app launch shortcuts added.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20) }
-                    ForEach($settings.appLaunchShortcuts) { $shortcut in AppLaunchShortcutRow(shortcut: $shortcut) { settings.appLaunchShortcuts.removeAll { $0.id == shortcut.id } } }
+                VStack(spacing: 4) {
+                    if settings.appLaunchShortcuts.isEmpty {
+                        Text(String(localized: "No app launch shortcuts added.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20)
+                    }
+                    // 🌟 에러 해결: AppLaunchShortcutRow가 내부에서 삭제를 처리하므로 뒤의 꼬리(클로저)를 제거했습니다.
+                    ForEach($settings.appLaunchShortcuts) { $shortcut in
+                        AppLaunchShortcutRow(shortcut: $shortcut)
+                    }
                 }.padding(15).frame(maxWidth: .infinity, alignment: .top)
             }
             .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))

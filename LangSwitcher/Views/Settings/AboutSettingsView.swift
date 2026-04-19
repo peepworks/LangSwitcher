@@ -29,7 +29,7 @@ import UniformTypeIdentifiers
 struct AboutSettingsView: View {
     @StateObject private var accManager = AccessibilityManager.shared
     @ObservedObject private var updateManager = UpdateManager.shared // 🌟 알럿 씹힘 방지를 위한 ObservedObject 유지
-    @StateObject private var settings = SettingsManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
 
     var appVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown" }
 
