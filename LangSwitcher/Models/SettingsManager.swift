@@ -18,6 +18,7 @@
 
 import Foundation
 import Combine
+import SwiftUI
 
 struct CustomShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var targetLanguage: String }
 struct CustomApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String; var targetLanguage: String }
@@ -89,6 +90,14 @@ class SettingsManager: ObservableObject {
     @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode) } }
     
     @Published var recentLogs: [ActionLog] = []
+    
+    // 🌟 Hyper Key (Caps Lock 확장) 활성화 여부를 저장하는 변수
+    @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
+        didSet {
+            // 토글을 끄고 켤 때마다 HyperKeyManager에 상태를 전달하여 켜거나 끕니다.
+            HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled)
+        }
+    }
     
     private init() {
         let d = UserDefaults.standard

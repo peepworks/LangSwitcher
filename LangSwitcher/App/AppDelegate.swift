@@ -38,11 +38,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 백그라운드 24시간 단위 자동 업데이트 확인 타이머 가동
         UpdateManager.shared.setupAutoUpdateCheck()
+        // 🌟 앱 시작 시, 저장된 설정값을 불러와서 Hyper Key 기능을 켤지 말지 결정합니다.
+        HyperKeyManager.shared.updateState(isEnabled: UserDefaults.standard.bool(forKey: "isHyperKeyEnabled"))
     }
 
     // 🌟 2. 앱 종료 시 감지기를 안전하게 중지하여 시스템 자원 반환
     func applicationWillTerminate(_ notification: Notification) {
         EventMonitor.shared.stop()
+        
+        // 🌟 앱이 꺼질 때 Caps Lock을 다시 원래 상태로 돌려놓습니다.
+        HyperKeyManager.shared.updateState(isEnabled: false)
     }
 
     func setupMenu() {

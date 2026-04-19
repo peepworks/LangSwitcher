@@ -105,6 +105,29 @@ struct GeneralSettingsView: View {
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
+                // 5. 고급 기능 (Hyper Key) 섹션
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(String(localized: "Advanced Features")).font(.headline)
+                                    
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Hyper Key 활성화 토글
+                        SettingToggleRow(
+                            title: String(localized: "Caps Lock to Hyper Key & Input Source Switcher"),
+                            isOn: $settings.isHyperKeyEnabled
+                        )
+                                        
+                        // 🌟 추가된 친절한 설명 텍스트
+                        Text(String(localized: "Mapped instantly in the background. Short press toggles input source, long press acts as Hyper Key."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineSpacing(2)
+                            .padding(.horizontal, 15)
+                            .padding(.bottom, 12)
+                            .padding(.top, -2) // 토글과의 간격을 살짝 좁혀서 한 묶음처럼 보이게 함
+                    }
+                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                }
             }
             .padding(.horizontal, 25)
             .padding(.vertical, 12)

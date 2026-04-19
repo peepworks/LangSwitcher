@@ -16,6 +16,7 @@
 		125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF5092F658975005DAB0C /* LangSwitcherApp.swift */; };
 		125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */; };
 		125FF5242F6599E0005DAB0C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 129E052E2F657B6A00F34ABE /* Assets.xcassets */; };
+		126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */; };
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
 		12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */; };
@@ -34,6 +35,7 @@
 		125FF4D72F658041005DAB0C /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		125FF5092F658975005DAB0C /* LangSwitcherApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherApp.swift; sourceTree = "<group>"; };
 		125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityManager.swift; sourceTree = "<group>"; };
+		126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HyperKeyManager.swift; sourceTree = "<group>"; };
 		12744D562F89E66A0033C06A /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		129930792F679EBC00878827 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -79,6 +81,7 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */,
 				12242E2C2F933CA300690095 /* TypoConverter.swift */,
 				12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */,
 				12744D562F89E66A0033C06A /* UpdateManager.swift */,
@@ -236,6 +239,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				125FF4D82F658041005DAB0C /* AppDelegate.swift in Sources */,
+				126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */,
 				125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
 				12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */,
