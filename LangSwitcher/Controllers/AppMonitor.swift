@@ -21,19 +21,34 @@ import Cocoa
 class AppMonitor {
     static let shared = AppMonitor()
     private var observer: NSObjectProtocol?
+    
+    // 🌟 EventMonitor 등 외부에서 안전하게 읽을 수 있도록 동시성 큐와 공유 상태 추가
+    private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.appmonitor", attributes: .concurrent)
+    private var _activeAppBundleID: String = ""
+    var activeAppBundleID: String {
+        get { stateQueue.sync { _activeAppBundleID } }
+        set { stateQueue.async(flags: .barrier) { self._activeAppBundleID = newValue } }
+    }
+
+    private init() {} // 싱글톤 보호
 
     func start() {
         if observer != nil { return }
         
-        // 🌟 macOS에서 앱이 활성화(최상단으로 올라옴)될 때마다 알림을 받습니다.
+        // 시작 시점의 현재 활성 앱 정보 초기화
+        activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        
+        // 🌟 시스템 전체에서 오직 AppMonitor만 이 알림을 단일 구독합니다.
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
         ) { notification in
-            // 활성화된 앱의 정보와 Bundle ID(예: com.google.Chrome)를 가져옵니다.
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   let bundleID = app.bundleIdentifier else { return }
+
+            // 공유 상태 업데이트
+            AppMonitor.shared.activeAppBundleID = bundleID
 
             let settings = SettingsManager.shared
             
@@ -54,5 +69,6 @@ class AppMonitor {
             NSWorkspace.shared.notificationCenter.removeObserver(obs)
             observer = nil
         }
+        activeAppBundleID = ""
     }
 }

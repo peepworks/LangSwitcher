@@ -40,16 +40,16 @@ class TypoConverter {
             // 3. 클립보드 변화 감지 (최대 0.5초 대기)
             var attempts = 0
                 
-            // 🌟 수정됨: 간격을 0.01초에서 0.05초로 변경 (CPU 부하 최적화)
+            // 간격을 0.01초에서 0.05초로 변경 (CPU 부하 최적화)
             Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
                 attempts += 1
 
-                // 🌟 수정됨: 10번 시도(0.5초) 후 포기 또는 클립보드가 변경되었을 때
+                // 10번 시도(0.5초) 후 포기 또는 클립보드가 변경되었을 때
                 if pb.changeCount != initialCount || attempts > 10 {
                     timer.invalidate() // 타이머 안전하게 종료
 
                     guard let selectedText = pb.string(forType: .string), !selectedText.isEmpty else {
-                        // 🌟 [핵심] 복사에 실패했거나 빈 텍스트일 경우에도 기존 클립보드 원상복구!
+                        // [핵심] 복사에 실패했거나 빈 텍스트일 경우에도 기존 클립보드 원상복구!
                         if let old = oldString {
                             pb.clearContents()
                             pb.setString(old, forType: .string)
@@ -77,8 +77,13 @@ class TypoConverter {
                     pb.setString(convertedText, forType: .string)
                     self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
 
-                    // 6. 0.15초 후 원래 클립보드 데이터로 복구
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    // 🌟 6. [리뷰 8번 해결] 0.4초 후 원래 클립보드 데이터로 스마트 복구
+                    // 느린 앱에서도 충분히 붙여넣기가 완료되도록 0.4초 여유를 줍니다.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        
+                        // [안전장치] 사용자가 그 0.4초 사이에 다른 텍스트를 복사(Cmd+C)했다면 복구를 취소하여 데이터 유실을 막습니다.
+                        guard pb.string(forType: .string) == convertedText else { return }
+                        
                         if let old = oldString {
                             pb.clearContents()
                             pb.setString(old, forType: .string)
@@ -143,7 +148,7 @@ class TypoConverter {
         commit(); return result
     }
 
-    // 🌟 에러 수정 포인트: 딕셔너리 접근 시 타입을 Character로 명확히 처리
+    // 에러 수정 포인트: 딕셔너리 접근 시 타입을 Character로 명확히 처리
     private func convertToEn(_ koreanText: String) -> String {
         let engMap: [Character: String] = ["ㅂ":"q", "ㅈ":"w", "ㄷ":"e", "ㄱ":"r", "ㅅ":"t", "ㅛ":"y", "ㅕ":"u", "ㅑ":"i", "ㅐ":"o", "ㅔ":"p", "ㅁ":"a", "ㄴ":"s", "ㅇ":"d", "ㄹ":"f", "ㅎ":"g", "ㅗ":"h", "ㅓ":"j", "ㅏ":"k", "ㅣ":"l", "ㅋ":"z", "ㅌ":"x", "ㅊ":"c", "ㅍ":"v", "ㅠ":"b", "ㅜ":"n", "ㅡ":"m", "ㅃ":"Q", "ㅉ":"W", "ㄸ":"E", "ㄲ":"R", "ㅆ":"T", "ㅒ":"O", "ㅖ":"P"]
         let doubleJongsMap: [Character: String] = ["ㄳ":"rt", "ㄵ":"sw", "ㄶ":"sg", "ㄺ":"fr", "ㄻ":"fa", "ㄼ":"fq", "ㄽ":"ft", "ㄾ":"fx", "ㄿ":"fv", "ㅀ":"fg", "ㅄ":"qt"]
@@ -161,7 +166,7 @@ class TypoConverter {
                 result += doubleJungsMap[jungs[jungIdx]] ?? (engMap[jungs[jungIdx]] ?? "")
                 if jongIdx > 0 { result += doubleJongsMap[jongs[jongIdx]] ?? (engMap[jongs[jongIdx]] ?? "") }
             } else {
-                // 🌟 char(Character 타입)를 사용하여 매핑 테이블에서 안전하게 추출
+                // char(Character 타입)를 사용하여 매핑 테이블에서 안전하게 추출
                 if let doubleJung = doubleJungsMap[char] { result += doubleJung }
                 else if let doubleJong = doubleJongsMap[char] { result += doubleJong }
                 else if let single = engMap[char] { result += single }

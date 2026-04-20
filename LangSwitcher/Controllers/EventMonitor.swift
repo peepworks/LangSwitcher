@@ -22,22 +22,13 @@ class EventMonitor {
     static let shared = EventMonitor()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var workspaceObserver: NSObjectProtocol?
 
-    // 🌟 1. 스레드 안전성을 보장하기 위한 동시성 큐 생성
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.state", attributes: .concurrent)
 
-    // 🌟 2. 프로퍼티 캡슐화 (읽기는 동시 허용, 쓰기는 배타적 접근)
     private var _shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
     var shortcutRecordingCallback: ((NSEvent) -> Void)? {
         get { stateQueue.sync { _shortcutRecordingCallback } }
         set { stateQueue.async(flags: .barrier) { self._shortcutRecordingCallback = newValue } }
-    }
-
-    private var _activeAppBundleID: String = ""
-    var activeAppBundleID: String {
-        get { stateQueue.sync { _activeAppBundleID } }
-        set { stateQueue.async(flags: .barrier) { self._activeAppBundleID = newValue } }
     }
 
     private var _currentModifiers: NSEvent.ModifierFlags = []
@@ -70,12 +61,15 @@ class EventMonitor {
         set { stateQueue.async(flags: .barrier) { self._isPaused = newValue } }
     }
 
-    private var _lastActionTime: Date = Date.distantPast
-    var lastActionTime: Date {
-        get { stateQueue.sync { _lastActionTime } }
-        set { stateQueue.async(flags: .barrier) { self._lastActionTime = newValue } }
+    // 🌟 일반 Caps Lock 모드에서의 더블 트리거 방지 쿨다운
+    private var _lastCapsLockTime: Date = Date.distantPast
+    var lastCapsLockTime: Date {
+        get { stateQueue.sync { _lastCapsLockTime } }
+        set { stateQueue.async(flags: .barrier) { self._lastCapsLockTime = newValue } }
     }
 
+    private let cooldownLock = NSLock()
+    private var lastActionTime: Date = Date.distantPast
     private let actionCooldown: TimeInterval = 0.15
 
     private init() {}
@@ -83,15 +77,8 @@ class EventMonitor {
     func start() {
         if eventTap != nil { return }
 
-        activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { notification in
-            if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
-                EventMonitor.shared.activeAppBundleID = app.bundleIdentifier ?? ""
-            }
-        }
-
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
+                        (1 << CGEventType.keyUp.rawValue) |
                         (1 << CGEventType.flagsChanged.rawValue) |
                         (1 << CGEventType.tapDisabledByTimeout.rawValue) |
                         (1 << CGEventType.tapDisabledByUserInput.rawValue)
@@ -100,34 +87,38 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
+                // 🌟 [무한루프 방지] 가짜 이벤트(9999)는 즉시 통과!
+                if event.getIntegerValueField(.eventSourceUserData) == 9999 {
+                    return Unmanaged.passUnretained(event)
+                }
+
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-                    return Unmanaged.passRetained(event)
-                }
-                
-                // 🌟 [추가된 부분] HyperKey 로직을 가장 먼저 통과시킵니다.
-                let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-                if SettingsManager.shared.isHyperKeyEnabled {
-                    let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
-                    if shouldBlock { return nil } // HyperKey가 처리했으므로 시스템에 안 넘김
+                    return nil
                 }
 
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
-                        if let nsEvent = NSEvent(cgEvent: event) {
-                            DispatchQueue.main.async { callback(nsEvent) }
-                        }
+                        if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
                         return nil
                     }
                 }
+                
+                let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+                
+                if SettingsManager.shared.isHyperKeyEnabled {
+                    let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
+                    if shouldBlock { return nil }
+                }
 
-                if !EventMonitor.shared.activeAppBundleID.isEmpty {
-                    if SettingsManager.shared.excludedApps.contains(where: { $0.bundleIdentifier == EventMonitor.shared.activeAppBundleID }) {
-                        return Unmanaged.passRetained(event)
+                let currentAppID = AppMonitor.shared.activeAppBundleID
+                if !currentAppID.isEmpty {
+                    if SettingsManager.shared.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
+                        return Unmanaged.passUnretained(event)
                     }
                 }
 
-                if EventMonitor.shared.isPaused { return Unmanaged.passRetained(event) }
+                if EventMonitor.shared.isPaused { return Unmanaged.passUnretained(event) }
 
                 let settings = SettingsManager.shared
                 var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
@@ -136,16 +127,18 @@ class EventMonitor {
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
-                // ----------------------------------------------------
-                // 수식어 키 처리 (.flagsChanged)
-                // ----------------------------------------------------
                 if type == .flagsChanged {
-                    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let flags = nsModifierFlags.intersection(.deviceIndependentFlagsMask)
 
-                    if keyCode == 57 { // Caps Lock 처리
+                    if keyCode == 57 {
+                        // 🌟 [핵심 변경] HyperKey가 꺼진 상태에서의 Caps Lock (isDown 검사 삭제)
+                        // Caps Lock은 누를 때만 신호가 오므로, 불이 켜지든 꺼지든 무조건 실행하되 0.25초 쿨다운만 적용
+                        let now = Date()
+                        if now.timeIntervalSince(EventMonitor.shared.lastCapsLockTime) < 0.25 { return nil }
+                        EventMonitor.shared.lastCapsLockTime = now
+
                         if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == 57 && !settings.typoDisplayString.isEmpty {
-                            TypoConverter.shared.executeCorrection()
+                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
                             return nil
                         }
 
@@ -157,7 +150,6 @@ class EventMonitor {
                         }
                     } else {
                         if !flags.isEmpty {
-                            // 수식어 키가 눌렸을 때
                             if EventMonitor.shared.currentModifiers.isEmpty {
                                 EventMonitor.shared.didPressOtherKey = false; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = keyCode
                             } else {
@@ -165,11 +157,10 @@ class EventMonitor {
                             }
                             EventMonitor.shared.currentModifiers = flags; EventMonitor.shared.maxModifiers.formUnion(flags)
                         } else {
-                            // 수식어 키에서 손을 뗐을 때
                             if !EventMonitor.shared.didPressOtherKey {
                                 if let singleCode = EventMonitor.shared.singleModifierKeyCode {
                                     if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == singleCode && !settings.typoDisplayString.isEmpty {
-                                        TypoConverter.shared.executeCorrection()
+                                        DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
                                         EventMonitor.shared.currentModifiers = []; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = nil
                                         return nil
                                     }
@@ -184,7 +175,7 @@ class EventMonitor {
                                     let modsRaw = UInt64(EventMonitor.shared.maxModifiers.rawValue)
 
                                     if settings.isTypoCorrectionEnabled && settings.typoKeyCode == 0 && settings.typoModifierFlags == modsRaw && !settings.typoDisplayString.isEmpty {
-                                        TypoConverter.shared.executeCorrection()
+                                        DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
                                         EventMonitor.shared.currentModifiers = []; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = nil
                                         return nil
                                     }
@@ -202,24 +193,20 @@ class EventMonitor {
                     }
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
                         EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-                        if keyCode == 57 { return nil } // Caps Lock 차단
-                        return Unmanaged.passRetained(event)
+                        if keyCode == 57 { return nil }
+                        return Unmanaged.passUnretained(event)
                     }
                 }
 
-                // ----------------------------------------------------
-                // 일반 키 처리 (.keyDown)
-                // ----------------------------------------------------
                 if type == .keyDown {
                     EventMonitor.shared.didPressOtherKey = true; EventMonitor.shared.singleModifierKeyCode = nil
-                    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
                     let modifierFlags = nsModifierFlags.intersection([.command, .control, .option, .shift])
 
                     if settings.isTypoCorrectionEnabled &&
                        settings.typoKeyCode == keyCode &&
                        NSEvent.ModifierFlags(rawValue: UInt(settings.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == modifierFlags &&
                        !settings.typoDisplayString.isEmpty {
-                        TypoConverter.shared.executeCorrection()
+                        DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
                         return nil
                     }
 
@@ -263,10 +250,10 @@ class EventMonitor {
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
                         EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
                         if isToggle { return nil }
-                        return Unmanaged.passRetained(event)
+                        return Unmanaged.passUnretained(event)
                     }
                 }
-                return Unmanaged.passRetained(event)
+                return Unmanaged.passUnretained(event)
             }, userInfo: nil)
 
         if let tap = eventTap {
@@ -280,8 +267,6 @@ class EventMonitor {
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
         eventTap = nil; runLoopSource = nil
-
-        if let obs = workspaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs); workspaceObserver = nil }
     }
 
     private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
@@ -290,9 +275,14 @@ class EventMonitor {
             return
         }
 
+        EventMonitor.shared.cooldownLock.lock()
         let now = Date()
-        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown { return }
+        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown {
+            EventMonitor.shared.cooldownLock.unlock()
+            return
+        }
         EventMonitor.shared.lastActionTime = now
+        EventMonitor.shared.cooldownLock.unlock()
 
         let settings = SettingsManager.shared
         if settings.isTestMode {

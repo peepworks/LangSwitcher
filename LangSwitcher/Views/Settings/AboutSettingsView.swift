@@ -16,19 +16,12 @@
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
-//
-//  AboutSettingsView.swift
-//  LangSwitcher
-//
-//  Copyright (C) 2026 peepboy
-//
-
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct AboutSettingsView: View {
     @StateObject private var accManager = AccessibilityManager.shared
-    @ObservedObject private var updateManager = UpdateManager.shared // 🌟 알럿 씹힘 방지를 위한 ObservedObject 유지
+    @ObservedObject private var updateManager = UpdateManager.shared
     @ObservedObject private var settings = SettingsManager.shared
 
     var appVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown" }
@@ -38,7 +31,7 @@ struct AboutSettingsView: View {
             VStack(alignment: .leading, spacing: 25) {
                 Text(String(localized: "About & Support")).font(.title2.bold())
 
-                // 1. 앱 정보 및 업데이트 확인 섹션 (🌟 배경 및 그림자 디자인 복구 완료)
+                // 1. 앱 정보 및 업데이트 확인 섹션
                 VStack(alignment: .center, spacing: 10) {
                     if let appIcon = NSImage(named: NSImage.applicationIconName) {
                         Image(nsImage: appIcon)
@@ -70,8 +63,8 @@ struct AboutSettingsView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
-                .background(Color.secondary.opacity(0.05)) // 🌟 배경색 복구
-                .cornerRadius(12) // 🌟 둥근 모서리 복구
+                .background(Color.secondary.opacity(0.05))
+                .cornerRadius(12)
 
                 // 2. Permissions 섹션
                 VStack(alignment: .leading, spacing: 10) {
@@ -109,6 +102,7 @@ struct AboutSettingsView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.large)
                         .disabled(settings.recentLogs.isEmpty)
+                        // 임시 디버그 버튼 삭제됨
                     }
                     .padding()
                     .background(Color.secondary.opacity(0.05))
@@ -116,7 +110,6 @@ struct AboutSettingsView: View {
                 }
             }
             .padding(30)
-            // 🌟 단일 알럿 상태 관찰 (절대 씹히지 않음)
             .alert(item: $updateManager.activeAlert) { item in
                 switch item {
                 case .updateAvailable(let version, let url):
@@ -143,7 +136,6 @@ struct AboutSettingsView: View {
         }
     }
 
-    // 🌟 로그 파일 생성 및 저장 함수
     private func downloadDebugLogs() {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.plainText]
