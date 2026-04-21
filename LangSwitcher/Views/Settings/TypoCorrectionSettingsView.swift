@@ -25,7 +25,8 @@ struct TypoCorrectionSettingsView: View {
     @State private var conflictMessage = ""
     @State private var showDuplicateWarning = false
     
-    // 🌟 [수정 1] 문제가 되었던 private let keyMap = ... 부분은 완전히 삭제했습니다.
+    // 🌟 [리뷰 반영] 무한 대기(먹통) 방지를 위한 타이머 변수 추가
+    @State private var timeoutTask: DispatchWorkItem?
 
     var body: some View {
         ScrollView {
@@ -96,6 +97,19 @@ struct TypoCorrectionSettingsView: View {
     // MARK: - Shortcut Recording Logic
     
     private func startRecording() {
+        // 🌟 [리뷰 반영] 5초 자동 해제 타이머 설정
+        timeoutTask?.cancel() // 기존에 돌고 있던 타이머가 있다면 취소
+        
+        let task = DispatchWorkItem {
+            self.isRecording = false
+            self.showDuplicateWarning = false
+            self.stopRecording()
+        }
+        self.timeoutTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
+
+        // ----------------------------------------------------
+
         EventMonitor.shared.isPaused = true
         class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
         let state = RState()
@@ -132,7 +146,6 @@ struct TypoCorrectionSettingsView: View {
                 if flags.contains(.command) { str += "⌘ " }
                 
                 if code == 49 { str += "Space" }
-                // 🌟 [수정 2] keyMap 대신 globalKeyMap을 직접 참조하도록 변경했습니다.
                 else if let mapped = globalKeyMap[code] { str += mapped }
                 else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
                 else { str += "Key(\(code))" }
@@ -144,7 +157,8 @@ struct TypoCorrectionSettingsView: View {
     }
     
     private func registerShortcut(keyCode: UInt16, modifiers: UInt64, display: String) {
-        // 🌟 [수정 3] 함수 호출 이름(매개변수 라벨)을 일치시키고 없는 ignoreID는 제거했습니다.
+        timeoutTask?.cancel() // 🌟 단축키 입력이 완료되었거나 중복이면 타이머를 취소
+        
         if let conflictName = getConflictMessage(keyCode: keyCode, modifierFlags: modifiers) {
             NSSound.beep()
             conflictMessage = String(format: String(localized: "In use: %@"), conflictName)
@@ -160,30 +174,25 @@ struct TypoCorrectionSettingsView: View {
     }
     
     private func stopRecording() {
+        timeoutTask?.cancel() // 🌟 화면을 벗어날 때도 타이머를 안전하게 취소
         EventMonitor.shared.shortcutRecordingCallback = nil
         EventMonitor.shared.isPaused = false
     }
     
-    // 🌟 단축키 중복을 검사하는 함수
+    // 단축키 중복을 검사하는 함수
     private func getConflictMessage(keyCode: UInt16, modifierFlags: UInt64) -> String? {
         let settings = SettingsManager.shared
             
-        // 1. 한/영 전환 단축키와 겹치는지 확인
         if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifierFlags {
             return String(localized: "This shortcut is already used for Toggle Shortcut.")
         }
-
-        // 2. 다른 사용자 지정 단축키와 겹치는지 확인
         if settings.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifierFlags }) {
             return String(localized: "This shortcut is already used for a Custom Shortcut.")
         }
-            
-        // 3. 앱 실행 단축키와 겹치는지 확인
         if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifierFlags }) {
             return String(localized: "This shortcut is already used for an App Launch Shortcut.")
         }
 
-        // 겹치지 않으면 nil 반환 (에러 없음)
         return nil
     }
 }

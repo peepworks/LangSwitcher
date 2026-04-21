@@ -1,5 +1,7 @@
 //
+//  EventMonitor.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -23,6 +25,7 @@ class EventMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
+    // 🌟 단일 동시성 제어 큐 (모든 상태는 이것 하나로 통제됩니다)
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.state", attributes: .concurrent)
 
     private var _shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
@@ -61,18 +64,66 @@ class EventMonitor {
         set { stateQueue.async(flags: .barrier) { self._isPaused = newValue } }
     }
 
-    // 🌟 일반 Caps Lock 모드에서의 더블 트리거 방지 쿨다운
     private var _lastCapsLockTime: Date = Date.distantPast
     var lastCapsLockTime: Date {
         get { stateQueue.sync { _lastCapsLockTime } }
         set { stateQueue.async(flags: .barrier) { self._lastCapsLockTime = newValue } }
     }
 
-    private let cooldownLock = NSLock()
-    private var lastActionTime: Date = Date.distantPast
+    // 🌟 [리뷰 반영] NSLock 삭제 및 stateQueue로 관리되는 프라이빗 변수로 변경
+    private var _lastActionTime: Date = Date.distantPast
     private let actionCooldown: TimeInterval = 0.15
 
     private init() {}
+
+    // MARK: - Atomic State Updates (원자적 상태 변경 함수들)
+    
+    func handleInitialModifierPress(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
+        stateQueue.async(flags: .barrier) {
+            self._didPressOtherKey = false
+            self._singleModifierKeyCode = keyCode
+            self._currentModifiers = flags
+            self._maxModifiers = flags
+        }
+    }
+
+    func handleAdditionalModifierPress(flags: NSEvent.ModifierFlags) {
+        stateQueue.async(flags: .barrier) {
+            self._singleModifierKeyCode = nil
+            self._currentModifiers = flags
+            self._maxModifiers.formUnion(flags)
+        }
+    }
+
+    func clearModifierState() {
+        stateQueue.async(flags: .barrier) {
+            self._currentModifiers = []
+            self._maxModifiers = []
+            self._singleModifierKeyCode = nil
+        }
+    }
+
+    func markOtherKeyPressed() {
+        stateQueue.async(flags: .barrier) {
+            self._didPressOtherKey = true
+            self._singleModifierKeyCode = nil
+        }
+    }
+
+    // 🌟 [리뷰 반영] 쿨다운 시간을 검사하고 업데이트하는 과정을 하나의 안전한 트랜잭션으로 처리합니다.
+    func canExecuteAction() -> Bool {
+        var allowed = false
+        // sync + barrier를 사용하여 읽기와 쓰기를 동시에 방해받지 않고 실행
+        stateQueue.sync(flags: .barrier) {
+            let now = Date()
+            if now.timeIntervalSince(self._lastActionTime) >= self.actionCooldown {
+                self._lastActionTime = now
+                allowed = true
+            }
+        }
+        return allowed
+    }
+    // -------------------------------------------------------------------------
 
     func start() {
         if eventTap != nil { return }
@@ -87,7 +138,6 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
-                // 🌟 [무한루프 방지] 가짜 이벤트(9999)는 즉시 통과!
                 if event.getIntegerValueField(.eventSourceUserData) == 9999 {
                     return Unmanaged.passUnretained(event)
                 }
@@ -131,8 +181,6 @@ class EventMonitor {
                     let flags = nsModifierFlags.intersection(.deviceIndependentFlagsMask)
 
                     if keyCode == 57 {
-                        // 🌟 [핵심 변경] HyperKey가 꺼진 상태에서의 Caps Lock (isDown 검사 삭제)
-                        // Caps Lock은 누를 때만 신호가 오므로, 불이 켜지든 꺼지든 무조건 실행하되 0.25초 쿨다운만 적용
                         let now = Date()
                         if now.timeIntervalSince(EventMonitor.shared.lastCapsLockTime) < 0.25 { return nil }
                         EventMonitor.shared.lastCapsLockTime = now
@@ -151,17 +199,16 @@ class EventMonitor {
                     } else {
                         if !flags.isEmpty {
                             if EventMonitor.shared.currentModifiers.isEmpty {
-                                EventMonitor.shared.didPressOtherKey = false; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = keyCode
+                                EventMonitor.shared.handleInitialModifierPress(keyCode: keyCode, flags: flags)
                             } else {
-                                EventMonitor.shared.singleModifierKeyCode = nil
+                                EventMonitor.shared.handleAdditionalModifierPress(flags: flags)
                             }
-                            EventMonitor.shared.currentModifiers = flags; EventMonitor.shared.maxModifiers.formUnion(flags)
                         } else {
                             if !EventMonitor.shared.didPressOtherKey {
                                 if let singleCode = EventMonitor.shared.singleModifierKeyCode {
                                     if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == singleCode && !settings.typoDisplayString.isEmpty {
                                         DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                                        EventMonitor.shared.currentModifiers = []; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = nil
+                                        EventMonitor.shared.clearModifierState()
                                         return nil
                                     }
 
@@ -176,7 +223,7 @@ class EventMonitor {
 
                                     if settings.isTypoCorrectionEnabled && settings.typoKeyCode == 0 && settings.typoModifierFlags == modsRaw && !settings.typoDisplayString.isEmpty {
                                         DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                                        EventMonitor.shared.currentModifiers = []; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = nil
+                                        EventMonitor.shared.clearModifierState()
                                         return nil
                                     }
 
@@ -188,7 +235,7 @@ class EventMonitor {
                                     }
                                 }
                             }
-                            EventMonitor.shared.currentModifiers = []; EventMonitor.shared.maxModifiers = []; EventMonitor.shared.singleModifierKeyCode = nil
+                            EventMonitor.shared.clearModifierState()
                         }
                     }
                     if isToggle || targetAppBundleID != nil || targetLang != nil {
@@ -199,7 +246,8 @@ class EventMonitor {
                 }
 
                 if type == .keyDown {
-                    EventMonitor.shared.didPressOtherKey = true; EventMonitor.shared.singleModifierKeyCode = nil
+                    EventMonitor.shared.markOtherKeyPressed()
+                    
                     let modifierFlags = nsModifierFlags.intersection([.command, .control, .option, .shift])
 
                     if settings.isTypoCorrectionEnabled &&
@@ -275,14 +323,8 @@ class EventMonitor {
             return
         }
 
-        EventMonitor.shared.cooldownLock.lock()
-        let now = Date()
-        if now.timeIntervalSince(EventMonitor.shared.lastActionTime) < EventMonitor.shared.actionCooldown {
-            EventMonitor.shared.cooldownLock.unlock()
-            return
-        }
-        EventMonitor.shared.lastActionTime = now
-        EventMonitor.shared.cooldownLock.unlock()
+        // 🌟 [리뷰 반영] NSLock을 제거하고, 안전한 단일 큐 트랜잭션 함수로 변경
+        guard EventMonitor.shared.canExecuteAction() else { return }
 
         let settings = SettingsManager.shared
         if settings.isTestMode {

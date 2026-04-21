@@ -20,7 +20,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AboutSettingsView: View {
-    @StateObject private var accManager = AccessibilityManager.shared
+    // 🌟 [리뷰 반영] 싱글톤 객체이므로 @StateObject에서 @ObservedObject로 변경하여 일관성 및 의미를 맞춤
+    @ObservedObject private var accManager = AccessibilityManager.shared
     @ObservedObject private var updateManager = UpdateManager.shared
     @ObservedObject private var settings = SettingsManager.shared
 
@@ -102,7 +103,6 @@ struct AboutSettingsView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.large)
                         .disabled(settings.recentLogs.isEmpty)
-                        // 임시 디버그 버튼 삭제됨
                     }
                     .padding()
                     .background(Color.secondary.opacity(0.05))

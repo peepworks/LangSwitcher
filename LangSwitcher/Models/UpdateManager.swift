@@ -47,7 +47,6 @@ class UpdateManager: ObservableObject {
     // 🌟 마지막으로 업데이트를 확인한 시간 (Unix Timestamp)
     @AppStorage("lastUpdateCheckDate") var lastUpdateCheckDate: Double = 0
 
-    // 🌟 에러 원인 수정 완료: peepboy -> peepworks 로 정상 복구
     private let apiURL = "https://api.github.com/repos/peepworks/LangSwitcher/releases/latest"
     private var timer: Timer?
 
@@ -61,6 +60,18 @@ class UpdateManager: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             self?.checkIfAutoUpdateNeeded()
         }
+    }
+
+    // 🌟 [리뷰 반영] 앱 종료 시 RunLoop에서 타이머를 안전하게 제거하여 자원을 반환하는 함수
+    func stopAutoUpdateCheck() {
+        timer?.invalidate()
+        timer = nil
+        print("✅ [UpdateManager] Auto update timer invalidated.")
+    }
+
+    // 🌟 [안전장치] 만약의 경우를 대비한 deinit에서의 자원 정리
+    deinit {
+        stopAutoUpdateCheck()
     }
 
     private func checkIfAutoUpdateNeeded() {

@@ -38,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 백그라운드 24시간 단위 자동 업데이트 확인 타이머 가동
         UpdateManager.shared.setupAutoUpdateCheck()
+        
         // 🌟 앱 시작 시, 저장된 설정값을 불러와서 Hyper Key 기능을 켤지 말지 결정합니다.
         HyperKeyManager.shared.updateState(isEnabled: UserDefaults.standard.bool(forKey: "isHyperKeyEnabled"))
     }
@@ -46,8 +47,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         EventMonitor.shared.stop()
         
-        // 🌟 앱이 꺼질 때 Caps Lock을 다시 원래 상태로 돌려놓습니다.
+        // 앱이 꺼질 때 Caps Lock을 다시 원래 상태로 돌려놓습니다.
         HyperKeyManager.shared.updateState(isEnabled: false)
+        
+        // 🌟 [추가됨] 앱 종료 시 업데이트 확인 타이머를 안전하게 파기하여 RunLoop 자원 반환
+        UpdateManager.shared.stopAutoUpdateCheck()
     }
 
     func setupMenu() {
@@ -97,7 +101,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 네이티브 사이드바 설정창 비율에 맞게 창을 와이드(Wide)하게 설정
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 720), // 높이를 좀 더 여유 있게 조정
+            contentRect: NSRect(x: 0, y: 0, width: 750, height: 720),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
 

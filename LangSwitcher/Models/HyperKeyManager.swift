@@ -1,5 +1,7 @@
 //
+//  HyperKeyManager.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -21,6 +23,9 @@ import Cocoa
 class HyperKeyManager {
     static let shared = HyperKeyManager()
 
+    // 🌟 [리뷰 반영] 스레드 안전성을 보장하기 위한 가벼운 자물쇠(Lock) 추가
+    private let stateLock = NSLock()
+
     private var isHyperDown = false
     private var tapStartTime: Date?
     private var isUsedAsModifier = false
@@ -32,7 +37,11 @@ class HyperKeyManager {
 
     func updateState(isEnabled: Bool) {
         setupHardwareMapping(enable: isEnabled)
+        
+        // 🌟 외부(UI 스레드)에서 상태를 변경할 때도 안전하게 잠금 처리
+        stateLock.lock()
         if !isEnabled { isHyperDown = false }
+        stateLock.unlock()
     }
 
     private func setupHardwareMapping(enable: Bool) {
@@ -48,7 +57,6 @@ class HyperKeyManager {
         do {
             try task.run()
             task.waitUntilExit()
-            // 로그 기록 삭제됨
         } catch {
             print("hidutil 실행 실패: \(error)")
         }
@@ -65,37 +73,62 @@ class HyperKeyManager {
         }
     }
 
+    private func handleTap() {
+        DispatchQueue.main.async {
+            InputSourceManager.shared.switchToNextInputSource()
+        }
+    }
+
     func processEvent(type: CGEventType, event: CGEvent, keyCode: CGKeyCode) -> Bool {
+        // 🌟 시스템에 이벤트를 전송(Side-Effect)할 동작들을 임시 저장할 변수들
+        var shouldBlock = false
+        var shouldPostDown = false
+        var shouldPostUp = false
+        var shouldHandleTap = false
+        var modifiedFlags: CGEventFlags? = nil
+
+        // 🌟 1단계: 자물쇠를 잠그고 내부 상태(State)만 안전하게 평가 및 수정합니다.
+        stateLock.lock()
+        
         if keyCode == f19KeyCode {
             if type == .keyDown {
                 if !isHyperDown {
                     isHyperDown = true
                     tapStartTime = Date()
                     isUsedAsModifier = false
-                    postHyperModifiers(isDown: true)
+                    shouldPostDown = true // 나중에 실행할 예약
                 }
-                return true
+                shouldBlock = true
             } else if type == .keyUp {
                 isHyperDown = false
-                postHyperModifiers(isDown: false)
+                shouldPostUp = true // 나중에 실행할 예약
                 
                 if let startTime = tapStartTime, !isUsedAsModifier {
                     let duration = Date().timeIntervalSince(startTime)
                     if duration < 0.3 {
-                        DispatchQueue.main.async { InputSourceManager.shared.switchToNextInputSource() }
+                        shouldHandleTap = true // 나중에 실행할 예약
                     }
                 }
-                return true
+                shouldBlock = true
             }
         }
 
-        if isHyperDown && (type == .keyDown || type == .keyUp || type == .flagsChanged) {
+        if !shouldBlock && isHyperDown && (type == .keyDown || type == .keyUp || type == .flagsChanged) {
             if type == .keyDown { isUsedAsModifier = true }
             var flags = event.flags
             flags.insert([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-            event.flags = flags
+            modifiedFlags = flags // 나중에 플래그 교체할 예약
         }
         
-        return false
+        stateLock.unlock()
+        // 🔓 자물쇠 해제 완료
+
+        // 🌟 2단계: 자물쇠가 풀린 안전한 상태에서 시스템 관련 동작(Side-Effect)을 실행합니다. (데드락 방지)
+        if shouldPostDown { postHyperModifiers(isDown: true) }
+        if shouldPostUp { postHyperModifiers(isDown: false) }
+        if shouldHandleTap { handleTap() }
+        if let newFlags = modifiedFlags { event.flags = newFlags }
+
+        return shouldBlock
     }
 }

@@ -162,24 +162,21 @@ struct ToggleShortcutRow: View {
         }
     }
 
+    // 🌟 [리뷰 반영] 해제 순서 통일: 콜백 해제 후 isPaused 해제
     private func stopRecording() {
+        timeoutTask?.cancel()
         EventMonitor.shared.shortcutRecordingCallback = nil
         EventMonitor.shared.isPaused = false
-        timeoutTask?.cancel()
-        timeoutTask = nil
+        isRecording = false
     }
 
-    // 🌟 에러 해결: 단축키 중복을 검사하는 함수 추가
     private func getConflictMessage(keyCode: UInt16, modifiers: UInt64, ignoreID: UUID?) -> String? {
-        // 사용자 지정 단축키 검사
         if settings.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) {
             return String(localized: "Custom Shortcut")
         }
-        // 앱 실행 단축키 검사
         if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) {
             return String(localized: "App Launch Shortcut")
         }
-        // 오타 변환 단축키 검사
         if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers {
             return String(localized: "Typo Correction")
         }
@@ -197,19 +194,16 @@ struct CustomShortcutRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            
-            // 1. 단축키 기록 버튼
             Button(action: {
                 if isRecording { stopRecording() } else { startRecording() }
             }) {
                 Text(isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString))
-                    .frame(width: 90) // 🌟 alignment 속성을 지워서 완벽한 '가운데 정렬'로 변경!
+                    .frame(width: 90)
                     .foregroundColor(isRecording ? .red : .primary)
             }
             
             Spacer()
 
-            // 2. 키보드 선택 드롭다운
             Picker("", selection: $shortcut.targetLanguage) {
                 Text(String(localized: "Select Language...")).tag("")
                 ForEach(InputSourceManager.shared.availableKeyboards) { keyboard in
@@ -220,7 +214,6 @@ struct CustomShortcutRow: View {
             .labelsHidden()
             .frame(width: 140)
             
-            // 3. 삭제 버튼
             Button(action: {
                 settings.customShortcuts.removeAll { $0.id == shortcut.id }
             }) {
@@ -230,10 +223,10 @@ struct CustomShortcutRow: View {
             .padding(.leading, 5)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 2) // 🌟 상하 여백을 2로 최소화
+        .padding(.vertical, 2)
+        .onDisappear { stopRecording() }
     }
 
-    // (startRecording, stopRecording 등 기존 로직 유지)
     private func startRecording() {
         isRecording = true
         timeoutTask?.cancel()
@@ -259,11 +252,11 @@ struct CustomShortcutRow: View {
         }
     }
 
+    // 🌟 [리뷰 반영] 해제 순서 통일
     private func stopRecording() {
-        isRecording = false
-        EventMonitor.shared.shortcutRecordingCallback = nil
         timeoutTask?.cancel()
-        timeoutTask = nil
+        EventMonitor.shared.shortcutRecordingCallback = nil
+        isRecording = false
     }
 }
 
@@ -274,6 +267,9 @@ struct AppLaunchShortcutRow: View {
     
     @State private var isRecording = false
     @State private var timeoutTask: DispatchWorkItem?
+    
+    // 🌟 [리뷰 반영] 비동기로 이미지를 받아올 상태 변수 추가
+    @State private var appIcon: NSImage? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -285,8 +281,9 @@ struct AppLaunchShortcutRow: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: shortcut.bundleIdentifier) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    // 🌟 기존의 NSWorkspace.shared.urlForApplication... (동기 I/O) 제거!
+                    if let icon = appIcon {
+                        Image(nsImage: icon)
                             .resizable()
                             .frame(width: 20, height: 20)
                     } else {
@@ -306,7 +303,7 @@ struct AppLaunchShortcutRow: View {
                 if isRecording { stopRecording() } else { startRecording() }
             }) {
                 Text(isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString))
-                    .frame(width: 90) // 🌟 여기도 alignment를 지워 가운데 정렬!
+                    .frame(width: 90)
                     .foregroundColor(isRecording ? .red : .primary)
             }
             .padding(.trailing, 5)
@@ -320,10 +317,31 @@ struct AppLaunchShortcutRow: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 2) // 🌟 상하 여백 최소화
+        .padding(.vertical, 2)
+        .onDisappear { stopRecording() }
+        .onAppear {
+            loadIcon() // 화면에 뷰가 나타날 때 아이콘 로딩 시작
+        }
+        .onChange(of: shortcut.bundleIdentifier) { _ in
+            loadIcon() // 앱이 새로 선택되었을 때 아이콘 다시 로딩
+        }
     }
 
-    // (selectApp, startRecording, stopRecording 로직 기존과 동일 유지)
+    // 🌟 [리뷰 반영] 메인 스레드를 멈추지 않고 백그라운드에서 아이콘을 로드하는 함수
+    private func loadIcon() {
+        let bundleID = shortcut.bundleIdentifier
+        guard !bundleID.isEmpty else { return }
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            
+            DispatchQueue.main.async {
+                self.appIcon = icon
+            }
+        }
+    }
+
     private func selectApp() {
         let panel = NSOpenPanel()
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
@@ -364,11 +382,11 @@ struct AppLaunchShortcutRow: View {
         }
     }
 
+    // 🌟 [리뷰 반영] 해제 순서 통일
     private func stopRecording() {
-        isRecording = false
-        EventMonitor.shared.shortcutRecordingCallback = nil
         timeoutTask?.cancel()
-        timeoutTask = nil
+        EventMonitor.shared.shortcutRecordingCallback = nil
+        isRecording = false
     }
 }
 

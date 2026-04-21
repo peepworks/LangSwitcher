@@ -18,7 +18,7 @@
 
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers // 🌟 에러 해결: 이 줄이 추가되었습니다!
+import UniformTypeIdentifiers
 
 struct ExcludedAppsSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
@@ -61,6 +61,7 @@ struct ExcludedAppsSettingsView: View {
                                 .frame(maxWidth: .infinity, alignment: .center)
                         } else {
                             ForEach(settings.excludedApps) { app in
+                                // 🌟 기존 호출 방식 그대로 사용
                                 ExcludedAppRow(app: app) {
                                     settings.excludedApps.removeAll { $0.id == app.id }
                                 }
@@ -103,20 +104,20 @@ struct ExcludedAppsSettingsView: View {
     }
 }
 
-// 🌟 에러 해결: 누락되었던 ExcludedAppRow 컴포넌트를 추가했습니다!
+// 🌟 에러 해결: 구버전 macOS에서도 안전한 DispatchQueue 백그라운드 로딩으로 변경
 struct ExcludedAppRow: View {
     let app: ExcludedApp
     let onDelete: () -> Void
+    
+    @State private var appIcon: NSImage? = nil
 
     var body: some View {
         HStack {
-            // macOS 시스템에서 앱 아이콘을 동적으로 불러와 표시합니다.
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleIdentifier) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+            if let icon = appIcon {
+                Image(nsImage: icon)
                     .resizable()
                     .frame(width: 24, height: 24)
             } else {
-                // 아이콘을 찾을 수 없을 때의 기본 아이콘 처리
                 Image(systemName: "app.dashed")
                     .resizable()
                     .frame(width: 24, height: 24)
@@ -132,5 +133,21 @@ struct ExcludedAppRow: View {
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 10)
+        .onAppear {
+            loadIcon()
+        }
+    }
+    
+    // 백그라운드 스레드에서 아이콘을 안전하게 불러오는 함수
+    private func loadIcon() {
+        let bundleID = app.bundleIdentifier
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            
+            DispatchQueue.main.async {
+                self.appIcon = icon
+            }
+        }
     }
 }
