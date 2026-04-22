@@ -207,7 +207,7 @@ struct ToggleRow: View {
                 Text(description).font(.caption).foregroundColor(.secondary)
             }
             Spacer()
-            Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden()
+            Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden().controlSize(.small)
         }.padding(15)
     }
 }

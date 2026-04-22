@@ -121,7 +121,7 @@ class EventMonitor {
     }
     // -------------------------------------------------------------------------
 
-    // MARK: - 🌟 [리뷰 반영] 기능별 분리된 이벤트 처리기 (모듈화)
+    // MARK: - 🌟 기능별 분리된 이벤트 처리기 (모듈화 및 최적화)
     
     private func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
         let settings = SettingsManager.shared
@@ -143,8 +143,13 @@ class EventMonitor {
             if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
                 isToggle = true; appliedRule = "Toggle Key"
             } else {
-                for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
+                // 🌟 스위치가 켜져 있을 때만 루프(배열 탐색)를 실행하여 연산 비용을 아낍니다.
+                if settings.isAppLaunchEnabled {
+                    for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                }
+                if targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
+                    for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                }
             }
         } else {
             if !flags.isEmpty {
@@ -165,8 +170,13 @@ class EventMonitor {
                         if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == singleCode && !settings.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                            if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
+                            // 🌟 최적화 방어 코드 추가
+                            if settings.isAppLaunchEnabled {
+                                for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                            }
+                            if targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
+                                for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                            }
                         }
                     } else if !self.maxModifiers.isEmpty {
                         let modsRaw = UInt64(self.maxModifiers.rawValue)
@@ -180,8 +190,13 @@ class EventMonitor {
                         if settings.toggleKeyCode == 0 && settings.toggleModifierFlags == modsRaw && !settings.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                            if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
+                            // 🌟 최적화 방어 코드 추가
+                            if settings.isAppLaunchEnabled {
+                                for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                            }
+                            if targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
+                                for shortcut in settings.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                            }
                         }
                     }
                 }
@@ -218,7 +233,8 @@ class EventMonitor {
             if flags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
         }
 
-        if !isToggle {
+        // 🌟 스위치가 켜져 있을 때만 앱 실행 단축키 배열을 탐색합니다.
+        if !isToggle && settings.isAppLaunchEnabled {
             for appLaunch in settings.appLaunchShortcuts {
                 let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
                 let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
@@ -231,7 +247,8 @@ class EventMonitor {
             }
         }
 
-        if !isToggle && targetAppBundleID == nil {
+        // 🌟 스위치가 켜져 있을 때만 사용자 지정 단축키 배열을 탐색합니다.
+        if !isToggle && targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
             for shortcut in settings.customShortcuts {
                 let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(shortcut.keyCode) && shortcut.modifierFlags == 0
                 let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
@@ -312,7 +329,6 @@ class EventMonitor {
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
-                // 🌟 [리뷰 반영] 거대 클로저를 분리하여 가독성 및 유지보수성을 극대화한 구간
                 if type == .flagsChanged {
                     return EventMonitor.shared.handleFlagsChanged(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags)
                 }

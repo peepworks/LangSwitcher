@@ -52,6 +52,9 @@ class AppMonitor {
 
             let settings = SettingsManager.shared
             
+            // 🌟 이 코드를 추가하여 기능이 꺼져있으면 여기서 즉시 연산을 중단!
+            guard settings.isAppSpecificEnabled else { return }
+            
             // 사용자가 등록해둔 앱 목록에 이 앱이 있는지 검사합니다.
             if let customApp = settings.customApps.first(where: { $0.bundleIdentifier == bundleID }) {
                 // 지정된 언어가 있다면 해당 언어로 전환합니다.

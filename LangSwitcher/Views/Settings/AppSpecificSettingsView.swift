@@ -17,7 +17,7 @@
 //
 
 import SwiftUI
-import AppKit // 🌟 아이콘을 불러오기 위해 추가
+import AppKit
 import UniformTypeIdentifiers
 
 struct AppSpecificSettingsView: View {
@@ -26,37 +26,53 @@ struct AppSpecificSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // 🌟 1. 마스터 스위치 영역
             HStack {
                 Text(String(localized: "App-Specific Keyboards")).font(.title2.bold())
                 Spacer()
-                Button(action: selectApp) {
-                    Image(systemName: "plus.app.fill").foregroundColor(hasIncomplete ? .secondary.opacity(0.5) : .green)
-                    Text(String(localized: "Add App")).foregroundColor(hasIncomplete ? .secondary.opacity(0.5) : .primary)
-                }.buttonStyle(.plain).disabled(hasIncomplete)
-            }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 15)
-            
-            ScrollView {
-                VStack(spacing: 4) {
-                    if settings.customApps.isEmpty {
-                        Text(String(localized: "No apps configured.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20)
-                    }
-                    
-                    ForEach($settings.customApps) { $app in
-                        CustomAppRow(customApp: $app)
-                    }
-                }.padding(15).frame(maxWidth: .infinity, alignment: .top)
+                Toggle("", isOn: $settings.isAppSpecificEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .controlSize(.small) // 🌟 일반 설정과 동일한 아담한 크기로 변경
+            }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 10)
+
+            // 🌟 2. 스위치 상태에 따라 활성/비활성되는 영역
+            VStack(alignment: .leading, spacing: 15) {
+                HStack {
+                    Text(String(localized: "Automatically switch to a specific language when an app becomes active."))
+                        .font(.subheadline).foregroundColor(.secondary)
+                    Spacer()
+                    Button(action: selectApp) {
+                        Image(systemName: "plus.app.fill").foregroundColor(hasIncomplete ? .secondary.opacity(0.5) : .green)
+                        Text(String(localized: "Add App")).foregroundColor(hasIncomplete ? .secondary.opacity(0.5) : .primary)
+                    }.buttonStyle(.plain).disabled(hasIncomplete)
+                }
+
+                ScrollView {
+                    VStack(spacing: 4) {
+                        if settings.customApps.isEmpty {
+                            Text(String(localized: "No apps configured.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20)
+                        }
+
+                        ForEach($settings.customApps) { $app in
+                            CustomAppRow(customApp: $app)
+                        }
+                    }.padding(15).frame(maxWidth: .infinity, alignment: .top)
+                }
+                .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
             }
-            .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
             .padding(.horizontal, 30).padding(.bottom, 30)
+            .opacity(settings.isAppSpecificEnabled ? 1.0 : 0.5) // 끄면 반투명
+            .disabled(!settings.isAppSpecificEnabled) // 끄면 클릭 차단
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
-    
+
     private func selectApp() {
         let panel = NSOpenPanel()
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.allowedContentTypes = [.application]
         panel.canChooseFiles = true
-        
+
         if panel.runModal() == .OK, let url = panel.url {
             guard let bundle = Bundle(url: url), let bundleId = bundle.bundleIdentifier else { return }
             if !settings.customApps.contains(where: { $0.bundleIdentifier == bundleId }) {
@@ -66,71 +82,42 @@ struct AppSpecificSettingsView: View {
     }
 }
 
-// 🌟 [리뷰 반영] CustomAppRow 비동기 아이콘 로딩 적용
+// CustomAppRow 코드는 기존과 동일하게 이 아래에 두시면 됩니다!
 struct CustomAppRow: View {
     @Binding var customApp: CustomApp
     @ObservedObject private var settings = SettingsManager.shared
-    
-    // 🌟 비동기로 가져올 아이콘 상태 변수
     @State private var appIcon: NSImage? = nil
 
     var body: some View {
         HStack(spacing: 8) {
-            
             HStack(spacing: 8) {
-                // 🌟 동기 호출 제거 및 상태 변수 기반 렌더링
                 if let icon = appIcon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 20, height: 20)
+                    Image(nsImage: icon).resizable().frame(width: 20, height: 20)
                 } else {
-                    Image(systemName: "app.dashed")
-                        .resizable()
-                        .frame(width: 20, height: 20)
-                        .foregroundColor(.secondary)
+                    Image(systemName: "app.dashed").resizable().frame(width: 20, height: 20).foregroundColor(.secondary)
                 }
                 Text(customApp.appName).lineLimit(1)
             }
-            
             Spacer()
-            
             Picker("", selection: $customApp.targetLanguage) {
                 Text(String(localized: "Select Language...")).tag("")
-                ForEach(InputSourceManager.shared.availableKeyboards) { keyboard in
-                    Text(keyboard.name).tag(keyboard.id)
-                }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 140)
-            
-            Button(action: {
-                settings.customApps.removeAll { $0.id == customApp.id }
-            }) {
-                Image(systemName: "trash").foregroundColor(.red)
-            }
-            .buttonStyle(.plain)
-            .padding(.leading, 5)
+                ForEach(InputSourceManager.shared.availableKeyboards) { keyboard in Text(keyboard.name).tag(keyboard.id) }
+            }.pickerStyle(.menu).labelsHidden().frame(width: 140)
+            Button(action: { settings.customApps.removeAll { $0.id == customApp.id } }) { Image(systemName: "trash").foregroundColor(.red) }
+            .buttonStyle(.plain).padding(.leading, 5)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 2)
-        // 🌟 뷰가 나타나거나 앱이 변경될 때 아이콘 로딩 트리거
+        .padding(.horizontal, 10).padding(.vertical, 2)
         .onAppear { loadIcon() }
         .onChange(of: customApp.bundleIdentifier) { _ in loadIcon() }
     }
-    
-    // 🌟 백그라운드 스레드에서 무거운 작업을 처리하여 메인 UI 스레드를 보호하는 함수
+
     private func loadIcon() {
         let bundleID = customApp.bundleIdentifier
         guard !bundleID.isEmpty else { return }
-        
         DispatchQueue.global(qos: .userInitiated).async {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
             let icon = NSWorkspace.shared.icon(forFile: url.path)
-            
-            DispatchQueue.main.async {
-                self.appIcon = icon
-            }
+            DispatchQueue.main.async { self.appIcon = icon }
         }
     }
 }

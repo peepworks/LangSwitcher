@@ -99,6 +99,11 @@ class SettingsManager: ObservableObject {
         }
     }
     
+    // 🌟 추가할 3가지 마스터 스위치 상태 변수 (기본값: true)
+    @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true
+    @AppStorage("isAppSpecificEnabled") var isAppSpecificEnabled: Bool = true
+    @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true
+    
     private init() {
         let d = UserDefaults.standard
         isCtrlActive = d.bool(forKey: "isCtrlActive"); isCmdActive = d.bool(forKey: "isCmdActive"); isOptActive = d.bool(forKey: "isOptActive")
