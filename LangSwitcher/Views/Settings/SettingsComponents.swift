@@ -18,8 +18,8 @@
 
 import SwiftUI
 import Dispatch
-import AppKit // 🌟 앱 아이콘과 파일 선택 창을 띄우기 위해 꼭 필요합니다!
-import UniformTypeIdentifiers // 🌟 이 줄을 꼭 추가해 주세요!
+import AppKit
+import UniformTypeIdentifiers
 
 // 🌟 앱 실행 시 딱 한 번만 메모리에 상주하는 전역 키맵
 let globalKeyMap: [UInt16: String] = [
@@ -41,7 +41,7 @@ let globalKeyMap: [UInt16: String] = [
 func formatKeyEquivalent(modifierFlags: UInt, keyCode: UInt16) -> String {
     var parts: [String] = []
     let flags = NSEvent.ModifierFlags(rawValue: modifierFlags)
-    
+
     if flags.contains(.control) { parts.append("⌃") }
     if flags.contains(.option)  { parts.append("⌥") }
     if flags.contains(.shift)   { parts.append("⇧") }
@@ -97,6 +97,7 @@ struct ToggleShortcutRow: View {
     }
 
     private func startRecording() {
+        // 🌟 이미 완벽한 순서 (차단 -> 타이머 -> 콜백)
         EventMonitor.shared.isPaused = true
         class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
         let state = RState()
@@ -162,7 +163,6 @@ struct ToggleShortcutRow: View {
         }
     }
 
-    // 🌟 [리뷰 반영] 해제 순서 통일: 콜백 해제 후 isPaused 해제
     private func stopRecording() {
         timeoutTask?.cancel()
         EventMonitor.shared.shortcutRecordingCallback = nil
@@ -228,12 +228,17 @@ struct CustomShortcutRow: View {
     }
 
     private func startRecording() {
+        // 🌟 [수정됨] 1. 가장 먼저 시스템 이벤트 개입 차단 (기존 누락됨)
+        EventMonitor.shared.isPaused = true
         isRecording = true
+        
+        // 🌟 2. 타이머 설정
         timeoutTask?.cancel()
         let task = DispatchWorkItem { if self.isRecording { self.stopRecording() } }
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 
+        // 🌟 3. 마지막으로 콜백 등록
         EventMonitor.shared.shortcutRecordingCallback = { event in
             let keyCode = event.keyCode
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -252,10 +257,10 @@ struct CustomShortcutRow: View {
         }
     }
 
-    // 🌟 [리뷰 반영] 해제 순서 통일
     private func stopRecording() {
-        timeoutTask?.cancel()
-        EventMonitor.shared.shortcutRecordingCallback = nil
+        timeoutTask?.cancel() // 타이머 해제
+        EventMonitor.shared.shortcutRecordingCallback = nil // 콜백 해제
+        EventMonitor.shared.isPaused = false // 🌟 [수정됨] 이벤트 개입 차단 해제 (기존 누락됨)
         isRecording = false
     }
 }
@@ -268,7 +273,6 @@ struct AppLaunchShortcutRow: View {
     @State private var isRecording = false
     @State private var timeoutTask: DispatchWorkItem?
     
-    // 🌟 [리뷰 반영] 비동기로 이미지를 받아올 상태 변수 추가
     @State private var appIcon: NSImage? = nil
 
     var body: some View {
@@ -281,7 +285,6 @@ struct AppLaunchShortcutRow: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    // 🌟 기존의 NSWorkspace.shared.urlForApplication... (동기 I/O) 제거!
                     if let icon = appIcon {
                         Image(nsImage: icon)
                             .resizable()
@@ -320,14 +323,13 @@ struct AppLaunchShortcutRow: View {
         .padding(.vertical, 2)
         .onDisappear { stopRecording() }
         .onAppear {
-            loadIcon() // 화면에 뷰가 나타날 때 아이콘 로딩 시작
+            loadIcon()
         }
         .onChange(of: shortcut.bundleIdentifier) { _ in
-            loadIcon() // 앱이 새로 선택되었을 때 아이콘 다시 로딩
+            loadIcon()
         }
     }
 
-    // 🌟 [리뷰 반영] 메인 스레드를 멈추지 않고 백그라운드에서 아이콘을 로드하는 함수
     private func loadIcon() {
         let bundleID = shortcut.bundleIdentifier
         guard !bundleID.isEmpty else { return }
@@ -358,12 +360,17 @@ struct AppLaunchShortcutRow: View {
     }
 
     private func startRecording() {
+        // 🌟 [수정됨] 1. 가장 먼저 시스템 이벤트 개입 차단 (기존 누락됨)
+        EventMonitor.shared.isPaused = true
         isRecording = true
+        
+        // 🌟 2. 타이머 설정
         timeoutTask?.cancel()
         let task = DispatchWorkItem { if self.isRecording { self.stopRecording() } }
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 
+        // 🌟 3. 마지막으로 콜백 등록
         EventMonitor.shared.shortcutRecordingCallback = { event in
             let keyCode = event.keyCode
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -382,10 +389,10 @@ struct AppLaunchShortcutRow: View {
         }
     }
 
-    // 🌟 [리뷰 반영] 해제 순서 통일
     private func stopRecording() {
-        timeoutTask?.cancel()
-        EventMonitor.shared.shortcutRecordingCallback = nil
+        timeoutTask?.cancel() // 타이머 해제
+        EventMonitor.shared.shortcutRecordingCallback = nil // 콜백 해제
+        EventMonitor.shared.isPaused = false // 🌟 [수정됨] 이벤트 개입 차단 해제 (기존 누락됨)
         isRecording = false
     }
 }

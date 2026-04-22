@@ -41,7 +41,6 @@ struct AppSpecificSettingsView: View {
                         Text(String(localized: "No apps configured.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20)
                     }
                     
-                    // 🌟 꼬리표 삭제 로직을 제거하고 깔끔하게 호출합니다.
                     ForEach($settings.customApps) { $app in
                         CustomAppRow(customApp: $app)
                     }
@@ -67,17 +66,21 @@ struct AppSpecificSettingsView: View {
     }
 }
 
-// CustomAppRow 컴포넌트 수정
+// 🌟 [리뷰 반영] CustomAppRow 비동기 아이콘 로딩 적용
 struct CustomAppRow: View {
     @Binding var customApp: CustomApp
     @ObservedObject private var settings = SettingsManager.shared
+    
+    // 🌟 비동기로 가져올 아이콘 상태 변수
+    @State private var appIcon: NSImage? = nil
 
     var body: some View {
         HStack(spacing: 8) {
             
             HStack(spacing: 8) {
-                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: customApp.bundleIdentifier) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                // 🌟 동기 호출 제거 및 상태 변수 기반 렌더링
+                if let icon = appIcon {
+                    Image(nsImage: icon)
                         .resizable()
                         .frame(width: 20, height: 20)
                 } else {
@@ -110,6 +113,24 @@ struct CustomAppRow: View {
             .padding(.leading, 5)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 2) // 🌟 상하 여백 최소화
+        .padding(.vertical, 2)
+        // 🌟 뷰가 나타나거나 앱이 변경될 때 아이콘 로딩 트리거
+        .onAppear { loadIcon() }
+        .onChange(of: customApp.bundleIdentifier) { _ in loadIcon() }
+    }
+    
+    // 🌟 백그라운드 스레드에서 무거운 작업을 처리하여 메인 UI 스레드를 보호하는 함수
+    private func loadIcon() {
+        let bundleID = customApp.bundleIdentifier
+        guard !bundleID.isEmpty else { return }
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            
+            DispatchQueue.main.async {
+                self.appIcon = icon
+            }
+        }
     }
 }

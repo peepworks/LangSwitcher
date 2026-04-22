@@ -25,7 +25,6 @@ struct TypoCorrectionSettingsView: View {
     @State private var conflictMessage = ""
     @State private var showDuplicateWarning = false
     
-    // 🌟 [리뷰 반영] 무한 대기(먹통) 방지를 위한 타이머 변수 추가
     @State private var timeoutTask: DispatchWorkItem?
 
     var body: some View {
@@ -97,9 +96,11 @@ struct TypoCorrectionSettingsView: View {
     // MARK: - Shortcut Recording Logic
     
     private func startRecording() {
-        // 🌟 [리뷰 반영] 5초 자동 해제 타이머 설정
-        timeoutTask?.cancel() // 기존에 돌고 있던 타이머가 있다면 취소
+        // 🌟 [리뷰 반영] ① 가장 먼저 시스템 이벤트를 차단하여 외부 개입을 막고 안전한 환경을 확보합니다.
+        EventMonitor.shared.isPaused = true
         
+        // 🌟 [리뷰 반영] ② 안전한 상태에서 타이머를 설정합니다.
+        timeoutTask?.cancel()
         let task = DispatchWorkItem {
             self.isRecording = false
             self.showDuplicateWarning = false
@@ -108,12 +109,10 @@ struct TypoCorrectionSettingsView: View {
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 
-        // ----------------------------------------------------
-
-        EventMonitor.shared.isPaused = true
         class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
         let state = RState()
 
+        // 🌟 [리뷰 반영] ③ 마지막으로 콜백을 등록하여 입력을 받아들입니다.
         EventMonitor.shared.shortcutRecordingCallback = { e in
             let code = e.keyCode
             let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -157,7 +156,7 @@ struct TypoCorrectionSettingsView: View {
     }
     
     private func registerShortcut(keyCode: UInt16, modifiers: UInt64, display: String) {
-        timeoutTask?.cancel() // 🌟 단축키 입력이 완료되었거나 중복이면 타이머를 취소
+        timeoutTask?.cancel()
         
         if let conflictName = getConflictMessage(keyCode: keyCode, modifierFlags: modifiers) {
             NSSound.beep()
@@ -174,12 +173,11 @@ struct TypoCorrectionSettingsView: View {
     }
     
     private func stopRecording() {
-        timeoutTask?.cancel() // 🌟 화면을 벗어날 때도 타이머를 안전하게 취소
+        timeoutTask?.cancel()
         EventMonitor.shared.shortcutRecordingCallback = nil
         EventMonitor.shared.isPaused = false
     }
     
-    // 단축키 중복을 검사하는 함수
     private func getConflictMessage(keyCode: UInt16, modifierFlags: UInt64) -> String? {
         let settings = SettingsManager.shared
             

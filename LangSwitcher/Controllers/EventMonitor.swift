@@ -25,7 +25,6 @@ class EventMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    // 🌟 단일 동시성 제어 큐 (모든 상태는 이것 하나로 통제됩니다)
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.state", attributes: .concurrent)
 
     private var _shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
@@ -70,13 +69,12 @@ class EventMonitor {
         set { stateQueue.async(flags: .barrier) { self._lastCapsLockTime = newValue } }
     }
 
-    // 🌟 [리뷰 반영] NSLock 삭제 및 stateQueue로 관리되는 프라이빗 변수로 변경
     private var _lastActionTime: Date = Date.distantPast
     private let actionCooldown: TimeInterval = 0.15
 
     private init() {}
 
-    // MARK: - Atomic State Updates (원자적 상태 변경 함수들)
+    // MARK: - Atomic State Updates
     
     func handleInitialModifierPress(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
         stateQueue.async(flags: .barrier) {
@@ -110,10 +108,8 @@ class EventMonitor {
         }
     }
 
-    // 🌟 [리뷰 반영] 쿨다운 시간을 검사하고 업데이트하는 과정을 하나의 안전한 트랜잭션으로 처리합니다.
     func canExecuteAction() -> Bool {
         var allowed = false
-        // sync + barrier를 사용하여 읽기와 쓰기를 동시에 방해받지 않고 실행
         stateQueue.sync(flags: .barrier) {
             let now = Date()
             if now.timeIntervalSince(self._lastActionTime) >= self.actionCooldown {
@@ -124,6 +120,145 @@ class EventMonitor {
         return allowed
     }
     // -------------------------------------------------------------------------
+
+    // MARK: - 🌟 [리뷰 반영] 기능별 분리된 이벤트 처리기 (모듈화)
+    
+    private func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
+        let settings = SettingsManager.shared
+        var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
+        var isToggle = false; var appliedRule = ""
+
+        let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if keyCode == 57 {
+            let now = Date()
+            if now.timeIntervalSince(self.lastCapsLockTime) < 0.25 { return nil }
+            self.lastCapsLockTime = now
+
+            if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == 57 && !settings.typoDisplayString.isEmpty {
+                DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+                return nil
+            }
+
+            if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
+                isToggle = true; appliedRule = "Toggle Key"
+            } else {
+                for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
+            }
+        } else {
+            if !flags.isEmpty {
+                if self.currentModifiers.isEmpty {
+                    self.handleInitialModifierPress(keyCode: keyCode, flags: flags)
+                } else {
+                    self.handleAdditionalModifierPress(flags: flags)
+                }
+            } else {
+                if !self.didPressOtherKey {
+                    if let singleCode = self.singleModifierKeyCode {
+                        if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == singleCode && !settings.typoDisplayString.isEmpty {
+                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+                            self.clearModifierState()
+                            return nil
+                        }
+
+                        if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == singleCode && !settings.toggleDisplayString.isEmpty {
+                            isToggle = true; appliedRule = "Toggle Key"
+                        } else {
+                            for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                            if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
+                        }
+                    } else if !self.maxModifiers.isEmpty {
+                        let modsRaw = UInt64(self.maxModifiers.rawValue)
+
+                        if settings.isTypoCorrectionEnabled && settings.typoKeyCode == 0 && settings.typoModifierFlags == modsRaw && !settings.typoDisplayString.isEmpty {
+                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+                            self.clearModifierState()
+                            return nil
+                        }
+
+                        if settings.toggleKeyCode == 0 && settings.toggleModifierFlags == modsRaw && !settings.toggleDisplayString.isEmpty {
+                            isToggle = true; appliedRule = "Toggle Key"
+                        } else {
+                            for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                            if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
+                        }
+                    }
+                }
+                self.clearModifierState()
+            }
+        }
+        
+        if isToggle || targetAppBundleID != nil || targetLang != nil {
+            EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+            if keyCode == 57 { return nil }
+            return Unmanaged.passUnretained(event)
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func handleKeyDown(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
+        let settings = SettingsManager.shared
+        var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
+        var isToggle = false; var appliedRule = ""
+
+        self.markOtherKeyPressed()
+        let flags = modifierFlags.intersection([.command, .control, .option, .shift])
+
+        if settings.isTypoCorrectionEnabled &&
+           settings.typoKeyCode == keyCode &&
+           NSEvent.ModifierFlags(rawValue: UInt(settings.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
+           !settings.typoDisplayString.isEmpty {
+            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+            return nil
+        }
+
+        if settings.toggleKeyCode == keyCode && !settings.toggleDisplayString.isEmpty {
+            let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(settings.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
+            if flags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
+        }
+
+        if !isToggle {
+            for appLaunch in settings.appLaunchShortcuts {
+                let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
+                let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
+                if !isSingleModifier && !isMultiModifierOnly {
+                    if appLaunch.keyCode == keyCode && !appLaunch.displayString.isEmpty {
+                        let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(appLaunch.modifierFlags)).intersection([.command, .control, .option, .shift])
+                        if flags == savedModifierFlags { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                    }
+                }
+            }
+        }
+
+        if !isToggle && targetAppBundleID == nil {
+            for shortcut in settings.customShortcuts {
+                let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(shortcut.keyCode) && shortcut.modifierFlags == 0
+                let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
+                if !isSingleModifier && !isMultiModifierOnly {
+                    if shortcut.keyCode == keyCode && !shortcut.displayString.isEmpty {
+                        let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(shortcut.modifierFlags)).intersection([.command, .control, .option, .shift])
+                        if flags == savedModifierFlags { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                    }
+                }
+            }
+        }
+
+        if !isToggle && targetAppBundleID == nil && targetLang == nil && keyCode == 49 {
+            if flags == .control && settings.isCtrlActive { targetLang = settings.ctrlLang; appliedRule = "Default Shortcut" }
+            else if flags == .command && settings.isCmdActive { targetLang = settings.cmdLang; appliedRule = "Default Shortcut" }
+            else if flags == .option && settings.isOptActive { targetLang = settings.optLang; appliedRule = "Default Shortcut" }
+        }
+
+        if isToggle || targetAppBundleID != nil || targetLang != nil {
+            EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+            if isToggle { return nil }
+            return Unmanaged.passUnretained(event)
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    // MARK: - Lifecycle
 
     func start() {
         if eventTap != nil { return }
@@ -138,6 +273,7 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
+                // 1. 방어 및 예외 이벤트 통과
                 if event.getIntegerValueField(.eventSourceUserData) == 9999 {
                     return Unmanaged.passUnretained(event)
                 }
@@ -147,6 +283,7 @@ class EventMonitor {
                     return nil
                 }
 
+                // 2. 단축키 기록 모드 중일 때
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
                         if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
@@ -156,11 +293,13 @@ class EventMonitor {
                 
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                 
+                // 3. HyperKey 매핑 확인
                 if SettingsManager.shared.isHyperKeyEnabled {
                     let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
                     if shouldBlock { return nil }
                 }
 
+                // 4. 예외 앱 활성화 시 통과
                 let currentAppID = AppMonitor.shared.activeAppBundleID
                 if !currentAppID.isEmpty {
                     if SettingsManager.shared.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
@@ -168,139 +307,20 @@ class EventMonitor {
                     }
                 }
 
+                // 5. 사용자가 임의로 정지시켰을 때 통과
                 if EventMonitor.shared.isPaused { return Unmanaged.passUnretained(event) }
-
-                let settings = SettingsManager.shared
-                var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
-                var isToggle = false
-                var appliedRule = ""
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
+                // 🌟 [리뷰 반영] 거대 클로저를 분리하여 가독성 및 유지보수성을 극대화한 구간
                 if type == .flagsChanged {
-                    let flags = nsModifierFlags.intersection(.deviceIndependentFlagsMask)
-
-                    if keyCode == 57 {
-                        let now = Date()
-                        if now.timeIntervalSince(EventMonitor.shared.lastCapsLockTime) < 0.25 { return nil }
-                        EventMonitor.shared.lastCapsLockTime = now
-
-                        if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == 57 && !settings.typoDisplayString.isEmpty {
-                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                            return nil
-                        }
-
-                        if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
-                            isToggle = true; appliedRule = "Toggle Key"
-                        } else {
-                            for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                            if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
-                        }
-                    } else {
-                        if !flags.isEmpty {
-                            if EventMonitor.shared.currentModifiers.isEmpty {
-                                EventMonitor.shared.handleInitialModifierPress(keyCode: keyCode, flags: flags)
-                            } else {
-                                EventMonitor.shared.handleAdditionalModifierPress(flags: flags)
-                            }
-                        } else {
-                            if !EventMonitor.shared.didPressOtherKey {
-                                if let singleCode = EventMonitor.shared.singleModifierKeyCode {
-                                    if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == singleCode && !settings.typoDisplayString.isEmpty {
-                                        DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                                        EventMonitor.shared.clearModifierState()
-                                        return nil
-                                    }
-
-                                    if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == singleCode && !settings.toggleDisplayString.isEmpty {
-                                        isToggle = true; appliedRule = "Toggle Key"
-                                    } else {
-                                        for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                                        if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
-                                    }
-                                } else if !EventMonitor.shared.maxModifiers.isEmpty {
-                                    let modsRaw = UInt64(EventMonitor.shared.maxModifiers.rawValue)
-
-                                    if settings.isTypoCorrectionEnabled && settings.typoKeyCode == 0 && settings.typoModifierFlags == modsRaw && !settings.typoDisplayString.isEmpty {
-                                        DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                                        EventMonitor.shared.clearModifierState()
-                                        return nil
-                                    }
-
-                                    if settings.toggleKeyCode == 0 && settings.toggleModifierFlags == modsRaw && !settings.toggleDisplayString.isEmpty {
-                                        isToggle = true; appliedRule = "Toggle Key"
-                                    } else {
-                                        for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                                        if targetAppBundleID == nil { for shortcut in settings.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break } }
-                                    }
-                                }
-                            }
-                            EventMonitor.shared.clearModifierState()
-                        }
-                    }
-                    if isToggle || targetAppBundleID != nil || targetLang != nil {
-                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-                        if keyCode == 57 { return nil }
-                        return Unmanaged.passUnretained(event)
-                    }
+                    return EventMonitor.shared.handleFlagsChanged(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags)
                 }
 
                 if type == .keyDown {
-                    EventMonitor.shared.markOtherKeyPressed()
-                    
-                    let modifierFlags = nsModifierFlags.intersection([.command, .control, .option, .shift])
-
-                    if settings.isTypoCorrectionEnabled &&
-                       settings.typoKeyCode == keyCode &&
-                       NSEvent.ModifierFlags(rawValue: UInt(settings.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == modifierFlags &&
-                       !settings.typoDisplayString.isEmpty {
-                        DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                        return nil
-                    }
-
-                    if settings.toggleKeyCode == keyCode && !settings.toggleDisplayString.isEmpty {
-                        let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(settings.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
-                        if modifierFlags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
-                    }
-
-                    if !isToggle {
-                        for appLaunch in settings.appLaunchShortcuts {
-                            let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
-                            let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
-                            if !isSingleModifier && !isMultiModifierOnly {
-                                if appLaunch.keyCode == keyCode && !appLaunch.displayString.isEmpty {
-                                    let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(appLaunch.modifierFlags)).intersection([.command, .control, .option, .shift])
-                                    if modifierFlags == savedModifierFlags { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                                }
-                            }
-                        }
-                    }
-
-                    if !isToggle && targetAppBundleID == nil {
-                        for shortcut in settings.customShortcuts {
-                            let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(shortcut.keyCode) && shortcut.modifierFlags == 0
-                            let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
-                            if !isSingleModifier && !isMultiModifierOnly {
-                                if shortcut.keyCode == keyCode && !shortcut.displayString.isEmpty {
-                                    let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(shortcut.modifierFlags)).intersection([.command, .control, .option, .shift])
-                                    if modifierFlags == savedModifierFlags { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
-                                }
-                            }
-                        }
-                    }
-
-                    if !isToggle && targetAppBundleID == nil && targetLang == nil && keyCode == 49 {
-                        if modifierFlags == .control && settings.isCtrlActive { targetLang = settings.ctrlLang; appliedRule = "Default Shortcut" }
-                        else if modifierFlags == .command && settings.isCmdActive { targetLang = settings.cmdLang; appliedRule = "Default Shortcut" }
-                        else if modifierFlags == .option && settings.isOptActive { targetLang = settings.optLang; appliedRule = "Default Shortcut" }
-                    }
-
-                    if isToggle || targetAppBundleID != nil || targetLang != nil {
-                        EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-                        if isToggle { return nil }
-                        return Unmanaged.passUnretained(event)
-                    }
+                    return EventMonitor.shared.handleKeyDown(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags)
                 }
+                
                 return Unmanaged.passUnretained(event)
             }, userInfo: nil)
 
@@ -323,7 +343,6 @@ class EventMonitor {
             return
         }
 
-        // 🌟 [리뷰 반영] NSLock을 제거하고, 안전한 단일 큐 트랜잭션 함수로 변경
         guard EventMonitor.shared.canExecuteAction() else { return }
 
         let settings = SettingsManager.shared

@@ -29,10 +29,11 @@ enum SettingsTab: Hashable {
 }
 
 struct SettingsView: View {
-    @StateObject private var accManager = AccessibilityManager.shared
+    // 🌟 [리뷰 반영] 싱글톤 객체이므로 @StateObject에서 @ObservedObject로 변경
+    @ObservedObject private var accManager = AccessibilityManager.shared
     @State private var selectedTab: SettingsTab? = .general
 
-    // 🌟 한국어 사용자 여부 확인 (OS 선호 언어 목록에 한국어가 있는지 체크)
+    // 한국어 사용자 여부 확인 (OS 선호 언어 목록에 한국어가 있는지 체크)
     private var isKoreanUser: Bool {
         Locale.preferredLanguages.contains { $0.hasPrefix("ko") }
     }
@@ -50,7 +51,7 @@ struct SettingsView: View {
                     Label(String(localized: "App Launch Shortcuts"), systemImage: "square.grid.2x2")
                         .tag(SettingsTab.appLaunch)
                     
-                    // 🌟 한국어 사용자일 때만 '한/영 오타 변환' 메뉴를 사이드바에 표시합니다.
+                    // 한국어 사용자일 때만 '한/영 오타 변환' 메뉴를 사이드바에 표시
                     if isKoreanUser {
                         Label(String(localized: "Typo Correction"), systemImage: "text.cursor")
                             .tag(SettingsTab.typoCorrection)
@@ -73,7 +74,6 @@ struct SettingsView: View {
                 case .appSpecific: AppSpecificSettingsView()
                 case .appLaunch: AppLaunchSettingsView()
                 case .typoCorrection:
-                    // 🌟 화면 접근 시에도 안전하게 한 번 더 체크합니다.
                     if isKoreanUser { TypoCorrectionSettingsView() }
                 case .excludedApps: ExcludedAppsSettingsView()
                 case .about: AboutSettingsView()
@@ -87,7 +87,6 @@ struct SettingsView: View {
         .onAppear {
             accManager.checkPermission()
             
-            // 만약 한국어 사용자가 아닌데 초기 탭이 오타 변환으로 꼬여있을 경우 General로 초기화
             if !isKoreanUser && selectedTab == .typoCorrection {
                 selectedTab = .general
             }
