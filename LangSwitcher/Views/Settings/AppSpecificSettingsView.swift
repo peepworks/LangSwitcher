@@ -87,6 +87,9 @@ struct CustomAppRow: View {
     @Binding var customApp: CustomApp
     @ObservedObject private var settings = SettingsManager.shared
     @State private var appIcon: NSImage? = nil
+    
+    // 🌟 [추가됨] 현재 진행 중인 아이콘 로드 작업을 식별하는 고유 ID
+    @State private var currentIconLoadID = UUID()
 
     var body: some View {
         HStack(spacing: 8) {
@@ -103,7 +106,10 @@ struct CustomAppRow: View {
                 Text(String(localized: "Select Language...")).tag("")
                 ForEach(InputSourceManager.shared.availableKeyboards) { keyboard in Text(keyboard.name).tag(keyboard.id) }
             }.pickerStyle(.menu).labelsHidden().frame(width: 140)
-            Button(action: { settings.customApps.removeAll { $0.id == customApp.id } }) { Image(systemName: "trash").foregroundColor(.red) }
+            
+            Button(action: { settings.customApps.removeAll { $0.id == customApp.id } }) {
+                Image(systemName: "trash").foregroundColor(.red)
+            }
             .buttonStyle(.plain).padding(.leading, 5)
         }
         .padding(.horizontal, 10).padding(.vertical, 2)
@@ -114,10 +120,21 @@ struct CustomAppRow: View {
     private func loadIcon() {
         let bundleID = customApp.bundleIdentifier
         guard !bundleID.isEmpty else { return }
+        
+        // 🌟 [추가됨] 매 호출마다 새로운 고유 ID(번호표) 발급 및 저장
+        let loadID = UUID()
+        self.currentIconLoadID = loadID
+        
         DispatchQueue.global(qos: .userInitiated).async {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
             let icon = NSWorkspace.shared.icon(forFile: url.path)
-            DispatchQueue.main.async { self.appIcon = icon }
+            
+            DispatchQueue.main.async {
+                // 🌟 [추가됨] 현재 저장된 최신 ID와 내 ID가 일치할 때만 UI 업데이트 (덮어쓰기 방어)
+                if self.currentIconLoadID == loadID {
+                    self.appIcon = icon
+                }
+            }
         }
     }
 }

@@ -60,11 +60,11 @@ struct ExcludedAppsSettingsView: View {
                                 .padding(.vertical, 20)
                                 .frame(maxWidth: .infinity, alignment: .center)
                         } else {
-                            ForEach(settings.excludedApps) { app in
-                                // 🌟 기존 호출 방식 그대로 사용
-                                ExcludedAppRow(app: app) {
-                                    settings.excludedApps.removeAll { $0.id == app.id }
-                                }
+                            // 🌟 [수정됨] 배열에 $를 붙여 바인딩 형태로 순회합니다.
+                            ForEach($settings.excludedApps) { $app in
+                                // 🌟 [수정됨] 클로저 없이, 매개변수 이름을 excludedApp으로 맞춰서 넘겨줍니다.
+                                ExcludedAppRow(excludedApp: $app)
+                                
                                 if app.id != settings.excludedApps.last?.id {
                                     Divider().padding(.horizontal, 15)
                                 }
@@ -104,49 +104,51 @@ struct ExcludedAppsSettingsView: View {
     }
 }
 
-// 🌟 에러 해결: 구버전 macOS에서도 안전한 DispatchQueue 백그라운드 로딩으로 변경
 struct ExcludedAppRow: View {
-    let app: ExcludedApp
-    let onDelete: () -> Void
-    
+    @Binding var excludedApp: ExcludedApp
+    @ObservedObject private var settings = SettingsManager.shared
     @State private var appIcon: NSImage? = nil
+    
+    // 현재 진행 중인 아이콘 로드 작업을 식별하는 고유 ID
+    @State private var currentIconLoadID = UUID()
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
             if let icon = appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 24, height: 24)
+                Image(nsImage: icon).resizable().frame(width: 20, height: 20)
             } else {
-                Image(systemName: "app.dashed")
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .foregroundColor(.secondary)
+                Image(systemName: "app.dashed").resizable().frame(width: 20, height: 20).foregroundColor(.secondary)
             }
-            
-            Text(app.appName)
+            Text(excludedApp.appName).lineLimit(1)
             Spacer()
-            Button(action: onDelete) {
+            
+            Button(action: { settings.excludedApps.removeAll { $0.id == excludedApp.id } }) {
                 Image(systemName: "trash").foregroundColor(.red)
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 15)
-        .padding(.vertical, 10)
-        .onAppear {
-            loadIcon()
-        }
+        .padding(.horizontal, 10).padding(.vertical, 2)
+        .onAppear { loadIcon() }
+        .onChange(of: excludedApp.bundleIdentifier) { _ in loadIcon() }
     }
-    
-    // 백그라운드 스레드에서 아이콘을 안전하게 불러오는 함수
+
     private func loadIcon() {
-        let bundleID = app.bundleIdentifier
+        let bundleID = excludedApp.bundleIdentifier
+        guard !bundleID.isEmpty else { return }
+        
+        // 매 호출마다 새로운 고유 ID(번호표) 발급 및 저장
+        let loadID = UUID()
+        self.currentIconLoadID = loadID
+        
         DispatchQueue.global(qos: .userInitiated).async {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
             let icon = NSWorkspace.shared.icon(forFile: url.path)
             
             DispatchQueue.main.async {
-                self.appIcon = icon
+                // 현재 저장된 최신 ID와 내 ID가 일치할 때만 UI 업데이트 (덮어쓰기 방어)
+                if self.currentIconLoadID == loadID {
+                    self.appIcon = icon
+                }
             }
         }
     }

@@ -23,7 +23,7 @@ import Cocoa
 class HyperKeyManager {
     static let shared = HyperKeyManager()
 
-    // 🌟 [리뷰 반영] 스레드 안전성을 보장하기 위한 가벼운 자물쇠(Lock) 추가
+    // 🌟 스레드 안전성을 보장하기 위한 가벼운 자물쇠(Lock) 추가
     private let stateLock = NSLock()
 
     private var isHyperDown = false
@@ -44,21 +44,25 @@ class HyperKeyManager {
         stateLock.unlock()
     }
 
+    // 🌟 [리뷰 반영] 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
     private func setupHardwareMapping(enable: Bool) {
-        let task = Process()
-        task.launchPath = "/usr/bin/hidutil"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let task = Process()
+            task.launchPath = "/usr/bin/hidutil"
 
-        let mappingString = enable
-            ? "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x70000006E}]}"
-            : "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x700000039}]}"
+            let mappingString = enable
+                ? "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x70000006E}]}"
+                : "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x700000039}]}"
 
-        task.arguments = ["property", "--set", mappingString]
+            task.arguments = ["property", "--set", mappingString]
 
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            print("hidutil 실행 실패: \(error)")
+            do {
+                try task.run()
+                // 백그라운드 스레드에서 대기하므로 메인 UI 스위치 애니메이션은 버벅거리지 않습니다.
+                task.waitUntilExit()
+            } catch {
+                print("hidutil 실행 실패: \(error)")
+            }
         }
     }
 

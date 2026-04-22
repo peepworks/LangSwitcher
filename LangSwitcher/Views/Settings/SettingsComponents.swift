@@ -165,8 +165,8 @@ struct ToggleShortcutRow: View {
 
     private func stopRecording() {
         timeoutTask?.cancel()
-        EventMonitor.shared.shortcutRecordingCallback = nil
-        EventMonitor.shared.isPaused = false
+        // 🌟 [리뷰 7번 반영] EventMonitor 내부의 원자적 처리 함수 호출
+        EventMonitor.shared.cancelShortcutRecording()
         isRecording = false
     }
 
@@ -191,15 +191,22 @@ struct CustomShortcutRow: View {
     
     @State private var isRecording = false
     @State private var timeoutTask: DispatchWorkItem?
+    
+    // 🌟 [추가됨] 중복 경고 표시용 상태 변수
+    @State private var showDuplicateWarning = false
+    @State private var conflictMessage = ""
 
     var body: some View {
         HStack(spacing: 8) {
             Button(action: {
                 if isRecording { stopRecording() } else { startRecording() }
             }) {
-                Text(isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString))
+                // 🌟 [수정됨] 중복 시 경고 메시지를 보여주도록 UI 변경
+                Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString)))
                     .frame(width: 90)
-                    .foregroundColor(isRecording ? .red : .primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8) // 글자가 길면 살짝 줄여줌
+                    .foregroundColor(showDuplicateWarning ? .red : (isRecording ? .red : .primary))
             }
             
             Spacer()
@@ -228,40 +235,97 @@ struct CustomShortcutRow: View {
     }
 
     private func startRecording() {
-        // 🌟 [수정됨] 1. 가장 먼저 시스템 이벤트 개입 차단 (기존 누락됨)
         EventMonitor.shared.isPaused = true
         isRecording = true
+        showDuplicateWarning = false
         
-        // 🌟 2. 타이머 설정
         timeoutTask?.cancel()
         let task = DispatchWorkItem { if self.isRecording { self.stopRecording() } }
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 
-        // 🌟 3. 마지막으로 콜백 등록
-        EventMonitor.shared.shortcutRecordingCallback = { event in
-            let keyCode = event.keyCode
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let displayString = formatKeyEquivalent(modifierFlags: flags.rawValue, keyCode: keyCode)
+        class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
+        let state = RState()
+
+        EventMonitor.shared.shortcutRecordingCallback = { e in
+            let code = e.keyCode
+            let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
             
-            if !displayString.isEmpty {
-                DispatchQueue.main.async {
-                    if let index = settings.customShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
-                        settings.customShortcuts[index].keyCode = keyCode
-                        settings.customShortcuts[index].modifierFlags = UInt64(flags.rawValue)
-                        settings.customShortcuts[index].displayString = displayString
+            if e.type == .flagsChanged {
+                if code == 57 { DispatchQueue.main.async { self.saveShortcut(keyCode: 57, modifiers: 0, displayString: "⇪ Caps Lock") }; return }
+                if !flags.isEmpty { state.m.insert(code); state.f.formUnion(flags); return }
+                else if !state.r && !state.m.isEmpty {
+                    if state.m.count == 1 {
+                        let c = state.m.first!
+                        let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
+                        DispatchQueue.main.async { self.saveShortcut(keyCode: c, modifiers: 0, displayString: str) }
+                    } else {
+                        var str = ""
+                        if state.f.contains(.control) { str += "⌃ " }
+                        if state.f.contains(.option) { str += "⌥ " }
+                        if state.f.contains(.shift) { str += "⇧ " }
+                        if state.f.contains(.command) { str += "⌘ " }
+                        DispatchQueue.main.async { self.saveShortcut(keyCode: 0, modifiers: UInt64(state.f.rawValue), displayString: str.trimmingCharacters(in: .whitespaces)) }
                     }
+                    return
                 }
+                state.m.removeAll(); state.f = []; state.r = false; return
+            } else if e.type == .keyDown {
+                state.r = true
+                var str = ""
+                if flags.contains(.control) { str += "⌃ " }
+                if flags.contains(.option) { str += "⌥ " }
+                if flags.contains(.shift) { str += "⇧ " }
+                if flags.contains(.command) { str += "⌘ " }
+
+                if code == 49 { str += "Space" }
+                else if let mapped = globalKeyMap[code] { str += mapped }
+                else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
+                else { str += "Key(\(code))" }
+
+                DispatchQueue.main.async { self.saveShortcut(keyCode: code, modifiers: UInt64(flags.rawValue), displayString: str) }
+                return
             }
-            self.stopRecording()
+        }
+    }
+    
+    // 🌟 [추가됨] 단축키 저장 전 중복 검사 로직
+    private func saveShortcut(keyCode: UInt16, modifiers: UInt64, displayString: String) {
+        if let conflict = getConflictMessage(keyCode: keyCode, modifiers: modifiers) {
+            NSSound.beep() // 에러 소리 재생
+            conflictMessage = String(format: String(localized: "In use: %@"), conflict)
+            showDuplicateWarning = true
+            stopRecording()
+            
+            // 2초 뒤 경고 메시지 해제
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showDuplicateWarning = false
+            }
+        } else {
+            if let index = settings.customShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
+                settings.customShortcuts[index].keyCode = keyCode
+                settings.customShortcuts[index].modifierFlags = modifiers
+                settings.customShortcuts[index].displayString = displayString
+            }
+            stopRecording()
         }
     }
 
     private func stopRecording() {
-        timeoutTask?.cancel() // 타이머 해제
-        EventMonitor.shared.shortcutRecordingCallback = nil // 콜백 해제
-        EventMonitor.shared.isPaused = false // 🌟 [수정됨] 이벤트 개입 차단 해제 (기존 누락됨)
+        timeoutTask?.cancel()
+        EventMonitor.shared.cancelShortcutRecording()
         isRecording = false
+    }
+    
+    // 🌟 [추가됨] 다른 기능들과 중복되는지 검사하는 함수
+    private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
+        if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifiers { return String(localized: "Toggle Key") }
+        if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }
+        if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "App Launch Shortcut") }
+        // 자기 자신을 제외한 다른 Custom Shortcut과 중복되는지 체크
+        if settings.customShortcuts.contains(where: { $0.id != self.shortcut.id && $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "Custom Shortcut") }
+        
+        return nil
     }
 }
 
@@ -274,11 +338,15 @@ struct AppLaunchShortcutRow: View {
     @State private var timeoutTask: DispatchWorkItem?
     
     @State private var appIcon: NSImage? = nil
+    @State private var currentIconLoadID = UUID()
+    
+    // 🌟 [추가됨] 중복 경고 표시용 상태 변수
+    @State private var showDuplicateWarning = false
+    @State private var conflictMessage = ""
 
     var body: some View {
         HStack(spacing: 8) {
             
-            // 1. 앱 선택 및 아이콘 표시
             if shortcut.bundleIdentifier.isEmpty {
                 Button(String(localized: "Select App...")) {
                     selectApp()
@@ -301,17 +369,18 @@ struct AppLaunchShortcutRow: View {
 
             Spacer()
 
-            // 2. 단축키 기록 버튼
             Button(action: {
                 if isRecording { stopRecording() } else { startRecording() }
             }) {
-                Text(isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString))
+                // 🌟 [수정됨] 중복 시 경고 메시지를 보여주도록 UI 변경
+                Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString)))
                     .frame(width: 90)
-                    .foregroundColor(isRecording ? .red : .primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .foregroundColor(showDuplicateWarning ? .red : (isRecording ? .red : .primary))
             }
             .padding(.trailing, 5)
 
-            // 3. 삭제 버튼
             Button(action: {
                 settings.appLaunchShortcuts.removeAll { $0.id == shortcut.id }
             }) {
@@ -322,24 +391,23 @@ struct AppLaunchShortcutRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 2)
         .onDisappear { stopRecording() }
-        .onAppear {
-            loadIcon()
-        }
-        .onChange(of: shortcut.bundleIdentifier) { _ in
-            loadIcon()
-        }
+        .onAppear { loadIcon() }
+        .onChange(of: shortcut.bundleIdentifier) { _ in loadIcon() }
     }
 
     private func loadIcon() {
         let bundleID = shortcut.bundleIdentifier
         guard !bundleID.isEmpty else { return }
+        let loadID = UUID()
+        self.currentIconLoadID = loadID
         
         DispatchQueue.global(qos: .userInitiated).async {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
             let icon = NSWorkspace.shared.icon(forFile: url.path)
-            
             DispatchQueue.main.async {
-                self.appIcon = icon
+                if self.currentIconLoadID == loadID {
+                    self.appIcon = icon
+                }
             }
         }
     }
@@ -360,40 +428,97 @@ struct AppLaunchShortcutRow: View {
     }
 
     private func startRecording() {
-        // 🌟 [수정됨] 1. 가장 먼저 시스템 이벤트 개입 차단 (기존 누락됨)
         EventMonitor.shared.isPaused = true
         isRecording = true
+        showDuplicateWarning = false
         
-        // 🌟 2. 타이머 설정
         timeoutTask?.cancel()
         let task = DispatchWorkItem { if self.isRecording { self.stopRecording() } }
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 
-        // 🌟 3. 마지막으로 콜백 등록
-        EventMonitor.shared.shortcutRecordingCallback = { event in
-            let keyCode = event.keyCode
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let displayString = formatKeyEquivalent(modifierFlags: flags.rawValue, keyCode: keyCode)
-            
-            if !displayString.isEmpty {
-                DispatchQueue.main.async {
-                    if let index = settings.appLaunchShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
-                        settings.appLaunchShortcuts[index].keyCode = keyCode
-                        settings.appLaunchShortcuts[index].modifierFlags = UInt64(flags.rawValue)
-                        settings.appLaunchShortcuts[index].displayString = displayString
+        class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
+        let state = RState()
+
+        EventMonitor.shared.shortcutRecordingCallback = { e in
+            let code = e.keyCode
+            let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            if e.type == .flagsChanged {
+                if code == 57 { DispatchQueue.main.async { self.saveShortcut(keyCode: 57, modifiers: 0, displayString: "⇪ Caps Lock") }; return }
+                if !flags.isEmpty { state.m.insert(code); state.f.formUnion(flags); return }
+                else if !state.r && !state.m.isEmpty {
+                    if state.m.count == 1 {
+                        let c = state.m.first!
+                        let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
+                        DispatchQueue.main.async { self.saveShortcut(keyCode: c, modifiers: 0, displayString: str) }
+                    } else {
+                        var str = ""
+                        if state.f.contains(.control) { str += "⌃ " }
+                        if state.f.contains(.option) { str += "⌥ " }
+                        if state.f.contains(.shift) { str += "⇧ " }
+                        if state.f.contains(.command) { str += "⌘ " }
+                        DispatchQueue.main.async { self.saveShortcut(keyCode: 0, modifiers: UInt64(state.f.rawValue), displayString: str.trimmingCharacters(in: .whitespaces)) }
                     }
+                    return
                 }
+                state.m.removeAll(); state.f = []; state.r = false; return
+            } else if e.type == .keyDown {
+                state.r = true
+                var str = ""
+                if flags.contains(.control) { str += "⌃ " }
+                if flags.contains(.option) { str += "⌥ " }
+                if flags.contains(.shift) { str += "⇧ " }
+                if flags.contains(.command) { str += "⌘ " }
+
+                if code == 49 { str += "Space" }
+                else if let mapped = globalKeyMap[code] { str += mapped }
+                else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
+                else { str += "Key(\(code))" }
+
+                DispatchQueue.main.async { self.saveShortcut(keyCode: code, modifiers: UInt64(flags.rawValue), displayString: str) }
+                return
             }
-            self.stopRecording()
+        }
+    }
+    
+    // 🌟 [추가됨] 단축키 저장 전 중복 검사 로직
+    private func saveShortcut(keyCode: UInt16, modifiers: UInt64, displayString: String) {
+        if let conflict = getConflictMessage(keyCode: keyCode, modifiers: modifiers) {
+            NSSound.beep() // 에러 소리 재생
+            conflictMessage = String(format: String(localized: "In use: %@"), conflict)
+            showDuplicateWarning = true
+            stopRecording()
+            
+            // 2초 뒤 경고 메시지 해제
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showDuplicateWarning = false
+            }
+        } else {
+            if let index = settings.appLaunchShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
+                settings.appLaunchShortcuts[index].keyCode = keyCode
+                settings.appLaunchShortcuts[index].modifierFlags = modifiers
+                settings.appLaunchShortcuts[index].displayString = displayString
+            }
+            stopRecording()
         }
     }
 
     private func stopRecording() {
-        timeoutTask?.cancel() // 타이머 해제
-        EventMonitor.shared.shortcutRecordingCallback = nil // 콜백 해제
-        EventMonitor.shared.isPaused = false // 🌟 [수정됨] 이벤트 개입 차단 해제 (기존 누락됨)
+        timeoutTask?.cancel()
+        EventMonitor.shared.cancelShortcutRecording()
         isRecording = false
+    }
+    
+    // 🌟 [추가됨] 다른 기능들과 중복되는지 검사하는 함수
+    private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
+        if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifiers { return String(localized: "Toggle Key") }
+        if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }
+        if settings.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "Custom Shortcut") }
+        // 자기 자신을 제외한 다른 App Launch Shortcut과 중복되는지 체크
+        if settings.appLaunchShortcuts.contains(where: { $0.id != self.shortcut.id && $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "App Launch Shortcut") }
+        
+        return nil
     }
 }
 

@@ -174,8 +174,8 @@ struct TypoCorrectionSettingsView: View {
     
     private func stopRecording() {
         timeoutTask?.cancel()
-        EventMonitor.shared.shortcutRecordingCallback = nil
-        EventMonitor.shared.isPaused = false
+        // 🌟 [리뷰 7번 반영] EventMonitor 내부의 원자적 처리 함수 호출
+        EventMonitor.shared.cancelShortcutRecording()
     }
     
     private func getConflictMessage(keyCode: UInt16, modifierFlags: UInt64) -> String? {

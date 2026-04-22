@@ -32,35 +32,48 @@ class InputSourceManager: ObservableObject {
     private init() { fetchKeyboards() }
 
     func fetchKeyboards() {
-        guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
-        var keyboards: [MacKeyboard] = []
+        // 🌟 [리뷰 반영] 메인 스레드에서만 실행되어야 하는 TIS API 로직을 하나의 블록으로 묶습니다.
+        let fetchTask = {
+            guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
+            var keyboards: [MacKeyboard] = []
 
-        for source in sourceList {
-            guard let isSelectablePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable) else { continue }
-            let isSelectable = Unmanaged<CFBoolean>.fromOpaque(isSelectablePtr).takeUnretainedValue()
-            if !CFBooleanGetValue(isSelectable) { continue }
+            for source in sourceList {
+                guard let isSelectablePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable) else { continue }
+                let isSelectable = Unmanaged<CFBoolean>.fromOpaque(isSelectablePtr).takeUnretainedValue()
+                if !CFBooleanGetValue(isSelectable) { continue }
 
-            guard let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else { continue }
-            let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
+                guard let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else { continue }
+                let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
 
-            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
-            let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
+                guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+                let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
 
-            let excludedIDs = ["com.apple.CharacterPaletteIM", "com.apple.KeyboardViewer", "com.apple.PressAndHold"]
-            if excludedIDs.contains(id) || id.lowercased().contains("dictation") { continue }
+                let excludedIDs = ["com.apple.CharacterPaletteIM", "com.apple.KeyboardViewer", "com.apple.PressAndHold"]
+                if excludedIDs.contains(id) || id.lowercased().contains("dictation") { continue }
 
-            keyboards.append(MacKeyboard(id: id, name: name))
+                keyboards.append(MacKeyboard(id: id, name: name))
+            }
+            
+            // @Published 변수 업데이트는 당연히 메인 스레드에서 이루어집니다.
+            self.availableKeyboards = keyboards
         }
-        DispatchQueue.main.async { self.availableKeyboards = keyboards }
+
+        // 🌟 [리뷰 반영] 현재 실행 중인 스레드가 메인 스레드인지 확인합니다.
+        // 메인 스레드라면 즉시 실행하고, 아니라면 메인 큐에 동기(sync)로 밀어 넣어 데드락과 크래시를 원천 방지합니다.
+        if Thread.isMainThread {
+            fetchTask()
+        } else {
+            DispatchQueue.main.sync {
+                fetchTask()
+            }
+        }
     }
 
     func switchLanguage(to id: String) {
-        // 🌟 1. 현재 사용 중인 시스템 입력 소스의 ID를 가져와서 비교합니다.
         if let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
            let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) {
             let currentID = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
             
-            // 🌟 2. 현재 언어와 변경하려는 목표 언어가 이미 같다면 조용히 취소합니다. (HUD 표시 생략)
             if currentID == id {
                 #if DEBUG
                 print("💡 이미 해당 언어(\(id))를 사용 중입니다. 전환 및 HUD 표시를 생략합니다.")
@@ -69,7 +82,6 @@ class InputSourceManager: ObservableObject {
             }
         }
         
-        // 3. 기존 전환 로직 및 HUD 표시
         let filter = [kTISPropertyInputSourceID: id] as CFDictionary
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {
@@ -83,7 +95,6 @@ class InputSourceManager: ObservableObject {
         }
     }
     
-    // 🌟 새로운 기능: 다음 입력 소스로 순환(Toggle)하는 함수
     func switchToNextInputSource() {
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let idPtr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return }
@@ -91,7 +102,6 @@ class InputSourceManager: ObservableObject {
 
         guard !availableKeyboards.isEmpty else { return }
 
-        // 현재 언어의 인덱스를 찾아 다음 인덱스로 넘어갑니다 (끝에 도달하면 처음으로)
         if let currentIndex = availableKeyboards.firstIndex(where: { $0.id == currentID }) {
             let nextIndex = (currentIndex + 1) % availableKeyboards.count
             switchLanguage(to: availableKeyboards[nextIndex].id)

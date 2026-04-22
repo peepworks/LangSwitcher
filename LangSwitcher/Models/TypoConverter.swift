@@ -21,10 +21,14 @@ import AppKit
 class TypoConverter {
     static let shared = TypoConverter()
     
+    // 매번 생성하던 가상 이벤트 소스를 lazy var로 한 번만 생성하여 재사용 (캐싱)
+    private lazy var eventSource: CGEventSource? = CGEventSource(stateID: .combinedSessionState)
+    
     func executeCorrection() {
-        let pb = NSPasteboard.general
-        let initialCount = pb.changeCount
-        let oldString = pb.string(forType: .string)
+        // 🌟 [Swift 6 대응] Non-Sendable인 NSPasteboard 객체를 통째로 캡처하지 않고,
+        // Sendable 타입으로 안전한 Int와 String? 값만 미리 추출해 둡니다.
+        let initialCount = NSPasteboard.general.changeCount
+        let oldString = NSPasteboard.general.string(forType: .string)
 
         // 1. 설정에 따라 블록 지정 시뮬레이션
         if SettingsManager.shared.isSentenceMode {
@@ -40,57 +44,43 @@ class TypoConverter {
             // 3. 클립보드 변화 감지 (최대 0.5초 대기)
             var attempts = 0
                 
-            // 간격을 0.01초에서 0.05초로 변경 (CPU 부하 최적화)
             Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
                 attempts += 1
+                
+                // 🌟 [Swift 6 대응] 블록 내부에서 NSPasteboard.general을 직접 호출하여 캡처를 방지합니다.
+                let localPB = NSPasteboard.general
 
                 // 10번 시도(0.5초) 후 포기 또는 클립보드가 변경되었을 때
-                if pb.changeCount != initialCount || attempts > 10 {
-                    timer.invalidate() // 타이머 안전하게 종료
+                if localPB.changeCount != initialCount || attempts > 10 {
+                    timer.invalidate()
 
-                    guard let selectedText = pb.string(forType: .string), !selectedText.isEmpty else {
-                        // [핵심] 복사에 실패했거나 빈 텍스트일 경우에도 기존 클립보드 원상복구!
-                        if let old = oldString {
-                            pb.clearContents()
-                            pb.setString(old, forType: .string)
-                        } else {
-                            pb.clearContents()
+                    defer {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            // 🌟 복구 블록 내부에서도 NSPasteboard를 직접 호출
+                            let restorePB = NSPasteboard.general
+                            if let old = oldString {
+                                restorePB.clearContents()
+                                restorePB.setString(old, forType: .string)
+                            } else {
+                                restorePB.clearContents()
+                            }
                         }
-                        return
                     }
 
-                    // 4. 한/영 판단 및 변환 실행
+                    // 4. 복사된 텍스트 확인
+                    guard let selectedText = localPB.string(forType: .string), !selectedText.isEmpty else { return }
+
+                    // 5. 한/영 판단 및 변환 실행
                     let isEnglish = selectedText.contains { $0.isASCII && $0.isLetter }
                     let convertedText = isEnglish ? self.convertToKo(selectedText) : self.convertToEn(selectedText)
 
-                    // 변환할 게 없으면 복구하고 종료
-                    if selectedText == convertedText {
-                        if let old = oldString {
-                            pb.clearContents()
-                            pb.setString(old, forType: .string)
-                        }
-                        return
-                    }
+                    // 6. 변환할 내용이 동일하면 무시
+                    if selectedText == convertedText { return }
 
-                    // 5. 변환된 텍스트 붙여넣기
-                    pb.clearContents()
-                    pb.setString(convertedText, forType: .string)
+                    // 7. 변환된 텍스트 붙여넣기
+                    localPB.clearContents()
+                    localPB.setString(convertedText, forType: .string)
                     self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
-
-                    // 🌟 6. [리뷰 8번 해결] 0.4초 후 원래 클립보드 데이터로 스마트 복구
-                    // 느린 앱에서도 충분히 붙여넣기가 완료되도록 0.4초 여유를 줍니다.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        
-                        // [안전장치] 사용자가 그 0.4초 사이에 다른 텍스트를 복사(Cmd+C)했다면 복구를 취소하여 데이터 유실을 막습니다.
-                        guard pb.string(forType: .string) == convertedText else { return }
-                        
-                        if let old = oldString {
-                            pb.clearContents()
-                            pb.setString(old, forType: .string)
-                        } else {
-                            pb.clearContents()
-                        }
-                    }
                 }
             }
         }
@@ -148,7 +138,6 @@ class TypoConverter {
         commit(); return result
     }
 
-    // 에러 수정 포인트: 딕셔너리 접근 시 타입을 Character로 명확히 처리
     private func convertToEn(_ koreanText: String) -> String {
         let engMap: [Character: String] = ["ㅂ":"q", "ㅈ":"w", "ㄷ":"e", "ㄱ":"r", "ㅅ":"t", "ㅛ":"y", "ㅕ":"u", "ㅑ":"i", "ㅐ":"o", "ㅔ":"p", "ㅁ":"a", "ㄴ":"s", "ㅇ":"d", "ㄹ":"f", "ㅎ":"g", "ㅗ":"h", "ㅓ":"j", "ㅏ":"k", "ㅣ":"l", "ㅋ":"z", "ㅌ":"x", "ㅊ":"c", "ㅍ":"v", "ㅠ":"b", "ㅜ":"n", "ㅡ":"m", "ㅃ":"Q", "ㅉ":"W", "ㄸ":"E", "ㄲ":"R", "ㅆ":"T", "ㅒ":"O", "ㅖ":"P"]
         let doubleJongsMap: [Character: String] = ["ㄳ":"rt", "ㄵ":"sw", "ㄶ":"sg", "ㄺ":"fr", "ㄻ":"fa", "ㄼ":"fq", "ㄽ":"ft", "ㄾ":"fx", "ㄿ":"fv", "ㅀ":"fg", "ㅄ":"qt"]
@@ -166,7 +155,6 @@ class TypoConverter {
                 result += doubleJungsMap[jungs[jungIdx]] ?? (engMap[jungs[jungIdx]] ?? "")
                 if jongIdx > 0 { result += doubleJongsMap[jongs[jongIdx]] ?? (engMap[jongs[jongIdx]] ?? "") }
             } else {
-                // char(Character 타입)를 사용하여 매핑 테이블에서 안전하게 추출
                 if let doubleJung = doubleJungsMap[char] { result += doubleJung }
                 else if let doubleJong = doubleJongsMap[char] { result += doubleJong }
                 else if let single = engMap[char] { result += single }
@@ -177,8 +165,13 @@ class TypoConverter {
     }
 
     private func simulateKey(keyCode: CGKeyCode, modifiers: CGEventFlags) {
-        guard let src = CGEventSource(stateID: .combinedSessionState) else { return }
-        let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true); down?.flags = modifiers; down?.post(tap: .cghidEventTap)
-        let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false); up?.post(tap: .cghidEventTap)
+        guard let src = eventSource else { return }
+        
+        let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)
+        down?.flags = modifiers
+        down?.post(tap: .cghidEventTap)
+        
+        let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
+        up?.post(tap: .cghidEventTap)
     }
 }

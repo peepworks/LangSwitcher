@@ -74,31 +74,34 @@ class EventMonitor {
 
     private init() {}
 
-    // MARK: - Atomic State Updates
+    // MARK: - 🌟 Atomic State Updates (스레드 안전성 완벽 보장)
     
-    func handleInitialModifierPress(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
+    // 수식어 키가 눌렸을 때 상태를 원자적으로 업데이트 (읽기 + 판단 + 쓰기를 한 번에)
+    func updateModifierState(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
         stateQueue.async(flags: .barrier) {
-            self._didPressOtherKey = false
-            self._singleModifierKeyCode = keyCode
-            self._currentModifiers = flags
-            self._maxModifiers = flags
+            if self._currentModifiers.isEmpty {
+                self._didPressOtherKey = false
+                self._singleModifierKeyCode = keyCode
+                self._currentModifiers = flags
+                self._maxModifiers = flags
+            } else {
+                self._singleModifierKeyCode = nil
+                self._currentModifiers = flags
+                self._maxModifiers.formUnion(flags)
+            }
         }
     }
 
-    func handleAdditionalModifierPress(flags: NSEvent.ModifierFlags) {
-        stateQueue.async(flags: .barrier) {
-            self._singleModifierKeyCode = nil
-            self._currentModifiers = flags
-            self._maxModifiers.formUnion(flags)
-        }
-    }
-
-    func clearModifierState() {
-        stateQueue.async(flags: .barrier) {
+    // 수식어 키가 떼어졌을 때 현재 상태의 '스냅샷'을 반환하고 즉시 초기화 (읽기 + 초기화를 한 번에)
+    func consumeModifierState() -> (didPressOtherKey: Bool, singleCode: UInt16?, maxMods: NSEvent.ModifierFlags) {
+        var snapshot: (Bool, UInt16?, NSEvent.ModifierFlags) = (false, nil, [])
+        stateQueue.sync(flags: .barrier) {
+            snapshot = (self._didPressOtherKey, self._singleModifierKeyCode, self._maxModifiers)
             self._currentModifiers = []
             self._maxModifiers = []
             self._singleModifierKeyCode = nil
         }
+        return snapshot
     }
 
     func markOtherKeyPressed() {
@@ -121,7 +124,7 @@ class EventMonitor {
     }
     // -------------------------------------------------------------------------
 
-    // MARK: - 🌟 기능별 분리된 이벤트 처리기 (모듈화 및 최적화)
+    // MARK: - 기능별 분리된 이벤트 처리기
     
     private func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
         let settings = SettingsManager.shared
@@ -143,7 +146,6 @@ class EventMonitor {
             if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
                 isToggle = true; appliedRule = "Toggle Key"
             } else {
-                // 🌟 스위치가 켜져 있을 때만 루프(배열 탐색)를 실행하여 연산 비용을 아낍니다.
                 if settings.isAppLaunchEnabled {
                     for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
                 }
@@ -153,24 +155,23 @@ class EventMonitor {
             }
         } else {
             if !flags.isEmpty {
-                if self.currentModifiers.isEmpty {
-                    self.handleInitialModifierPress(keyCode: keyCode, flags: flags)
-                } else {
-                    self.handleAdditionalModifierPress(flags: flags)
-                }
+                // 🌟 수식어 키 입력: 분산된 접근 대신 단일 barrier 블록으로 원자적 업데이트
+                self.updateModifierState(keyCode: keyCode, flags: flags)
             } else {
-                if !self.didPressOtherKey {
-                    if let singleCode = self.singleModifierKeyCode {
+                // 🌟 수식어 키 해제: 상태 스냅샷을 원자적으로 가져오고 동시에 초기화(Consume)
+                let snapshot = self.consumeModifierState()
+                
+                if !snapshot.didPressOtherKey {
+                    if let singleCode = snapshot.singleCode {
                         if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == singleCode && !settings.typoDisplayString.isEmpty {
                             DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                            self.clearModifierState()
+                            // (consumeModifierState에서 이미 초기화되었으므로 clearModifierState 호출 불필요)
                             return nil
                         }
 
                         if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == singleCode && !settings.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            // 🌟 최적화 방어 코드 추가
                             if settings.isAppLaunchEnabled {
                                 for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
                             }
@@ -178,19 +179,17 @@ class EventMonitor {
                                 for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
                             }
                         }
-                    } else if !self.maxModifiers.isEmpty {
-                        let modsRaw = UInt64(self.maxModifiers.rawValue)
+                    } else if !snapshot.maxMods.isEmpty {
+                        let modsRaw = UInt64(snapshot.maxMods.rawValue)
 
                         if settings.isTypoCorrectionEnabled && settings.typoKeyCode == 0 && settings.typoModifierFlags == modsRaw && !settings.typoDisplayString.isEmpty {
                             DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                            self.clearModifierState()
                             return nil
                         }
 
                         if settings.toggleKeyCode == 0 && settings.toggleModifierFlags == modsRaw && !settings.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            // 🌟 최적화 방어 코드 추가
                             if settings.isAppLaunchEnabled {
                                 for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
                             }
@@ -200,7 +199,6 @@ class EventMonitor {
                         }
                     }
                 }
-                self.clearModifierState()
             }
         }
         
@@ -233,7 +231,6 @@ class EventMonitor {
             if flags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
         }
 
-        // 🌟 스위치가 켜져 있을 때만 앱 실행 단축키 배열을 탐색합니다.
         if !isToggle && settings.isAppLaunchEnabled {
             for appLaunch in settings.appLaunchShortcuts {
                 let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
@@ -247,7 +244,6 @@ class EventMonitor {
             }
         }
 
-        // 🌟 스위치가 켜져 있을 때만 사용자 지정 단축키 배열을 탐색합니다.
         if !isToggle && targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
             for shortcut in settings.customShortcuts {
                 let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(shortcut.keyCode) && shortcut.modifierFlags == 0
@@ -290,7 +286,6 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
-                // 1. 방어 및 예외 이벤트 통과
                 if event.getIntegerValueField(.eventSourceUserData) == 9999 {
                     return Unmanaged.passUnretained(event)
                 }
@@ -300,7 +295,6 @@ class EventMonitor {
                     return nil
                 }
 
-                // 2. 단축키 기록 모드 중일 때
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
                         if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
@@ -310,13 +304,11 @@ class EventMonitor {
                 
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                 
-                // 3. HyperKey 매핑 확인
                 if SettingsManager.shared.isHyperKeyEnabled {
                     let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
                     if shouldBlock { return nil }
                 }
 
-                // 4. 예외 앱 활성화 시 통과
                 let currentAppID = AppMonitor.shared.activeAppBundleID
                 if !currentAppID.isEmpty {
                     if SettingsManager.shared.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
@@ -324,7 +316,6 @@ class EventMonitor {
                     }
                 }
 
-                // 5. 사용자가 임의로 정지시켰을 때 통과
                 if EventMonitor.shared.isPaused { return Unmanaged.passUnretained(event) }
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
@@ -351,6 +342,14 @@ class EventMonitor {
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
         eventTap = nil; runLoopSource = nil
+    }
+    
+    // 🌟 [리뷰 반영] 단축키 기록 해제와 이벤트 재개를 단일 barrier 블록에서 원자적으로 처리
+    func cancelShortcutRecording() {
+        stateQueue.async(flags: .barrier) {
+            self._shortcutRecordingCallback = nil
+            self._isPaused = false
+        }
     }
 
     private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
