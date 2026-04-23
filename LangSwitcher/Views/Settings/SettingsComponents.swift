@@ -37,6 +37,10 @@ let globalKeyMap: [UInt16: String] = [
     57:"Caps Lock", 63:"Fn"
 ]
 
+// 🌟 앱 전체에서 사용하는 수식어 키코드 모음
+let globalModifierKeyCodes: Set<UInt16> = [54, 55, 56, 60, 58, 61, 59, 62, 57, 63]
+
+// 키보드 입력을 문자열로 예쁘게 포맷팅 해주는 공통 헬퍼 함수
 // 키보드 입력을 문자열로 예쁘게 포맷팅 해주는 공통 헬퍼 함수
 func formatKeyEquivalent(modifierFlags: UInt, keyCode: UInt16) -> String {
     var parts: [String] = []
@@ -47,8 +51,8 @@ func formatKeyEquivalent(modifierFlags: UInt, keyCode: UInt16) -> String {
     if flags.contains(.shift)   { parts.append("⇧") }
     if flags.contains(.command) { parts.append("⌘") }
     
-    let modifierKeyCodes: Set<UInt16> = [54,55,56,60,58,61,59,62,57,63]
-    if modifierKeyCodes.contains(keyCode) && modifierFlags == 0 {
+    // 🌟 [수정됨] 함수 내부에 있던 배열을 지우고, 방금 만든 전역 상수(globalModifierKeyCodes)를 사용합니다.
+    if globalModifierKeyCodes.contains(keyCode) && modifierFlags == 0 {
         return globalKeyMap[keyCode] ?? "Unknown"
     }
     
@@ -66,7 +70,7 @@ struct ToggleShortcutRow: View {
     @State private var isRecording = false
     @State private var showDuplicateWarning = false
     @State private var conflictMessage = ""
-    @State private var timeoutTask: DispatchWorkItem?
+    // 🗑️ timeoutTask 삭제됨
 
     var body: some View {
         HStack {
@@ -97,57 +101,13 @@ struct ToggleShortcutRow: View {
     }
 
     private func startRecording() {
-        // 🌟 이미 완벽한 순서 (차단 -> 타이머 -> 콜백)
-        EventMonitor.shared.isPaused = true
-        class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
-        let state = RState()
-
-        timeoutTask?.cancel()
-        let task = DispatchWorkItem {
-            if self.isRecording { self.stopRecording() }
-        }
-        self.timeoutTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
-
-        EventMonitor.shared.shortcutRecordingCallback = { e in
-            let code = e.keyCode
-            let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-            if e.type == .flagsChanged {
-                if code == 57 { DispatchQueue.main.async { self.registerShortcut(keyCode: 57, modifiers: 0, display: "⇪ Caps Lock") }; return }
-                if !flags.isEmpty { state.m.insert(code); state.f.formUnion(flags); return }
-                else if !state.r && !state.m.isEmpty {
-                    if state.m.count == 1 {
-                        let c = state.m.first!
-                        let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
-                        DispatchQueue.main.async { self.registerShortcut(keyCode: c, modifiers: 0, display: str) }
-                    } else {
-                        var str = ""
-                        if state.f.contains(.control) { str += "⌃ " }
-                        if state.f.contains(.option) { str += "⌥ " }
-                        if state.f.contains(.shift) { str += "⇧ " }
-                        if state.f.contains(.command) { str += "⌘ " }
-                        DispatchQueue.main.async { self.registerShortcut(keyCode: 0, modifiers: UInt64(state.f.rawValue), display: str.trimmingCharacters(in: .whitespaces)) }
-                    }
-                    return
-                }
-                state.m.removeAll(); state.f = []; state.r = false; return
-            } else if e.type == .keyDown {
-                state.r = true
-                var str = ""
-                if flags.contains(.control) { str += "⌃ " }
-                if flags.contains(.option) { str += "⌥ " }
-                if flags.contains(.shift) { str += "⇧ " }
-                if flags.contains(.command) { str += "⌘ " }
-
-                if code == 49 { str += "Space" }
-                else if let mapped = globalKeyMap[code] { str += mapped }
-                else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
-                else { str += "Key(\(code))" }
-
-                DispatchQueue.main.async { self.registerShortcut(keyCode: code, modifiers: UInt64(flags.rawValue), display: str) }
-                return
-            }
+        isRecording = true
+        showDuplicateWarning = false
+            
+        ShortcutRecorder.shared.startRecording { code, mods, display in
+            self.registerShortcut(keyCode: code, modifiers: mods, display: display)
+        } onTimeout: {
+            self.isRecording = false
         }
     }
 
@@ -164,9 +124,8 @@ struct ToggleShortcutRow: View {
     }
 
     private func stopRecording() {
-        timeoutTask?.cancel()
-        // 🌟 [리뷰 7번 반영] EventMonitor 내부의 원자적 처리 함수 호출
-        EventMonitor.shared.cancelShortcutRecording()
+        // 🌟 [수정됨] 공용 매니저를 통해 정지하도록 통일
+        ShortcutRecorder.shared.stopRecording()
         isRecording = false
     }
 
@@ -190,9 +149,8 @@ struct CustomShortcutRow: View {
     @Binding var shortcut: CustomShortcut
     
     @State private var isRecording = false
-    @State private var timeoutTask: DispatchWorkItem?
+    // 🗑️ timeoutTask 삭제됨
     
-    // 🌟 [추가됨] 중복 경고 표시용 상태 변수
     @State private var showDuplicateWarning = false
     @State private var conflictMessage = ""
 
@@ -201,7 +159,6 @@ struct CustomShortcutRow: View {
             Button(action: {
                 if isRecording { stopRecording() } else { startRecording() }
             }) {
-                // 🌟 [수정됨] 중복 시 경고 메시지를 보여주도록 UI 변경
                 Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString)))
                     .frame(width: 90)
                     .lineLimit(1)
@@ -235,61 +192,16 @@ struct CustomShortcutRow: View {
     }
 
     private func startRecording() {
-        EventMonitor.shared.isPaused = true
         isRecording = true
         showDuplicateWarning = false
-        
-        timeoutTask?.cancel()
-        let task = DispatchWorkItem { if self.isRecording { self.stopRecording() } }
-        self.timeoutTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
-
-        class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
-        let state = RState()
-
-        EventMonitor.shared.shortcutRecordingCallback = { e in
-            let code = e.keyCode
-            let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
             
-            if e.type == .flagsChanged {
-                if code == 57 { DispatchQueue.main.async { self.saveShortcut(keyCode: 57, modifiers: 0, displayString: "⇪ Caps Lock") }; return }
-                if !flags.isEmpty { state.m.insert(code); state.f.formUnion(flags); return }
-                else if !state.r && !state.m.isEmpty {
-                    if state.m.count == 1 {
-                        let c = state.m.first!
-                        let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
-                        DispatchQueue.main.async { self.saveShortcut(keyCode: c, modifiers: 0, displayString: str) }
-                    } else {
-                        var str = ""
-                        if state.f.contains(.control) { str += "⌃ " }
-                        if state.f.contains(.option) { str += "⌥ " }
-                        if state.f.contains(.shift) { str += "⇧ " }
-                        if state.f.contains(.command) { str += "⌘ " }
-                        DispatchQueue.main.async { self.saveShortcut(keyCode: 0, modifiers: UInt64(state.f.rawValue), displayString: str.trimmingCharacters(in: .whitespaces)) }
-                    }
-                    return
-                }
-                state.m.removeAll(); state.f = []; state.r = false; return
-            } else if e.type == .keyDown {
-                state.r = true
-                var str = ""
-                if flags.contains(.control) { str += "⌃ " }
-                if flags.contains(.option) { str += "⌥ " }
-                if flags.contains(.shift) { str += "⇧ " }
-                if flags.contains(.command) { str += "⌘ " }
-
-                if code == 49 { str += "Space" }
-                else if let mapped = globalKeyMap[code] { str += mapped }
-                else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
-                else { str += "Key(\(code))" }
-
-                DispatchQueue.main.async { self.saveShortcut(keyCode: code, modifiers: UInt64(flags.rawValue), displayString: str) }
-                return
-            }
+        ShortcutRecorder.shared.startRecording { code, mods, display in
+            self.saveShortcut(keyCode: code, modifiers: mods, displayString: display)
+        } onTimeout: {
+            self.isRecording = false
         }
     }
     
-    // 🌟 [추가됨] 단축키 저장 전 중복 검사 로직
     private func saveShortcut(keyCode: UInt16, modifiers: UInt64, displayString: String) {
         if let conflict = getConflictMessage(keyCode: keyCode, modifiers: modifiers) {
             NSSound.beep() // 에러 소리 재생
@@ -312,12 +224,11 @@ struct CustomShortcutRow: View {
     }
 
     private func stopRecording() {
-        timeoutTask?.cancel()
-        EventMonitor.shared.cancelShortcutRecording()
+        // 🌟 [수정됨] 공용 매니저를 통해 정지하도록 통일
+        ShortcutRecorder.shared.stopRecording()
         isRecording = false
     }
     
-    // 🌟 [추가됨] 다른 기능들과 중복되는지 검사하는 함수
     private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
         if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifiers { return String(localized: "Toggle Key") }
         if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }
@@ -335,12 +246,11 @@ struct AppLaunchShortcutRow: View {
     @Binding var shortcut: AppLaunchShortcut
     
     @State private var isRecording = false
-    @State private var timeoutTask: DispatchWorkItem?
+    // 🗑️ timeoutTask 삭제됨
     
     @State private var appIcon: NSImage? = nil
     @State private var currentIconLoadID = UUID()
     
-    // 🌟 [추가됨] 중복 경고 표시용 상태 변수
     @State private var showDuplicateWarning = false
     @State private var conflictMessage = ""
 
@@ -372,7 +282,6 @@ struct AppLaunchShortcutRow: View {
             Button(action: {
                 if isRecording { stopRecording() } else { startRecording() }
             }) {
-                // 🌟 [수정됨] 중복 시 경고 메시지를 보여주도록 UI 변경
                 Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString)))
                     .frame(width: 90)
                     .lineLimit(1)
@@ -428,61 +337,16 @@ struct AppLaunchShortcutRow: View {
     }
 
     private func startRecording() {
-        EventMonitor.shared.isPaused = true
         isRecording = true
         showDuplicateWarning = false
-        
-        timeoutTask?.cancel()
-        let task = DispatchWorkItem { if self.isRecording { self.stopRecording() } }
-        self.timeoutTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
-
-        class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
-        let state = RState()
-
-        EventMonitor.shared.shortcutRecordingCallback = { e in
-            let code = e.keyCode
-            let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-            if e.type == .flagsChanged {
-                if code == 57 { DispatchQueue.main.async { self.saveShortcut(keyCode: 57, modifiers: 0, displayString: "⇪ Caps Lock") }; return }
-                if !flags.isEmpty { state.m.insert(code); state.f.formUnion(flags); return }
-                else if !state.r && !state.m.isEmpty {
-                    if state.m.count == 1 {
-                        let c = state.m.first!
-                        let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
-                        DispatchQueue.main.async { self.saveShortcut(keyCode: c, modifiers: 0, displayString: str) }
-                    } else {
-                        var str = ""
-                        if state.f.contains(.control) { str += "⌃ " }
-                        if state.f.contains(.option) { str += "⌥ " }
-                        if state.f.contains(.shift) { str += "⇧ " }
-                        if state.f.contains(.command) { str += "⌘ " }
-                        DispatchQueue.main.async { self.saveShortcut(keyCode: 0, modifiers: UInt64(state.f.rawValue), displayString: str.trimmingCharacters(in: .whitespaces)) }
-                    }
-                    return
-                }
-                state.m.removeAll(); state.f = []; state.r = false; return
-            } else if e.type == .keyDown {
-                state.r = true
-                var str = ""
-                if flags.contains(.control) { str += "⌃ " }
-                if flags.contains(.option) { str += "⌥ " }
-                if flags.contains(.shift) { str += "⇧ " }
-                if flags.contains(.command) { str += "⌘ " }
-
-                if code == 49 { str += "Space" }
-                else if let mapped = globalKeyMap[code] { str += mapped }
-                else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
-                else { str += "Key(\(code))" }
-
-                DispatchQueue.main.async { self.saveShortcut(keyCode: code, modifiers: UInt64(flags.rawValue), displayString: str) }
-                return
-            }
+            
+        ShortcutRecorder.shared.startRecording { code, mods, display in
+            self.saveShortcut(keyCode: code, modifiers: mods, displayString: display)
+        } onTimeout: {
+            self.isRecording = false
         }
     }
     
-    // 🌟 [추가됨] 단축키 저장 전 중복 검사 로직
     private func saveShortcut(keyCode: UInt16, modifiers: UInt64, displayString: String) {
         if let conflict = getConflictMessage(keyCode: keyCode, modifiers: modifiers) {
             NSSound.beep() // 에러 소리 재생
@@ -505,12 +369,11 @@ struct AppLaunchShortcutRow: View {
     }
 
     private func stopRecording() {
-        timeoutTask?.cancel()
-        EventMonitor.shared.cancelShortcutRecording()
+        // 🌟 [수정됨] 공용 매니저를 통해 정지하도록 통일
+        ShortcutRecorder.shared.stopRecording()
         isRecording = false
     }
     
-    // 🌟 [추가됨] 다른 기능들과 중복되는지 검사하는 함수
     private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
         if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifiers { return String(localized: "Toggle Key") }
         if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }

@@ -45,6 +45,7 @@ class HyperKeyManager {
     }
 
     // 🌟 [리뷰 반영] 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
+    // 🌟 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
     private func setupHardwareMapping(enable: Bool) {
         DispatchQueue.global(qos: .userInitiated).async {
             let task = Process()
@@ -60,7 +61,31 @@ class HyperKeyManager {
                 try task.run()
                 // 백그라운드 스레드에서 대기하므로 메인 UI 스위치 애니메이션은 버벅거리지 않습니다.
                 task.waitUntilExit()
+                    
+                // 🌟 [리뷰 반영] 성공적으로 실행되었는지 확인하기 위해 종료 코드를 체크할 수도 있습니다.
+                if task.terminationStatus != 0 {
+                    let errorMessage = "hidutil exited with code: \(task.terminationStatus)"
+                    SettingsManager.shared.addLog(ActionLog(
+                        timestamp: Date(),
+                        targetApp: "System",
+                        appliedRule: "Hyper Key Mapping",
+                        finalInputSource: "Failed",
+                        result: .failure,
+                        failureReason: .unknown // 또는 permissionIssue 등
+                    ))
+                    print("hidutil 실행 실패: \(errorMessage)")
+                }
+                    
             } catch {
+                // 🌟 [리뷰 반영] 완전히 실행조차 못 했을 경우 명시적으로 ActionLog를 남깁니다.
+                SettingsManager.shared.addLog(ActionLog(
+                    timestamp: Date(),
+                    targetApp: "System",
+                    appliedRule: "Hyper Key Mapping",
+                    finalInputSource: "Failed",
+                    result: .failure,
+                    failureReason: .unknown
+                ))
                 print("hidutil 실행 실패: \(error)")
             }
         }

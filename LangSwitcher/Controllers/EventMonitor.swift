@@ -74,9 +74,8 @@ class EventMonitor {
 
     private init() {}
 
-    // MARK: - 🌟 Atomic State Updates (스레드 안전성 완벽 보장)
+    // MARK: - Atomic State Updates
     
-    // 수식어 키가 눌렸을 때 상태를 원자적으로 업데이트 (읽기 + 판단 + 쓰기를 한 번에)
     func updateModifierState(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
         stateQueue.async(flags: .barrier) {
             if self._currentModifiers.isEmpty {
@@ -92,7 +91,6 @@ class EventMonitor {
         }
     }
 
-    // 수식어 키가 떼어졌을 때 현재 상태의 '스냅샷'을 반환하고 즉시 초기화 (읽기 + 초기화를 한 번에)
     func consumeModifierState() -> (didPressOtherKey: Bool, singleCode: UInt16?, maxMods: NSEvent.ModifierFlags) {
         var snapshot: (Bool, UInt16?, NSEvent.ModifierFlags) = (false, nil, [])
         stateQueue.sync(flags: .barrier) {
@@ -127,7 +125,9 @@ class EventMonitor {
     // MARK: - 기능별 분리된 이벤트 처리기
     
     private func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        let settings = SettingsManager.shared
+        // 🌟 [리뷰 반영] 원본 대신 스레드 안전성이 보장된 스냅샷(읽기 전용)을 가져옵니다.
+        let snapshot = SettingsManager.shared.snapshot
+        
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
 
@@ -138,63 +138,60 @@ class EventMonitor {
             if now.timeIntervalSince(self.lastCapsLockTime) < 0.25 { return nil }
             self.lastCapsLockTime = now
 
-            if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == 57 && !settings.typoDisplayString.isEmpty {
+            if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == 57 && !snapshot.typoDisplayString.isEmpty {
                 DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
                 return nil
             }
 
-            if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == 57 && !settings.toggleDisplayString.isEmpty {
+            if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == 57 && !snapshot.toggleDisplayString.isEmpty {
                 isToggle = true; appliedRule = "Toggle Key"
             } else {
-                if settings.isAppLaunchEnabled {
-                    for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                if snapshot.isAppLaunchEnabled {
+                    for appLaunch in snapshot.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
                 }
-                if targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
-                    for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                if targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
+                    for shortcut in snapshot.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
                 }
             }
         } else {
             if !flags.isEmpty {
-                // 🌟 수식어 키 입력: 분산된 접근 대신 단일 barrier 블록으로 원자적 업데이트
                 self.updateModifierState(keyCode: keyCode, flags: flags)
             } else {
-                // 🌟 수식어 키 해제: 상태 스냅샷을 원자적으로 가져오고 동시에 초기화(Consume)
-                let snapshot = self.consumeModifierState()
+                let stateSnap = self.consumeModifierState()
                 
-                if !snapshot.didPressOtherKey {
-                    if let singleCode = snapshot.singleCode {
-                        if settings.isTypoCorrectionEnabled && settings.typoModifierFlags == 0 && settings.typoKeyCode == singleCode && !settings.typoDisplayString.isEmpty {
-                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
-                            // (consumeModifierState에서 이미 초기화되었으므로 clearModifierState 호출 불필요)
-                            return nil
-                        }
-
-                        if settings.toggleModifierFlags == 0 && settings.toggleKeyCode == singleCode && !settings.toggleDisplayString.isEmpty {
-                            isToggle = true; appliedRule = "Toggle Key"
-                        } else {
-                            if settings.isAppLaunchEnabled {
-                                for appLaunch in settings.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                            }
-                            if targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
-                                for shortcut in settings.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
-                            }
-                        }
-                    } else if !snapshot.maxMods.isEmpty {
-                        let modsRaw = UInt64(snapshot.maxMods.rawValue)
-
-                        if settings.isTypoCorrectionEnabled && settings.typoKeyCode == 0 && settings.typoModifierFlags == modsRaw && !settings.typoDisplayString.isEmpty {
+                if !stateSnap.didPressOtherKey {
+                    if let singleCode = stateSnap.singleCode {
+                        if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == singleCode && !snapshot.typoDisplayString.isEmpty {
                             DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
                             return nil
                         }
 
-                        if settings.toggleKeyCode == 0 && settings.toggleModifierFlags == modsRaw && !settings.toggleDisplayString.isEmpty {
+                        if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == singleCode && !snapshot.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            if settings.isAppLaunchEnabled {
-                                for appLaunch in settings.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                            if snapshot.isAppLaunchEnabled {
+                                for appLaunch in snapshot.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
                             }
-                            if targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
-                                for shortcut in settings.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                            if targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
+                                for shortcut in snapshot.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                            }
+                        }
+                    } else if !stateSnap.maxMods.isEmpty {
+                        let modsRaw = UInt64(stateSnap.maxMods.rawValue)
+
+                        if snapshot.isTypoCorrectionEnabled && snapshot.typoKeyCode == 0 && snapshot.typoModifierFlags == modsRaw && !snapshot.typoDisplayString.isEmpty {
+                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+                            return nil
+                        }
+
+                        if snapshot.toggleKeyCode == 0 && snapshot.toggleModifierFlags == modsRaw && !snapshot.toggleDisplayString.isEmpty {
+                            isToggle = true; appliedRule = "Toggle Key"
+                        } else {
+                            if snapshot.isAppLaunchEnabled {
+                                for appLaunch in snapshot.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
+                            }
+                            if targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
+                                for shortcut in snapshot.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
                             }
                         }
                     }
@@ -211,29 +208,32 @@ class EventMonitor {
     }
 
     private func handleKeyDown(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        let settings = SettingsManager.shared
+        // 🌟 [리뷰 반영] 스레드 안전성이 보장된 스냅샷 가져오기
+        let snapshot = SettingsManager.shared.snapshot
+        
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
 
         self.markOtherKeyPressed()
         let flags = modifierFlags.intersection([.command, .control, .option, .shift])
 
-        if settings.isTypoCorrectionEnabled &&
-           settings.typoKeyCode == keyCode &&
-           NSEvent.ModifierFlags(rawValue: UInt(settings.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
-           !settings.typoDisplayString.isEmpty {
+        if snapshot.isTypoCorrectionEnabled &&
+           snapshot.typoKeyCode == keyCode &&
+           NSEvent.ModifierFlags(rawValue: UInt(snapshot.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
+           !snapshot.typoDisplayString.isEmpty {
             DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
             return nil
         }
 
-        if settings.toggleKeyCode == keyCode && !settings.toggleDisplayString.isEmpty {
-            let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(settings.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
+        if snapshot.toggleKeyCode == keyCode && !snapshot.toggleDisplayString.isEmpty {
+            let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(snapshot.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
             if flags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
         }
 
-        if !isToggle && settings.isAppLaunchEnabled {
-            for appLaunch in settings.appLaunchShortcuts {
-                let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
+        if !isToggle && snapshot.isAppLaunchEnabled {
+            for appLaunch in snapshot.appLaunchShortcuts {
+                // 🌟 [리뷰 반영] 하드코딩된 배열 대신 전역 상수 사용!
+                let isSingleModifier = globalModifierKeyCodes.contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
                 let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
                     if appLaunch.keyCode == keyCode && !appLaunch.displayString.isEmpty {
@@ -244,8 +244,8 @@ class EventMonitor {
             }
         }
 
-        if !isToggle && targetAppBundleID == nil && settings.isCustomShortcutsEnabled {
-            for shortcut in settings.customShortcuts {
+        if !isToggle && targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
+            for shortcut in snapshot.customShortcuts {
                 let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(shortcut.keyCode) && shortcut.modifierFlags == 0
                 let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
@@ -258,9 +258,9 @@ class EventMonitor {
         }
 
         if !isToggle && targetAppBundleID == nil && targetLang == nil && keyCode == 49 {
-            if flags == .control && settings.isCtrlActive { targetLang = settings.ctrlLang; appliedRule = "Default Shortcut" }
-            else if flags == .command && settings.isCmdActive { targetLang = settings.cmdLang; appliedRule = "Default Shortcut" }
-            else if flags == .option && settings.isOptActive { targetLang = settings.optLang; appliedRule = "Default Shortcut" }
+            if flags == .control && snapshot.isCtrlActive { targetLang = snapshot.ctrlLang; appliedRule = "Default Shortcut" }
+            else if flags == .command && snapshot.isCmdActive { targetLang = snapshot.cmdLang; appliedRule = "Default Shortcut" }
+            else if flags == .option && snapshot.isOptActive { targetLang = snapshot.optLang; appliedRule = "Default Shortcut" }
         }
 
         if isToggle || targetAppBundleID != nil || targetLang != nil {
@@ -304,14 +304,17 @@ class EventMonitor {
                 
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                 
-                if SettingsManager.shared.isHyperKeyEnabled {
+                // 🌟 [리뷰 반영] 스냅샷 기반 읽기
+                let snapshot = SettingsManager.shared.snapshot
+                
+                if snapshot.isHyperKeyEnabled {
                     let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
                     if shouldBlock { return nil }
                 }
 
                 let currentAppID = AppMonitor.shared.activeAppBundleID
                 if !currentAppID.isEmpty {
-                    if SettingsManager.shared.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
+                    if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
                         return Unmanaged.passUnretained(event)
                     }
                 }
@@ -344,7 +347,6 @@ class EventMonitor {
         eventTap = nil; runLoopSource = nil
     }
     
-    // 🌟 [리뷰 반영] 단축키 기록 해제와 이벤트 재개를 단일 barrier 블록에서 원자적으로 처리
     func cancelShortcutRecording() {
         stateQueue.async(flags: .barrier) {
             self._shortcutRecordingCallback = nil
@@ -353,6 +355,7 @@ class EventMonitor {
     }
 
     private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
+        // addLog는 내부적으로 DispatchQueue.main.async를 쓰므로 안전합니다.
         if !AccessibilityManager.shared.isTrusted {
             SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue))
             return
@@ -360,8 +363,9 @@ class EventMonitor {
 
         guard EventMonitor.shared.canExecuteAction() else { return }
 
-        let settings = SettingsManager.shared
-        if settings.isTestMode {
+        // 🌟 [리뷰 반영] 스냅샷 기반 읽기
+        let snapshot = SettingsManager.shared.snapshot
+        if snapshot.isTestMode {
             var testLabel = ""
             if isToggle { testLabel = "[Test] Toggle Language" }
             else if let appName = targetAppName { testLabel = "[Test] \(appName)" }
@@ -381,5 +385,87 @@ class EventMonitor {
                 NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
             }
         }
+    }
+}
+
+// 🌟 [리뷰 반영] 중복되던 단축키 녹화 로직을 하나로 통합한 공용 매니저 클래스
+class ShortcutRecorder {
+    static let shared = ShortcutRecorder()
+    
+    typealias Completion = (_ keyCode: UInt16, _ modifiers: UInt64, _ displayString: String) -> Void
+    
+    private var timeoutTask: DispatchWorkItem?
+    
+    private init() {}
+    
+    func startRecording(completion: @escaping Completion, onTimeout: @escaping () -> Void) {
+        EventMonitor.shared.isPaused = true
+        
+        timeoutTask?.cancel()
+        let task = DispatchWorkItem {
+            self.stopRecording()
+            onTimeout()
+        }
+        self.timeoutTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
+
+        // 상태를 안전하게 관리하기 위해 내부에 struct나 로컬 변수 사용
+        class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
+        let state = RState()
+
+        EventMonitor.shared.shortcutRecordingCallback = { e in
+            let code = e.keyCode
+            let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            if e.type == .flagsChanged {
+                let capturedCode = code
+                if capturedCode == 57 {
+                    DispatchQueue.main.async { completion(57, 0, "⇪ Caps Lock") }
+                    return
+                }
+                
+                if !flags.isEmpty { state.m.insert(capturedCode); state.f.formUnion(flags); return }
+                else if !state.r && !state.m.isEmpty {
+                    if state.m.count == 1 {
+                        let c = state.m.first!
+                        let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
+                        let capturedC = c
+                        DispatchQueue.main.async { completion(capturedC, 0, str) }
+                    } else {
+                        var str = ""
+                        if state.f.contains(.control) { str += "⌃ " }
+                        if state.f.contains(.option) { str += "⌥ " }
+                        if state.f.contains(.shift) { str += "⇧ " }
+                        if state.f.contains(.command) { str += "⌘ " }
+                        let capturedMods = UInt64(state.f.rawValue)
+                        DispatchQueue.main.async { completion(0, capturedMods, str.trimmingCharacters(in: .whitespaces)) }
+                    }
+                    return
+                }
+                state.m.removeAll(); state.f = []; state.r = false; return
+            } else if e.type == .keyDown {
+                state.r = true
+                var str = ""
+                if flags.contains(.control) { str += "⌃ " }
+                if flags.contains(.option) { str += "⌥ " }
+                if flags.contains(.shift) { str += "⇧ " }
+                if flags.contains(.command) { str += "⌘ " }
+
+                let capturedCode = code
+                if capturedCode == 49 { str += "Space" }
+                else if let mapped = globalKeyMap[capturedCode] { str += mapped }
+                else if let chars = e.charactersIgnoringModifiers?.uppercased(), !chars.isEmpty { str += chars }
+                else { str += "Key(\(capturedCode))" }
+
+                let capturedMods = UInt64(flags.rawValue)
+                DispatchQueue.main.async { completion(capturedCode, capturedMods, str) }
+                return
+            }
+        }
+    }
+    
+    func stopRecording() {
+        timeoutTask?.cancel()
+        EventMonitor.shared.cancelShortcutRecording()
     }
 }

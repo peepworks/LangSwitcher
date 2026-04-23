@@ -60,47 +60,81 @@ struct BackupData: Codable {
     let isSentenceMode: Bool?
 }
 
+struct SettingsSnapshot {
+    var isCtrlActive = false; var isCmdActive = false; var isOptActive = false
+    var ctrlLang = ""; var cmdLang = ""; var optLang = ""
+    var showVisualFeedback = true; var isTestMode = false
+    var toggleKeyCode: UInt16 = 0; var toggleModifierFlags: UInt64 = 0; var toggleDisplayString = ""
+    var customShortcuts: [CustomShortcut] = []
+    var customApps: [CustomApp] = []
+    var appLaunchShortcuts: [AppLaunchShortcut] = []
+    var excludedApps: [ExcludedApp] = []
+    var isTypoCorrectionEnabled = false
+    var typoKeyCode: UInt16 = 0; var typoModifierFlags: UInt64 = 0; var typoDisplayString = ""
+    var isHyperKeyEnabled = false
+    var isAppLaunchEnabled = true; var isCustomShortcutsEnabled = true
+}
+
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     let currentSettingsVersion = "1.0.0"
     
-    // 🌟 [리뷰 반영] 일괄 업데이트(Batch Update) 상태를 추적하는 플래그
+    private let snapshotQueue = DispatchQueue(label: "com.peepworks.settings.snapshot", attributes: .concurrent)
+    private var _snapshot = SettingsSnapshot()
+        
+    var snapshot: SettingsSnapshot {
+        snapshotQueue.sync { _snapshot }
+    }
+        
+    func updateSnapshot() {
+        let newSnapshot = SettingsSnapshot(
+            isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive,
+            ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
+            showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
+            toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
+            customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts, excludedApps: excludedApps,
+            isTypoCorrectionEnabled: isTypoCorrectionEnabled, typoKeyCode: typoKeyCode, typoModifierFlags: typoModifierFlags, typoDisplayString: typoDisplayString,
+            isHyperKeyEnabled: isHyperKeyEnabled, isAppLaunchEnabled: isAppLaunchEnabled, isCustomShortcutsEnabled: isCustomShortcutsEnabled
+        )
+        snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
+    }
+    
     private var isBatchUpdating = false
     
-    @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive) } }
-    @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive) } }
-    @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive) } }
-    @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang) } }
-    @Published var cmdLang: String { didSet { save("cmdLang", cmdLang) } }
-    @Published var optLang: String { didSet { save("optLang", optLang) } }
+    @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); updateSnapshot() } }
+    @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); updateSnapshot() } }
+    @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive); updateSnapshot() } }
+    @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang); updateSnapshot() } }
+    @Published var cmdLang: String { didSet { save("cmdLang", cmdLang); updateSnapshot() } }
+    @Published var optLang: String { didSet { save("optLang", optLang); updateSnapshot() } }
     
-    @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback) } }
-    @Published var isTestMode: Bool { didSet { save("isTestMode", isTestMode) } }
+    @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback); updateSnapshot() } }
+    @Published var isTestMode: Bool { didSet { save("isTestMode", isTestMode); updateSnapshot() } }
     
-    @Published var toggleKeyCode: UInt16 { didSet { save("toggleKeyCode", toggleKeyCode) } }
-    @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags) } }
-    @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString) } }
+    @Published var toggleKeyCode: UInt16 { didSet { save("toggleKeyCode", toggleKeyCode); updateSnapshot() } }
+    @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags); updateSnapshot() } }
+    @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString); updateSnapshot() } }
     
-    @Published var customShortcuts: [CustomShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(customShortcuts) { save("customShortcuts", e) } } }
-    @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e) } } }
-    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e) } } }
-    @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e) } } }
+    @Published var customShortcuts: [CustomShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(customShortcuts) { save("customShortcuts", e); updateSnapshot() } } }
+    @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e); updateSnapshot() } } }
+    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e); updateSnapshot() } } }
+    @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e); updateSnapshot() } } }
     
-    @Published var isTypoCorrectionEnabled: Bool { didSet { save("isTypoCorrectionEnabled", isTypoCorrectionEnabled) } }
-    @Published var typoKeyCode: UInt16 { didSet { save("typoKeyCode", typoKeyCode) } }
-    @Published var typoModifierFlags: UInt64 { didSet { save("typoModifierFlags", typoModifierFlags) } }
-    @Published var typoDisplayString: String { didSet { save("typoDisplayString", typoDisplayString) } }
-    @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode) } }
+    @Published var isTypoCorrectionEnabled: Bool { didSet { save("isTypoCorrectionEnabled", isTypoCorrectionEnabled); updateSnapshot() } }
+    @Published var typoKeyCode: UInt16 { didSet { save("typoKeyCode", typoKeyCode); updateSnapshot() } }
+    @Published var typoModifierFlags: UInt64 { didSet { save("typoModifierFlags", typoModifierFlags); updateSnapshot() } }
+    @Published var typoDisplayString: String { didSet { save("typoDisplayString", typoDisplayString); updateSnapshot() } }
+    @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode); updateSnapshot() } }
     
     @Published var recentLogs: [ActionLog] = []
     
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
-        didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled) }
+        didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled); updateSnapshot() }
     }
     
-    @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true
-    @AppStorage("isAppSpecificEnabled") var isAppSpecificEnabled: Bool = true
-    @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true
+    @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true { didSet { updateSnapshot() } }
+    @AppStorage("isAppSpecificEnabled") var isAppSpecificEnabled: Bool = true { didSet { updateSnapshot() } }
+    @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true { didSet { updateSnapshot() } }
     
     private init() {
         let d = UserDefaults.standard
@@ -121,15 +155,15 @@ class SettingsManager: ObservableObject {
         typoModifierFlags = UInt64(d.integer(forKey: "typoModifierFlags"))
         typoDisplayString = d.string(forKey: "typoDisplayString") ?? ""
         isSentenceMode = d.object(forKey: "isSentenceMode") as? Bool ?? false
+        
+        updateSnapshot()
     }
     
-    // 🌟 [리뷰 반영] 일괄 업데이트 중일 때는 저장을 무시하여 I/O 과부하 방지
     private func save(_ key: String, _ value: Any) {
         guard !isBatchUpdating else { return }
         UserDefaults.standard.set(value, forKey: key)
     }
     
-    // 🌟 [리뷰 반영] 한 번에 모든 데이터를 디스크에 저장하는 함수
     private func saveAll() {
         let d = UserDefaults.standard
         d.set(isCtrlActive, forKey: "isCtrlActive")
@@ -154,14 +188,13 @@ class SettingsManager: ObservableObject {
         d.set(isSentenceMode, forKey: "isSentenceMode")
     }
     
-    // 🌟 [리뷰 반영] ActionLog 추가 및 크기 상한선 방어 로직
     func addLog(_ log: ActionLog) {
         DispatchQueue.main.async {
             self.recentLogs.insert(log, at: 0)
             
-            // 🌟 50개를 초과할 경우, 몇 개가 초과되었든 확실하게 앞의 50개만 남깁니다.
-            if self.recentLogs.count > 50 {
-                self.recentLogs = Array(self.recentLogs.prefix(50))
+            // 🌟 [리뷰 반영] 메모리 오버헤드(새 배열 할당)를 피하면서도 동시성 초과 유입을 완벽히 방어하는 O(1) 삭제 로직
+            while self.recentLogs.count > 50 {
+                self.recentLogs.removeLast()
             }
         }
     }
@@ -189,7 +222,6 @@ class SettingsManager: ObservableObject {
         let backup = try JSONDecoder().decode(BackupData.self, from: data)
         
         DispatchQueue.main.async {
-            // 🌟 [리뷰 반영] 업데이트 시작: 디스크 쓰기 중단
             self.isBatchUpdating = true
             
             self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
@@ -207,9 +239,9 @@ class SettingsManager: ObservableObject {
             self.typoDisplayString = backup.typoDisplayString ?? ""
             self.isSentenceMode = backup.isSentenceMode ?? false
             
-            // 🌟 [리뷰 반영] 업데이트 종료: 한 번에 디스크에 저장
             self.isBatchUpdating = false
             self.saveAll()
+            self.updateSnapshot() // 복원 후 스냅샷 갱신
         }
     }
 }
