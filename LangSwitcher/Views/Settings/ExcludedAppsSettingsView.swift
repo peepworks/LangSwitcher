@@ -27,29 +27,44 @@ struct ExcludedAppsSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 15) {
                 
-                // 타이틀 및 설명 영역
-                VStack(alignment: .leading, spacing: 5) {
+                // 타이틀 및 토글 스위치 영역
+                HStack(alignment: .center) {
                     Text(String(localized: "Excluded Apps")).font(.title2.bold())
-                    Text(String(localized: "LangSwitcher will be completely disabled while using these apps. Useful for games or heavy software to prevent shortcut conflicts and input lag."))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { settings.isExcludedAppsEnabled },
+                        set: { settings.isExcludedAppsEnabled = $0 }
+                    ))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .controlSize(.small)
                 }
-                .padding(.bottom, 10)
-
+                
+                // 설명 텍스트
+                Text(String(localized: "LangSwitcher will be completely disabled while using these apps. Useful for games or heavy software to prevent shortcut conflicts and input lag."))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 10)
+                
                 // 예외 앱 리스트 영역
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(String(localized: "Active Exclusions")).font(.headline)
                         Spacer()
+                        
+                        // 추가 버튼
                         Button(action: addExcludedApp) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 12, weight: .bold))
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundColor(.blue)
+                                Text(String(localized: "Add App"))
+                                    .font(.body)
+                            }
+                            .foregroundColor(.primary)
                         }
                         .buttonStyle(.plain)
-                        .padding(4)
-                        .background(Color.secondary.opacity(0.2))
-                        .clipShape(Circle())
                         .help(String(localized: "Add Application"))
+                        .disabled(!settings.isExcludedAppsEnabled)
                     }
                     
                     VStack(spacing: 0) {
@@ -60,13 +75,14 @@ struct ExcludedAppsSettingsView: View {
                                 .padding(.vertical, 20)
                                 .frame(maxWidth: .infinity, alignment: .center)
                         } else {
-                            // 🌟 [수정됨] 배열에 $를 붙여 바인딩 형태로 순회합니다.
                             ForEach($settings.excludedApps) { $app in
-                                // 🌟 [수정됨] 클로저 없이, 매개변수 이름을 excludedApp으로 맞춰서 넘겨줍니다.
                                 ExcludedAppRow(excludedApp: $app)
                                 
                                 if app.id != settings.excludedApps.last?.id {
-                                    Divider().padding(.horizontal, 15)
+                                    // 🌟 [수정됨] 구분선(Divider) 위아래 여백을 2에서 4로 늘림
+                                    Divider()
+                                        .padding(.horizontal, 15)
+                                        .padding(.vertical, 4)
                                 }
                             }
                         }
@@ -75,6 +91,7 @@ struct ExcludedAppsSettingsView: View {
                     .cornerRadius(8)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
+                .opacity(settings.isExcludedAppsEnabled ? 1.0 : 0.5)
                 
                 Spacer()
             }
@@ -127,7 +144,8 @@ struct ExcludedAppRow: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 10).padding(.vertical, 2)
+        // 🌟 [수정됨] 행(Row) 자체의 위아래 여백을 5에서 8로 늘려 더욱 쾌적하게 확보
+        .padding(.horizontal, 10).padding(.vertical, 8)
         .onAppear { loadIcon() }
         .onChange(of: excludedApp.bundleIdentifier) { _ in loadIcon() }
     }

@@ -313,7 +313,8 @@ class EventMonitor {
                 }
 
                 let currentAppID = AppMonitor.shared.activeAppBundleID
-                if !currentAppID.isEmpty {
+                // 🌟 [수정됨] snapshot.isExcludedAppsEnabled가 true일 때만 예외 앱 검사 진행
+                if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
                     if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
                         return Unmanaged.passUnretained(event)
                     }

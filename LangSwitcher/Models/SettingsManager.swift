@@ -58,6 +58,7 @@ struct BackupData: Codable {
     let typoModifierFlags: UInt64?
     let typoDisplayString: String?
     let isSentenceMode: Bool?
+    let isExcludedAppsEnabled: Bool?
 }
 
 struct SettingsSnapshot {
@@ -73,6 +74,7 @@ struct SettingsSnapshot {
     var typoKeyCode: UInt16 = 0; var typoModifierFlags: UInt64 = 0; var typoDisplayString = ""
     var isHyperKeyEnabled = false
     var isAppLaunchEnabled = true; var isCustomShortcutsEnabled = true
+    var isExcludedAppsEnabled = true
 }
 
 class SettingsManager: ObservableObject {
@@ -94,7 +96,8 @@ class SettingsManager: ObservableObject {
             toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
             customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts, excludedApps: excludedApps,
             isTypoCorrectionEnabled: isTypoCorrectionEnabled, typoKeyCode: typoKeyCode, typoModifierFlags: typoModifierFlags, typoDisplayString: typoDisplayString,
-            isHyperKeyEnabled: isHyperKeyEnabled, isAppLaunchEnabled: isAppLaunchEnabled, isCustomShortcutsEnabled: isCustomShortcutsEnabled
+            isHyperKeyEnabled: isHyperKeyEnabled, isAppLaunchEnabled: isAppLaunchEnabled, isCustomShortcutsEnabled: isCustomShortcutsEnabled,
+            isExcludedAppsEnabled: isExcludedAppsEnabled
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
@@ -135,6 +138,9 @@ class SettingsManager: ObservableObject {
     @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true { didSet { updateSnapshot() } }
     @AppStorage("isAppSpecificEnabled") var isAppSpecificEnabled: Bool = true { didSet { updateSnapshot() } }
     @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true { didSet { updateSnapshot() } }
+    
+    // 🌟 이 부분에 단 한 번만 선언되어 있어야 합니다!
+    @AppStorage("isExcludedAppsEnabled") var isExcludedAppsEnabled: Bool = true { didSet { updateSnapshot() } }
     
     private init() {
         let d = UserDefaults.standard
@@ -192,7 +198,6 @@ class SettingsManager: ObservableObject {
         DispatchQueue.main.async {
             self.recentLogs.insert(log, at: 0)
             
-            // 🌟 [리뷰 반영] 메모리 오버헤드(새 배열 할당)를 피하면서도 동시성 초과 유입을 완벽히 방어하는 O(1) 삭제 로직
             while self.recentLogs.count > 50 {
                 self.recentLogs.removeLast()
             }
@@ -211,7 +216,8 @@ class SettingsManager: ObservableObject {
             typoKeyCode: typoKeyCode,
             typoModifierFlags: typoModifierFlags,
             typoDisplayString: typoDisplayString,
-            isSentenceMode: isSentenceMode
+            isSentenceMode: isSentenceMode,
+            isExcludedAppsEnabled: isExcludedAppsEnabled
         )
         let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
         let data = try encoder.encode(backup); try data.write(to: url)
@@ -239,9 +245,11 @@ class SettingsManager: ObservableObject {
             self.typoDisplayString = backup.typoDisplayString ?? ""
             self.isSentenceMode = backup.isSentenceMode ?? false
             
+            self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
+            
             self.isBatchUpdating = false
             self.saveAll()
-            self.updateSnapshot() // 복원 후 스냅샷 갱신
+            self.updateSnapshot()
         }
     }
 }
