@@ -24,6 +24,15 @@ class EventMonitor {
     static let shared = EventMonitor()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    
+    // 🌟 [추가] 헬스 체크를 위한 타이머
+    private var healthCheckTimer: Timer?
+        
+    // 🌟 [추가] 현재 탭이 활성화 상태인지 확인하는 계산 프로퍼티
+    var isEnabled: Bool {
+        guard let tap = eventTap else { return false }
+        return CGEvent.tapIsEnabled(tap: tap)
+    }
 
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.state", attributes: .concurrent)
 
@@ -274,7 +283,13 @@ class EventMonitor {
     // MARK: - Lifecycle
 
     func start() {
-        if eventTap != nil { return }
+        if eventTap != nil {
+            // 🌟 이미 탭은 있는데 비활성화만 된 경우라면 즉시 활성화 시도
+            if !isEnabled {
+                CGEvent.tapEnable(tap: eventTap!, enable: true)
+            }
+            return
+        }
 
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.keyUp.rawValue) |
@@ -286,34 +301,41 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
-                if event.getIntegerValueField(.eventSourceUserData) == 9999 {
-                    return Unmanaged.passUnretained(event)
-                }
-
+                // 1. 시스템 차단 해제 로직
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return nil
                 }
 
+                let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+                let snapshot = SettingsManager.shared.snapshot
+
+                // 🌟 [핵심 수정 1] 녹화기보다 Hyper Key 변환이 무조건 '먼저' 실행되게 끌어올림!
+                // 물리적인 F19를 가로채서 증발시키고, 시스템에 가상의 수식어(⌘⌥⌃⇧) 이벤트를 쏘는 역할.
+                if snapshot.isHyperKeyEnabled {
+                    let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
+                    if shouldBlock { return nil } // 원본 F19 이벤트는 여기서 완벽히 차단됨
+                }
+
+                // HyperKeyManager가 만들어낸 가상 이벤트(⌘⌥⌃⇧)인지 식별표 확인
+                let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
+
+                // 🌟 [핵심 수정 2] 번역이 끝난(가상 플래그가 묻은) 이벤트를 비로소 녹화기가 가로챔!
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
                         if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
+                        // 단축키 녹화 중에는 키 이벤트가 시스템으로 새어나가지 않도록 여기서 삼킵니다.
                         return nil
                     }
                 }
-                
-                let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-                
-                // 🌟 [리뷰 반영] 스냅샷 기반 읽기
-                let snapshot = SettingsManager.shared.snapshot
-                
-                if snapshot.isHyperKeyEnabled {
-                    let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
-                    if shouldBlock { return nil }
+
+                // 🌟 [핵심 수정 3] 녹화 중이 아닐 때, 가상 수식어 이벤트는 안전하게 시스템으로 통과시킴
+                if isSimulated {
+                    return Unmanaged.passUnretained(event)
                 }
 
+                // --- 이 아래부터는 기존 예외 앱 및 기본 로직과 동일 ---
                 let currentAppID = AppMonitor.shared.activeAppBundleID
-                // 🌟 [수정됨] snapshot.isExcludedAppsEnabled가 true일 때만 예외 앱 검사 진행
                 if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
                     if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
                         return Unmanaged.passUnretained(event)
@@ -339,13 +361,46 @@ class EventMonitor {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource!, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
+            // 🌟 탭 생성이 성공하면 헬스 체크 타이머 시작
+            startHealthCheck()
+        }
+    }
+
+    // MARK: - Health Check
+
+    private func startHealthCheck() {
+        healthCheckTimer?.invalidate()
+        // 5초 간격으로 감시 (시스템 부하 고려)
+        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // 탭 객체는 존재하는데 시스템에 의해 비활성화된 경우 복구 시도
+            if self.eventTap != nil && !self.isEnabled {
+                print("⚠️ [EventMonitor] EventTap detected as disabled. Resurrecting...")
+                CGEvent.tapEnable(tap: self.eventTap!, enable: true)
+                
+                // 복구 후 로그 남기기 (선택 사항)
+                SettingsManager.shared.addLog(ActionLog(
+                    timestamp: Date(),
+                    targetApp: "System",
+                    appliedRule: "Auto Resurrect",
+                    finalInputSource: "Restored",
+                    result: .success,
+                    failureReason: .none
+                ))
+            }
         }
     }
 
     func stop() {
+        // 🌟 [추가] 타이머 먼저 정지
+        healthCheckTimer?.invalidate()
+        healthCheckTimer = nil
+        
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
-        eventTap = nil; runLoopSource = nil
+        eventTap = nil
+        runLoopSource = nil
     }
     
     func cancelShortcutRecording() {

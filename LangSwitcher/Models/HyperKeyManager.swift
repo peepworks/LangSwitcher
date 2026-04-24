@@ -114,6 +114,7 @@ class HyperKeyManager {
         var shouldPostDown = false
         var shouldPostUp = false
         var shouldHandleTap = false
+        var shouldToggleCapsLock = false // 🌟 [추가됨] 대/소문자 전환 플래그
         var modifiedFlags: CGEventFlags? = nil
 
         // 🌟 1단계: 자물쇠를 잠그고 내부 상태(State)만 안전하게 평가 및 수정합니다.
@@ -136,6 +137,8 @@ class HyperKeyManager {
                     let duration = Date().timeIntervalSince(startTime)
                     if duration < 0.3 {
                         shouldHandleTap = true // 나중에 실행할 예약
+                    } else {
+                        shouldToggleCapsLock = true // 🌟 0.3초 이상: 대/소문자 전환(Caps Lock)
                     }
                 }
                 shouldBlock = true
@@ -156,8 +159,43 @@ class HyperKeyManager {
         if shouldPostDown { postHyperModifiers(isDown: true) }
         if shouldPostUp { postHyperModifiers(isDown: false) }
         if shouldHandleTap { handleTap() }
+        if shouldToggleCapsLock { toggleNativeCapsLock() } // 🌟 [추가됨] 대/소문자 전환 실행
         if let newFlags = modifiedFlags { event.flags = newFlags }
 
         return shouldBlock
+    }
+    // 🌟 [수정된 메서드] 시스템 IOKit을 활용해 물리적인 Caps Lock 하드웨어 상태(LED 포함)를 강제로 전환합니다.
+    private func toggleNativeCapsLock() {
+        // 1. 현재 macOS 시스템의 Caps Lock 상태를 정확한 API로 읽어옵니다. (.maskAlphaShift가 Caps Lock을 의미)
+        let currentFlags = CGEventSource.flagsState(.hidSystemState)
+        let currentState = currentFlags.contains(.maskAlphaShift)
+        let newState = !currentState
+
+        // 2. IOKit의 IOHIDSetModifierLockState API를 직접 호출하기 위한 JXA 스크립트
+        let script = """
+        ObjC.import('IOKit');
+        var ioConnect = Ref();
+        $.IOServiceOpen(
+            $.IOServiceGetMatchingService(0, $.IOServiceMatching('IOHIDSystem')),
+            $.mach_task_self_,
+            0,
+            ioConnect
+        );
+        $.IOHIDSetModifierLockState(ioConnect, 1, \(newState ? "true" : "false"));
+        $.IOServiceClose(ioConnect);
+        """
+
+        // 3. 이벤트 탭(Event Tap) 스레드 블로킹을 방지하기 위해 백그라운드에서 비동기로 실행
+        DispatchQueue.global(qos: .userInitiated).async {
+            let task = Process()
+            task.launchPath = "/usr/bin/osascript"
+            task.arguments = ["-l", "JavaScript", "-e", script]
+            do {
+                try task.run()
+                task.waitUntilExit()
+            } catch {
+                print("Caps Lock toggle failed: \(error)")
+            }
+        }
     }
 }
