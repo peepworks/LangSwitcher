@@ -55,6 +55,19 @@ struct GeneralSettingsView: View {
                         // 시각적 피드백 (HUD)
                         SettingToggleRow(title: String(localized: "Show visual feedback"), isOn: $settings.showVisualFeedback)
                         
+                        // 🌟 [추가] 시각 피드백이 켜져 있을 때만 미니 플래그 옵션 표시
+                        if settings.showVisualFeedback {
+                            SettingToggleRow(
+                                title: String(localized: "Show mini flag near text cursor"),
+                                isOn: $settings.isCursorHUDEnabled
+                            )
+                            .padding(.leading, 20) // 하위 옵션 느낌을 주기 위한 들여쓰기
+                        }
+                            
+                        Text(String(localized: "Displays a brief overlay indicating the new language."))
+                            .font(.caption).foregroundColor(.secondary).lineSpacing(2)
+                            .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, -2)
+                        
                         Divider().padding(.horizontal, 15)
                         
                         // 규칙 테스트 모드
@@ -106,29 +119,6 @@ struct GeneralSettingsView: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 
-                // 5. 고급 기능 (Hyper Key) 섹션
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(String(localized: "Advanced Features")).font(.headline)
-                                    
-                    VStack(alignment: .leading, spacing: 0) {
-                        // Hyper Key 활성화 토글
-                        SettingToggleRow(
-                            title: String(localized: "Caps Lock to Hyper Key & Input Source Switcher"),
-                            isOn: $settings.isHyperKeyEnabled
-                        )
-                                        
-                        // 🌟 친절한 설명 텍스트
-                        Text(String(localized: "Mapped instantly in the background. Short press toggles input source, long press acts as Hyper Key."))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineSpacing(2)
-                            .padding(.horizontal, 15)
-                            .padding(.bottom, 12)
-                            .padding(.top, -2)
-                    }
-                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-                }
             }
             .padding(.horizontal, 25)
             .padding(.vertical, 12)

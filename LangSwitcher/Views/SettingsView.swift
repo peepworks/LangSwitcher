@@ -20,6 +20,7 @@ import SwiftUI
 
 enum SettingsTab: Hashable {
     case general
+    case advanced // 🌟 [추가됨] 고급 설정 탭
     case customShortcuts
     case appSpecific
     case appLaunch
@@ -29,7 +30,6 @@ enum SettingsTab: Hashable {
 }
 
 struct SettingsView: View {
-    // 🌟 [리뷰 반영] 싱글톤 객체이므로 @StateObject에서 @ObservedObject로 변경
     @ObservedObject private var accManager = AccessibilityManager.shared
     @State private var selectedTab: SettingsTab? = .general
 
@@ -44,6 +44,11 @@ struct SettingsView: View {
                 Section(header: Text(String(localized: "Settings"))) {
                     Label(String(localized: "General"), systemImage: "gearshape")
                         .tag(SettingsTab.general)
+                    
+                    // 🌟 [추가됨] 톱니바퀴 두 개 아이콘을 사용한 고급 메뉴
+                    Label(String(localized: "Advanced"), systemImage: "gearshape.2")
+                        .tag(SettingsTab.advanced)
+                    
                     Label(String(localized: "Custom Shortcuts"), systemImage: "keyboard")
                         .tag(SettingsTab.customShortcuts)
                     Label(String(localized: "App-Specific Keyboards"), systemImage: "macwindow")
@@ -70,6 +75,7 @@ struct SettingsView: View {
             Group {
                 switch selectedTab {
                 case .general: GeneralSettingsView()
+                case .advanced: AdvancedSettingsView() // 🌟 [추가됨] 선택 시 렌더링할 뷰
                 case .customShortcuts: CustomShortcutsSettingsView()
                 case .appSpecific: AppSpecificSettingsView()
                 case .appLaunch: AppLaunchSettingsView()

@@ -18,8 +18,9 @@
 
 import Cocoa
 import SwiftUI
+import Carbon // TIS API 사용을 위해 추가
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     var settingsWindow: NSWindow?
 
@@ -27,7 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 앱이 메뉴바 전용(Accessory)으로 동작하도록 설정
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
-        
+
         // 1. 앱 실행 시 접근성 권한이 있다면 즉시 키보드 감지(EventMonitor) 시작
         if AccessibilityManager.shared.isTrusted {
             EventMonitor.shared.start()
@@ -35,35 +36,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // 권한이 없다면 사용자에게 권한 요청 알림을 띄웁니다.
             AccessibilityManager.shared.checkPermission(prompt: true)
         }
-        
-        // 🌟 [리뷰 반영] 앱 실행 시 활성 앱 감지기(AppMonitor)를 명시적으로 시작합니다.
-        // 이를 통해 예외 앱 및 앱별 키보드 전환 기능이 누락 없이 정상 동작하게 됩니다.
+
+        // 앱 실행 시 활성 앱 감지기(AppMonitor)를 명시적으로 시작합니다.
         AppMonitor.shared.start()
-        
+
         // 백그라운드 24시간 단위 자동 업데이트 확인 타이머 가동
         UpdateManager.shared.setupAutoUpdateCheck()
-        
+
         // 앱 시작 시, 저장된 설정값을 불러와서 Hyper Key 기능을 켤지 말지 결정합니다.
         HyperKeyManager.shared.updateState(isEnabled: UserDefaults.standard.bool(forKey: "isHyperKeyEnabled"))
     }
 
-    // 2. 앱 종료 시 감지기를 안전하게 중지하여 시스템 자원 반환
     func applicationWillTerminate(_ notification: Notification) {
         EventMonitor.shared.stop()
-        
-        // 🌟 [리뷰 반영] 앱 종료 시 활성 앱 감지기도 안전하게 중지하여 자원(Notification Observer 등)을 반환합니다.
         AppMonitor.shared.stop()
-        
-        // 앱이 꺼질 때 Caps Lock을 다시 원래 상태로 돌려놓습니다.
         HyperKeyManager.shared.updateState(isEnabled: false)
-        
-        // 앱 종료 시 업데이트 확인 타이머를 안전하게 파기하여 RunLoop 자원 반환
         UpdateManager.shared.stopAutoUpdateCheck()
     }
 
     func setupMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        
+
         if let button = statusItem.button {
             if let customImage = NSImage(named: "StatusIcon") {
                 customImage.isTemplate = true
@@ -75,26 +68,102 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.autoenablesItems = false
-
-        let settingsItem = NSMenuItem(
-            title: String(localized: "Settings..."),
-            action: #selector(openSettings),
-            keyEquivalent: ","
-        )
-        settingsItem.target = self
-        
-        let quitItem = NSMenuItem(
-            title: String(localized: "Quit"),
-            action: #selector(quitApp),
-            keyEquivalent: "q"
-        )
-        quitItem.target = self
-        
-        menu.addItem(settingsItem)
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(quitItem)
-        
+        menu.delegate = self // 🌟 동적 메뉴를 위해 delegate 연결
         statusItem.menu = menu
+    }
+
+    // 🌟 메뉴가 열리기 직전에 호출됨: 여기서 실시간 상태 및 아이콘 정렬 반영
+    func menuWillOpen(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let snapshot = SettingsManager.shared.snapshot
+        
+        let activeAppID = AppMonitor.shared.activeAppBundleID
+        let activeAppName = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == activeAppID })?.localizedName ?? "App"
+
+        var currentLang = "Unknown"
+        if let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+           let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyLocalizedName) {
+            currentLang = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+        }
+        
+        // 🌟 공통으로 사용할 체크마크 아이콘
+        let checkmarkIcon = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
+
+        // 1. 현재 입력 소스 (지구본 아이콘)
+        let langItem = NSMenuItem(title: "\(String(localized: "Language")): \(currentLang)", action: #selector(toggleLanguage), keyEquivalent: "")
+        langItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        menu.addItem(langItem)
+        
+        menu.addItem(NSMenuItem.separator())
+
+        // 2. 앱 일시 정지 (Kill Switch)
+        let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "")
+        // .state 대신 .image를 사용하여 아이콘 영역에 체크마크를 표시합니다.
+        pauseItem.image = EventMonitor.shared.isPaused ? checkmarkIcon : nil
+        menu.addItem(pauseItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // 3. 핵심 기능 빠른 토글
+        let typoItem = NSMenuItem(title: String(localized: "Typo Correction"), action: #selector(toggleTypo), keyEquivalent: "")
+        typoItem.image = snapshot.isTypoCorrectionEnabled ? checkmarkIcon : nil
+        menu.addItem(typoItem)
+
+        let hyperItem = NSMenuItem(title: String(localized: "Hyper Key (Caps Lock)"), action: #selector(toggleHyper), keyEquivalent: "")
+        hyperItem.image = snapshot.isHyperKeyEnabled ? checkmarkIcon : nil
+        menu.addItem(hyperItem)
+
+        let windowItem = NSMenuItem(title: String(localized: "Window Memory"), action: #selector(toggleWindowMemory), keyEquivalent: "")
+        windowItem.image = snapshot.isWindowMemoryEnabled ? checkmarkIcon : nil
+        menu.addItem(windowItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // 4. 동적 예외 앱 관리 (+ / - 아이콘 적용)
+        if !activeAppID.isEmpty && activeAppID != Bundle.main.bundleIdentifier {
+            let isExcluded = snapshot.excludedApps.contains { $0.bundleIdentifier == activeAppID }
+            let title = isExcluded
+                ? String(localized: "Remove \(activeAppName) from Excluded Apps")
+                : String(localized: "Add \(activeAppName) to Excluded Apps")
+            
+            let excludeItem = NSMenuItem(title: title, action: #selector(toggleExcludeCurrentApp), keyEquivalent: "")
+            // 추가할 땐 +, 제거할 땐 - 아이콘 표시
+            excludeItem.image = NSImage(systemSymbolName: isExcluded ? "minus.circle" : "plus.circle", accessibilityDescription: nil)
+            excludeItem.representedObject = ["id": activeAppID, "name": activeAppName]
+            menu.addItem(excludeItem)
+            
+            menu.addItem(NSMenuItem.separator())
+        }
+
+        // 5. 시스템 메뉴 (설정 및 종료 아이콘 적용)
+        let settingsItem = NSMenuItem(title: String(localized: "Settings..."), action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        menu.addItem(settingsItem)
+
+        let quitItem = NSMenuItem(title: String(localized: "Quit"), action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil) // 🌟 전원(종료) 아이콘
+        menu.addItem(quitItem)
+    }
+
+    // MARK: - Actions
+
+    @objc func toggleLanguage() { InputSourceManager.shared.switchToNextInputSource() }
+    @objc func togglePause() { EventMonitor.shared.isPaused.toggle() }
+    @objc func toggleTypo() { SettingsManager.shared.isTypoCorrectionEnabled.toggle() }
+    @objc func toggleHyper() { SettingsManager.shared.isHyperKeyEnabled.toggle() }
+    @objc func toggleWindowMemory() { SettingsManager.shared.isWindowMemoryEnabled.toggle() }
+
+    @objc func toggleExcludeCurrentApp(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let id = info["id"], let name = info["name"] else { return }
+        
+        var currentList = SettingsManager.shared.excludedApps
+        if let index = currentList.firstIndex(where: { $0.bundleIdentifier == id }) {
+            currentList.remove(at: index)
+        } else {
+            currentList.append(ExcludedApp(bundleIdentifier: id, appName: name))
+        }
+        SettingsManager.shared.excludedApps = currentList
     }
 
     @objc func openSettings() {
@@ -106,20 +175,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let contentView = SettingsView()
 
-        // 네이티브 사이드바 설정창 비율에 맞게 창을 와이드(Wide)하게 설정
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 750, height: 720),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
 
-        // 최소 크기 지정 (UI 깨짐 방지)
         window.minSize = NSSize(width: 700, height: 600)
-        
         window.center()
         window.title = String(localized: "LangSwitcher Settings")
         window.contentView = NSHostingView(rootView: contentView)
         window.isReleasedWhenClosed = false
-        
+
         self.settingsWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

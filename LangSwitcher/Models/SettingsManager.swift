@@ -75,11 +75,18 @@ struct SettingsSnapshot {
     var isHyperKeyEnabled = false
     var isAppLaunchEnabled = true; var isCustomShortcutsEnabled = true
     var isExcludedAppsEnabled = true
+    var isWindowMemoryEnabled = false
+    var isWindowMemoryCleanupEnabled = true
+    var isCursorHUDEnabled = true
+    var isCloudSyncEnabled = false
 }
 
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     let currentSettingsVersion = "1.0.0"
+    
+    // 🌟 iCloud 저장소 접근 객체
+    private let icloudStore = NSUbiquitousKeyValueStore.default
     
     private let snapshotQueue = DispatchQueue(label: "com.peepworks.settings.snapshot", attributes: .concurrent)
     private var _snapshot = SettingsSnapshot()
@@ -94,36 +101,43 @@ class SettingsManager: ObservableObject {
             ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
             toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
-            customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts, excludedApps: excludedApps,
-            isTypoCorrectionEnabled: isTypoCorrectionEnabled, typoKeyCode: typoKeyCode, typoModifierFlags: typoModifierFlags, typoDisplayString: typoDisplayString,
-            isHyperKeyEnabled: isHyperKeyEnabled, isAppLaunchEnabled: isAppLaunchEnabled, isCustomShortcutsEnabled: isCustomShortcutsEnabled,
-            isExcludedAppsEnabled: isExcludedAppsEnabled
+            customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts,
+            excludedApps: excludedApps,
+            isTypoCorrectionEnabled: isTypoCorrectionEnabled,
+            typoKeyCode: typoKeyCode, typoModifierFlags: typoModifierFlags, typoDisplayString: typoDisplayString,
+            isHyperKeyEnabled: isHyperKeyEnabled,
+            isAppLaunchEnabled: isAppLaunchEnabled, isCustomShortcutsEnabled: isCustomShortcutsEnabled,
+            isExcludedAppsEnabled: isExcludedAppsEnabled,
+            isWindowMemoryEnabled: isWindowMemoryEnabled,
+            isWindowMemoryCleanupEnabled: isWindowMemoryCleanupEnabled,
+            isCursorHUDEnabled: isCursorHUDEnabled,
+            isCloudSyncEnabled: isCloudSyncEnabled
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
-    
+
     private var isBatchUpdating = false
     
-    @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); updateSnapshot() } }
-    @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); updateSnapshot() } }
-    @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive); updateSnapshot() } }
-    @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang); updateSnapshot() } }
-    @Published var cmdLang: String { didSet { save("cmdLang", cmdLang); updateSnapshot() } }
-    @Published var optLang: String { didSet { save("optLang", optLang); updateSnapshot() } }
+    @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); updateSnapshot(); syncToCloud() } }
+    @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); updateSnapshot(); syncToCloud() } }
+    @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive); updateSnapshot(); syncToCloud() } }
+    @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang); updateSnapshot(); syncToCloud() } }
+    @Published var cmdLang: String { didSet { save("cmdLang", cmdLang); updateSnapshot(); syncToCloud() } }
+    @Published var optLang: String { didSet { save("optLang", optLang); updateSnapshot(); syncToCloud() } }
     
-    @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback); updateSnapshot() } }
+    @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback); updateSnapshot(); syncToCloud() } }
     @Published var isTestMode: Bool { didSet { save("isTestMode", isTestMode); updateSnapshot() } }
     
     @Published var toggleKeyCode: UInt16 { didSet { save("toggleKeyCode", toggleKeyCode); updateSnapshot() } }
     @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags); updateSnapshot() } }
     @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString); updateSnapshot() } }
     
-    @Published var customShortcuts: [CustomShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(customShortcuts) { save("customShortcuts", e); updateSnapshot() } } }
-    @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e); updateSnapshot() } } }
-    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e); updateSnapshot() } } }
-    @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e); updateSnapshot() } } }
+    @Published var customShortcuts: [CustomShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(customShortcuts) { save("customShortcuts", e); updateSnapshot(); syncToCloud() } } }
+    @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e); updateSnapshot(); syncToCloud() } } }
+    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e); updateSnapshot(); syncToCloud() } } }
+    @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e); updateSnapshot(); syncToCloud() } } }
     
-    @Published var isTypoCorrectionEnabled: Bool { didSet { save("isTypoCorrectionEnabled", isTypoCorrectionEnabled); updateSnapshot() } }
+    @Published var isTypoCorrectionEnabled: Bool { didSet { save("isTypoCorrectionEnabled", isTypoCorrectionEnabled); updateSnapshot(); syncToCloud() } }
     @Published var typoKeyCode: UInt16 { didSet { save("typoKeyCode", typoKeyCode); updateSnapshot() } }
     @Published var typoModifierFlags: UInt64 { didSet { save("typoModifierFlags", typoModifierFlags); updateSnapshot() } }
     @Published var typoDisplayString: String { didSet { save("typoDisplayString", typoDisplayString); updateSnapshot() } }
@@ -132,15 +146,25 @@ class SettingsManager: ObservableObject {
     @Published var recentLogs: [ActionLog] = []
     
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
-        didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled); updateSnapshot() }
+        didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled); updateSnapshot(); syncToCloud() }
     }
     
     @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true { didSet { updateSnapshot() } }
     @AppStorage("isAppSpecificEnabled") var isAppSpecificEnabled: Bool = true { didSet { updateSnapshot() } }
     @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true { didSet { updateSnapshot() } }
-    
-    // 🌟 이 부분에 단 한 번만 선언되어 있어야 합니다!
     @AppStorage("isExcludedAppsEnabled") var isExcludedAppsEnabled: Bool = true { didSet { updateSnapshot() } }
+    
+    @AppStorage("isWindowMemoryEnabled") var isWindowMemoryEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isWindowMemoryCleanupEnabled") var isWindowMemoryCleanupEnabled: Bool = true { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isCursorHUDEnabled") var isCursorHUDEnabled: Bool = true { didSet { updateSnapshot(); syncToCloud() } }
+    
+    // 🌟 동기화 켜기/끄기 설정
+    @AppStorage("isCloudSyncEnabled") var isCloudSyncEnabled: Bool = false {
+        didSet {
+            updateSnapshot()
+            if isCloudSyncEnabled { syncToCloud() }
+        }
+    }
     
     private init() {
         let d = UserDefaults.standard
@@ -163,6 +187,55 @@ class SettingsManager: ObservableObject {
         isSentenceMode = d.object(forKey: "isSentenceMode") as? Bool ?? false
         
         updateSnapshot()
+        
+        // 🌟 iCloud 외부 변경 알림 구독 (다른 Mac에서 설정이 바뀌면 감지)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(icloudUpdateReceived(_:)),
+            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: icloudStore
+        )
+        icloudStore.synchronize()
+    }
+    
+    // 🌟 다른 기기에서 설정이 변경되어 iCloud를 통해 전달받았을 때
+    @objc private func icloudUpdateReceived(_ notification: Notification) {
+        guard isCloudSyncEnabled else { return }
+        
+        DispatchQueue.main.async {
+            self.isBatchUpdating = true
+            
+            let dict = self.icloudStore.dictionaryRepresentation
+            
+            if let val = dict["showVisualFeedback"] as? Bool { self.showVisualFeedback = val }
+            if let val = dict["isHyperKeyEnabled"] as? Bool { self.isHyperKeyEnabled = val }
+            if let val = dict["isWindowMemoryEnabled"] as? Bool { self.isWindowMemoryEnabled = val }
+            if let val = dict["isCursorHUDEnabled"] as? Bool { self.isCursorHUDEnabled = val }
+            if let val = dict["isTypoCorrectionEnabled"] as? Bool { self.isTypoCorrectionEnabled = val }
+            
+            if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.excludedApps = dec }
+            if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.customShortcuts = dec }
+            
+            self.isBatchUpdating = false
+            self.saveAll()
+            self.updateSnapshot()
+        }
+    }
+    
+    // 🌟 현재 기기의 설정을 iCloud로 밀어넣기
+    func syncToCloud() {
+        guard isCloudSyncEnabled, !isBatchUpdating else { return }
+        
+        icloudStore.set(showVisualFeedback, forKey: "showVisualFeedback")
+        icloudStore.set(isHyperKeyEnabled, forKey: "isHyperKeyEnabled")
+        icloudStore.set(isWindowMemoryEnabled, forKey: "isWindowMemoryEnabled")
+        icloudStore.set(isCursorHUDEnabled, forKey: "isCursorHUDEnabled")
+        icloudStore.set(isTypoCorrectionEnabled, forKey: "isTypoCorrectionEnabled")
+        
+        if let e = try? JSONEncoder().encode(excludedApps) { icloudStore.set(e, forKey: "excludedApps") }
+        if let e = try? JSONEncoder().encode(customShortcuts) { icloudStore.set(e, forKey: "customShortcuts") }
+        
+        icloudStore.synchronize()
     }
     
     private func save(_ key: String, _ value: Any) {
@@ -233,7 +306,7 @@ class SettingsManager: ObservableObject {
             self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
             self.ctrlLang = backup.ctrlLang; self.cmdLang = backup.cmdLang; self.optLang = backup.optLang
             self.showVisualFeedback = backup.showVisualFeedback
-            
+
             self.isTestMode = false
             
             self.toggleKeyCode = backup.toggleKeyCode; self.toggleModifierFlags = backup.toggleModifierFlags; self.toggleDisplayString = backup.toggleDisplayString

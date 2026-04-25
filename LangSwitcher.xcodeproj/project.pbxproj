@@ -19,6 +19,7 @@
 		126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */; };
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
+		12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */; };
 		12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */; };
 		12F080502F679423005A8424 /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12F0804F2F679423005A8424 /* ServiceManagement.framework */; };
 		12F080522F67942F005A8424 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12F080512F67942F005A8424 /* Carbon.framework */; };
@@ -28,6 +29,7 @@
 
 /* Begin PBXFileReference section */
 		12242E2C2F933CA300690095 /* TypoConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoConverter.swift; sourceTree = "<group>"; };
+		1239486B2F9C990D00980FAF /* LangSwitcher.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LangSwitcher.entitlements; sourceTree = "<group>"; };
 		1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMonitor.swift; sourceTree = "<group>"; };
 		125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputSourceManager.swift; sourceTree = "<group>"; };
 		125FF4D32F658001005DAB0C /* EventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventMonitor.swift; sourceTree = "<group>"; };
@@ -41,6 +43,7 @@
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		129E052E2F657B6A00F34ABE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		129E05322F657E1600F34ABE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowMonitor.swift; sourceTree = "<group>"; };
 		12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDManager.swift; sourceTree = "<group>"; };
 		12F0804F2F679423005A8424 /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
 		12F080512F67942F005A8424 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
@@ -95,6 +98,7 @@
 		125FF4CB2F657F1A005DAB0C /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
+				12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */,
 				1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */,
 				125FF4D32F658001005DAB0C /* EventMonitor.swift */,
 			);
@@ -137,6 +141,7 @@
 		129E05312F657B6A00F34ABE /* LangSwitcher */ = {
 			isa = PBXGroup;
 			children = (
+				1239486B2F9C990D00980FAF /* LangSwitcher.entitlements */,
 				125FF4D92F6580DE005DAB0C /* AppIcon */,
 				125FF4CC2F657F22005DAB0C /* Views */,
 				125FF4CB2F657F1A005DAB0C /* Controllers */,
@@ -239,6 +244,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				125FF4D82F658041005DAB0C /* AppDelegate.swift in Sources */,
+				12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */,
 				126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */,
 				125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
@@ -393,9 +399,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = LangSwitcher/LangSwitcher.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8P729AC286;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -408,7 +417,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.5.0;
+				MARKETING_VERSION = 0.6.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;
@@ -431,9 +440,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = LangSwitcher/LangSwitcher.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8P729AC286;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -446,7 +458,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.5.0;
+				MARKETING_VERSION = 0.6.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;

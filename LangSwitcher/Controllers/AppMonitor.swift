@@ -49,6 +49,9 @@ class AppMonitor {
 
             // 공유 상태 업데이트
             AppMonitor.shared.activeAppBundleID = bundleID
+            
+            // 🌟 [추가된 코드] 활성 앱의 PID를 넘겨서 윈도우 감지기 연결!
+            WindowMonitor.shared.observeApp(pid: app.processIdentifier)
 
             let settings = SettingsManager.shared
             
