@@ -17,9 +17,17 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers // 백업 파일(.json) 저장을 위해 필수 추가
 
 struct AdvancedSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
+    
+    // General에서 이사 온 상태 변수들
+    @State private var showBackupSuccess = false
+    @State private var showRestoreSuccess = false
+    
+    // 🌟 [핵심] 기능 플래그 (Feature Flag): 무료 개발자 계정 제한으로 UI에서만 임시로 숨김
+    private let showICloudFeature = false
 
     var body: some View {
         ScrollView {
@@ -66,40 +74,93 @@ struct AdvancedSettingsView: View {
                     Text(String(localized: "Window Focus Management")).font(.headline)
                 }
                 
-                // 3. 🌟 iCloud 동기화 섹션
-                /*
+                // 3. 백업 및 복구 섹션
                 GroupBox {
                     VStack(alignment: .leading, spacing: 0) {
-                        SettingToggleRow(
-                            title: String(localized: "Sync settings via iCloud"),
-                            isOn: $settings.isCloudSyncEnabled
-                        )
-                        Text(String(localized: "Automatically synchronizes your shortcuts, excluded apps, and preferences across all your Mac devices using iCloud."))
-                            .font(.caption).foregroundColor(.secondary).lineSpacing(2)
-                            .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, -2)
+                        SettingButtonRow(title: String(localized: "Export Settings"), buttonTitle: String(localized: "Export...")) {
+                            exportSettings()
+                        }
                         
-                        // 동기화가 켜져 있을 때만 '지금 동기화' 버튼 표시
-                        if settings.isCloudSyncEnabled {
-                            HStack {
-                                Spacer()
-                                Button(String(localized: "Sync Now")) {
-                                    SettingsManager.shared.syncToCloud()
-                                }
-                                .buttonStyle(.link)
-                                .font(.caption)
-                                .padding(.trailing, 15)
-                                .padding(.bottom, 10)
-                            }
+                        Divider().padding(.horizontal, 15)
+                        
+                        SettingButtonRow(title: String(localized: "Import Settings"), buttonTitle: String(localized: "Import...")) {
+                            importSettings()
                         }
                     }
                 } label: {
-                    Text(String(localized: "Cloud Sync")).font(.headline)
+                    Text(String(localized: "Backup & Restore")).font(.headline)
                 }
-                 */
+                
+                // 4. 🌟 iCloud 동기화 섹션 (if 문을 사용해 UI 렌더링만 차단)
+                if showICloudFeature {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 0) {
+                            SettingToggleRow(
+                                title: String(localized: "Sync settings via iCloud"),
+                                isOn: $settings.isCloudSyncEnabled
+                            )
+                            Text(String(localized: "Automatically synchronizes your shortcuts, excluded apps, and preferences across all your Mac devices using iCloud."))
+                                .font(.caption).foregroundColor(.secondary).lineSpacing(2)
+                                .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, -2)
+                            
+                            if settings.isCloudSyncEnabled {
+                                HStack {
+                                    Spacer()
+                                    Button(String(localized: "Sync Now")) {
+                                        SettingsManager.shared.syncToCloud()
+                                    }
+                                    .buttonStyle(.link)
+                                    .font(.caption)
+                                    .padding(.trailing, 15)
+                                    .padding(.bottom, 10)
+                                }
+                            }
+                        }
+                    } label: {
+                        Text(String(localized: "Cloud Sync")).font(.headline)
+                    }
+                }
                 
                 Spacer()
             }
             .padding()
+            .alert(String(localized: "Backup Successful"), isPresented: $showBackupSuccess) {
+                Button("OK", role: .cancel) { }
+            }
+            .alert(String(localized: "Restore Successful"), isPresented: $showRestoreSuccess) {
+                Button("OK", role: .cancel) { }
+            }
+        }
+    }
+    
+    // MARK: - Actions
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmm"
+        panel.nameFieldStringValue = "LangSwitcher_Backup_\(formatter.string(from: Date())).json"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try settings.exportBackup(to: url)
+                showBackupSuccess = true
+            } catch {
+                print("Export failed: \(error)")
+            }
+        }
+    }
+    
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try settings.importBackup(from: url)
+                showRestoreSuccess = true
+            } catch {
+                print("Import failed: \(error)")
+            }
         }
     }
 }

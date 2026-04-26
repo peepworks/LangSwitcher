@@ -20,6 +20,7 @@
 		125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */; };
 		125FF5242F6599E0005DAB0C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 129E052E2F657B6A00F34ABE /* Assets.xcassets */; };
 		126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */; };
+		126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */; };
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
 		12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */; };
@@ -44,6 +45,7 @@
 		125FF5092F658975005DAB0C /* LangSwitcherApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherApp.swift; sourceTree = "<group>"; };
 		125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityManager.swift; sourceTree = "<group>"; };
 		126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HyperKeyManager.swift; sourceTree = "<group>"; };
+		126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeGlowManager.swift; sourceTree = "<group>"; };
 		12744D562F89E66A0033C06A /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		129930792F679EBC00878827 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -104,6 +106,7 @@
 		125FF4CB2F657F1A005DAB0C /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
+				126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */,
 				122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */,
 				12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */,
 				1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */,
@@ -266,6 +269,7 @@
 				125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */,
 				125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */,
 				125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */,
+				126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */,
 				12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */,
 				12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */,
 			);

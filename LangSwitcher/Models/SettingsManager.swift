@@ -83,6 +83,8 @@ struct SettingsSnapshot {
     var isSoundFeedbackEnabled = false
     // 🌟 [추가] 스마트 자동 오타 감지
     var isAutoTypoCorrectionEnabled = false
+    // 🌟 [추가] 노치 엣지 글로우 활성화 여부
+    var isEdgeGlowEnabled = false
 }
 
 class SettingsManager: ObservableObject {
@@ -118,7 +120,8 @@ class SettingsManager: ObservableObject {
             isCloudSyncEnabled: isCloudSyncEnabled,
             isHapticFeedbackEnabled: isHapticFeedbackEnabled,
             isSoundFeedbackEnabled: isSoundFeedbackEnabled,
-            isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled // 🌟 [추가]
+            isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled, // 🌟 [추가]
+            isEdgeGlowEnabled: isEdgeGlowEnabled // 🌟 [추가]
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
@@ -175,6 +178,7 @@ class SettingsManager: ObservableObject {
     @AppStorage("isHapticFeedbackEnabled") var isHapticFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isSoundFeedbackEnabled") var isSoundFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isAutoTypoCorrectionEnabled") var isAutoTypoCorrectionEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isEdgeGlowEnabled") var isEdgeGlowEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     
     private init() {
         let d = UserDefaults.standard

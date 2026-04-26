@@ -18,14 +18,11 @@
 
 import SwiftUI
 import ServiceManagement
-import UniformTypeIdentifiers // 에러 해결: .json 타입을 사용하기 위해 필수 추가
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
     @ObservedObject private var updateManager = UpdateManager.shared
     @State private var isAutoLaunchEnabled: Bool = SMAppService.mainApp.status == .enabled
-    @State private var showBackupSuccess = false
-    @State private var showRestoreSuccess = false
 
     var body: some View {
         ScrollView {
@@ -62,6 +59,14 @@ struct GeneralSettingsView: View {
                                 isOn: $settings.isCursorHUDEnabled
                             )
                             .padding(.leading, 20) // 하위 옵션 느낌을 주기 위한 들여쓰기
+                            Divider().padding(.leading, 20).padding(.trailing, 15)
+                                                        
+                            // 🌟 [추가] 노치 엣지 글로우 옵션
+                            SettingToggleRow(
+                                title: String(localized: "Enable Notch Edge Glow"),
+                                isOn: $settings.isEdgeGlowEnabled
+                            )
+                            .padding(.leading, 20)
                         }
                             
                         Text(String(localized: "Displays a brief overlay indicating the new language."))
@@ -96,25 +101,7 @@ struct GeneralSettingsView: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 
-                // 3. 백업 및 복구 섹션
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(String(localized: "Backup & Restore")).font(.headline)
-                    VStack(spacing: 0) {
-                        SettingButtonRow(title: String(localized: "Export Settings"), buttonTitle: String(localized: "Export...")) {
-                            exportSettings()
-                        }
-                        
-                        Divider().padding(.horizontal, 15)
-                        
-                        SettingButtonRow(title: String(localized: "Import Settings"), buttonTitle: String(localized: "Import...")) {
-                            importSettings()
-                        }
-                    }
-                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-                }
-                
-                // 4. 기본 단축키 섹션
+                // 3. 기본 단축키 섹션
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Default Shortcuts")).font(.headline)
                     VStack(spacing: 0) {
@@ -131,46 +118,9 @@ struct GeneralSettingsView: View {
             }
             .padding(.horizontal, 25)
             .padding(.vertical, 12)
-            .alert(String(localized: "Backup Successful"), isPresented: $showBackupSuccess) {
-                Button("OK", role: .cancel) { }
-            }
-            .alert(String(localized: "Restore Successful"), isPresented: $showRestoreSuccess) {
-                Button("OK", role: .cancel) { }
-            }
         }
     }
-    
-    // MARK: - Actions
-    // ... (exportSettings, importBackup 함수 유지) ...
-    private func exportSettings() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd_HHmm"
-        panel.nameFieldStringValue = "LangSwitcher_Backup_\(formatter.string(from: Date())).json"
-        
-        if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try settings.exportBackup(to: url)
-                showBackupSuccess = true
-            } catch {
-                print("Export failed: \(error)")
-            }
-        }
-    }
-    
-    private func importSettings() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try settings.importBackup(from: url)
-                showRestoreSuccess = true
-            } catch {
-                print("Import failed: \(error)")
-            }
-        }
-    }
+
 }
 
 // 🌟 에러 해결: 올려주신 소스코드 하단에 LanguageRow 컴포넌트가 누락되어 있어 다시 추가했습니다.
