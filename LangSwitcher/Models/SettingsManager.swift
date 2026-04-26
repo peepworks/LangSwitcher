@@ -79,6 +79,10 @@ struct SettingsSnapshot {
     var isWindowMemoryCleanupEnabled = true
     var isCursorHUDEnabled = true
     var isCloudSyncEnabled = false
+    var isHapticFeedbackEnabled = false
+    var isSoundFeedbackEnabled = false
+    // 🌟 [추가] 스마트 자동 오타 감지
+    var isAutoTypoCorrectionEnabled = false
 }
 
 class SettingsManager: ObservableObject {
@@ -111,7 +115,10 @@ class SettingsManager: ObservableObject {
             isWindowMemoryEnabled: isWindowMemoryEnabled,
             isWindowMemoryCleanupEnabled: isWindowMemoryCleanupEnabled,
             isCursorHUDEnabled: isCursorHUDEnabled,
-            isCloudSyncEnabled: isCloudSyncEnabled
+            isCloudSyncEnabled: isCloudSyncEnabled,
+            isHapticFeedbackEnabled: isHapticFeedbackEnabled,
+            isSoundFeedbackEnabled: isSoundFeedbackEnabled,
+            isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled // 🌟 [추가]
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
@@ -165,6 +172,9 @@ class SettingsManager: ObservableObject {
             if isCloudSyncEnabled { syncToCloud() }
         }
     }
+    @AppStorage("isHapticFeedbackEnabled") var isHapticFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isSoundFeedbackEnabled") var isSoundFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isAutoTypoCorrectionEnabled") var isAutoTypoCorrectionEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     
     private init() {
         let d = UserDefaults.standard
@@ -231,6 +241,9 @@ class SettingsManager: ObservableObject {
         icloudStore.set(isWindowMemoryEnabled, forKey: "isWindowMemoryEnabled")
         icloudStore.set(isCursorHUDEnabled, forKey: "isCursorHUDEnabled")
         icloudStore.set(isTypoCorrectionEnabled, forKey: "isTypoCorrectionEnabled")
+        icloudStore.set(isHapticFeedbackEnabled, forKey: "isHapticFeedbackEnabled")
+        icloudStore.set(isSoundFeedbackEnabled, forKey: "isSoundFeedbackEnabled")
+        icloudStore.set(isAutoTypoCorrectionEnabled, forKey: "isAutoTypoCorrectionEnabled") // 🌟 [추가]
         
         if let e = try? JSONEncoder().encode(excludedApps) { icloudStore.set(e, forKey: "excludedApps") }
         if let e = try? JSONEncoder().encode(customShortcuts) { icloudStore.set(e, forKey: "customShortcuts") }

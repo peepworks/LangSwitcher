@@ -26,67 +26,95 @@ struct TypoCorrectionSettingsView: View {
     @State private var showDuplicateWarning = false
     
     @State private var timeoutTask: DispatchWorkItem?
+    
+    // 🌟 [추가됨] 현재 Mac의 시스템 언어가 한국어인지 판별하는 프로퍼티
+    private var isKoreanUser: Bool {
+        return Locale.preferredLanguages.first?.hasPrefix("ko") == true
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 25) {
+                
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(String(localized: "Auto-Typo Correction")).font(.title2.bold())
-                    Text(String(localized: "Automatically fixes English/Korean typing errors (e.g., dkssud → 안녕) using a global shortcut."))
+                    Text(String(localized: "Typo Correction")).font(.title2.bold())
+                    Text(String(localized: "Fix typing errors when you type in the wrong keyboard layout."))
                         .font(.subheadline).foregroundColor(.secondary)
                 }
                 
-                VStack(spacing: 0) {
-                    ToggleRow(
-                        title: String(localized: "Enable Typo Correction"),
-                        description: String(localized: "Convert the currently selected text when the shortcut is pressed."),
-                        isOn: $settings.isTypoCorrectionEnabled
-                    )
-                    
-                    if settings.isTypoCorrectionEnabled {
-                        Divider().padding(.horizontal, 15)
+                // 🌟 1. [추가됨] 스마트 자동 오타 감지 (한국어 사용자에게만 노출)
+                if isKoreanUser {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(String(localized: "Smart Automation")).font(.headline)
                         
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(String(localized: "Correction Scope")).font(.body)
-                                Text(String(localized: "Choose whether to convert just the current word or the entire line.")).font(.caption).foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Picker("", selection: $settings.isSentenceMode) {
-                                Text(String(localized: "Current Word")).tag(false)
-                                Text(String(localized: "Entire Line")).tag(true)
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 180)
-                        }.padding(15)
-                        
-                        Divider().padding(.horizontal, 15)
-                        
-                        HStack {
-                            Text(String(localized: "Correction Shortcut")).font(.body).foregroundColor(.secondary)
-                            Spacer()
-                            Button(action: {
-                                settings.typoDisplayString = ""; settings.typoKeyCode = 0; settings.typoModifierFlags = 0
-                                showDuplicateWarning = false; isRecording = true
-                                startRecording()
-                            }) {
-                                Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Press any keys...") : (settings.typoDisplayString.isEmpty ? String(localized: "Click to Record") : settings.typoDisplayString)))
-                                    .frame(width: 140).padding(.vertical, 4)
-                                    .background(showDuplicateWarning ? Color.red.opacity(0.15) : (isRecording ? Color.blue.opacity(0.2) : Color.secondary.opacity(0.1)))
-                                    .foregroundColor(showDuplicateWarning ? .red : .primary).cornerRadius(6)
-                            }.buttonStyle(.plain)
-                            
-                            Button(role: .destructive, action: {
-                                settings.typoDisplayString = ""; settings.typoKeyCode = 0; settings.typoModifierFlags = 0
-                            }) { Image(systemName: "trash").foregroundColor(.red) }.buttonStyle(.plain).padding(.leading, 10)
-                        }.padding(15)
+                        VStack(spacing: 0) {
+                            ToggleRow(
+                                title: String(localized: "Smart Auto-Correction (English → Korean)"),
+                                description: String(localized: "Automatically detects when you type Korean words in English layout (e.g., 'dkssud' → '안녕') and converts them instantly upon pressing Space or Enter."),
+                                isOn: $settings.isAutoTypoCorrectionEnabled
+                            )
+                        }
+                        .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                     }
                 }
-                .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 
-                Text(String(localized: "Note: This feature simulates selecting the text and replacing it. It may not work perfectly in all applications depending on their text selection behavior."))
-                    .font(.caption).foregroundColor(.secondary).padding(.leading, 5)
+                // 2. [기존] 수동 오타 교정 (단축키 방식)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(String(localized: "Manual Correction")).font(.headline)
+                    
+                    VStack(spacing: 0) {
+                        ToggleRow(
+                            title: String(localized: "Enable Manual Typo Correction"),
+                            description: String(localized: "Convert the currently selected text when the shortcut is pressed."),
+                            isOn: $settings.isTypoCorrectionEnabled
+                        )
+                        
+                        if settings.isTypoCorrectionEnabled {
+                            Divider().padding(.horizontal, 15)
+                            
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(String(localized: "Correction Scope")).font(.body)
+                                    Text(String(localized: "Choose whether to convert just the current word or the entire line.")).font(.caption).foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Picker("", selection: $settings.isSentenceMode) {
+                                    Text(String(localized: "Current Word")).tag(false)
+                                    Text(String(localized: "Entire Line")).tag(true)
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 180)
+                            }.padding(15)
+                            
+                            Divider().padding(.horizontal, 15)
+                            
+                            HStack {
+                                Text(String(localized: "Correction Shortcut")).font(.body).foregroundColor(.secondary)
+                                Spacer()
+                                Button(action: {
+                                    settings.typoDisplayString = ""; settings.typoKeyCode = 0; settings.typoModifierFlags = 0
+                                    showDuplicateWarning = false; isRecording = true
+                                    startRecording()
+                                }) {
+                                    Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Press any keys...") : (settings.typoDisplayString.isEmpty ? String(localized: "Click to Record") : settings.typoDisplayString)))
+                                        .frame(width: 140).padding(.vertical, 4)
+                                        .background(showDuplicateWarning ? Color.red.opacity(0.15) : (isRecording ? Color.blue.opacity(0.2) : Color.secondary.opacity(0.1)))
+                                        .foregroundColor(showDuplicateWarning ? .red : .primary).cornerRadius(6)
+                                }.buttonStyle(.plain)
+                                
+                                Button(role: .destructive, action: {
+                                    settings.typoDisplayString = ""; settings.typoKeyCode = 0; settings.typoModifierFlags = 0
+                                }) { Image(systemName: "trash").foregroundColor(.red) }.buttonStyle(.plain).padding(.leading, 10)
+                            }.padding(15)
+                        }
+                    }
+                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    
+                    Text(String(localized: "Note: This feature simulates selecting the text and replacing it. It may not work perfectly in all applications depending on their text selection behavior."))
+                        .font(.caption).foregroundColor(.secondary).padding(.leading, 5)
+                }
             }
             .padding(.horizontal, 25).padding(.vertical, 15)
             .onDisappear { stopRecording() }
@@ -96,10 +124,8 @@ struct TypoCorrectionSettingsView: View {
     // MARK: - Shortcut Recording Logic
     
     private func startRecording() {
-        // 🌟 [리뷰 반영] ① 가장 먼저 시스템 이벤트를 차단하여 외부 개입을 막고 안전한 환경을 확보합니다.
         EventMonitor.shared.isPaused = true
         
-        // 🌟 [리뷰 반영] ② 안전한 상태에서 타이머를 설정합니다.
         timeoutTask?.cancel()
         let task = DispatchWorkItem {
             self.isRecording = false
@@ -112,7 +138,6 @@ struct TypoCorrectionSettingsView: View {
         class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
         let state = RState()
 
-        // 🌟 [리뷰 반영] ③ 마지막으로 콜백을 등록하여 입력을 받아들입니다.
         EventMonitor.shared.shortcutRecordingCallback = { e in
             let code = e.keyCode
             let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -174,7 +199,6 @@ struct TypoCorrectionSettingsView: View {
     
     private func stopRecording() {
         timeoutTask?.cancel()
-        // 🌟 [리뷰 7번 반영] EventMonitor 내부의 원자적 처리 함수 호출
         EventMonitor.shared.cancelShortcutRecording()
     }
     
@@ -206,7 +230,7 @@ struct ToggleRow: View {
                 Text(title).font(.body)
                 Text(description).font(.caption).foregroundColor(.secondary)
             }
-            Spacer()
+            Spacer(minLength: 20)
             Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden().controlSize(.small)
         }.padding(15)
     }

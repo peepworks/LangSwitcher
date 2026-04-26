@@ -18,7 +18,7 @@
 
 import SwiftUI
 import ServiceManagement
-import UniformTypeIdentifiers // 🌟 에러 해결: .json 타입을 사용하기 위해 필수 추가
+import UniformTypeIdentifiers // 에러 해결: .json 타입을 사용하기 위해 필수 추가
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
@@ -55,7 +55,7 @@ struct GeneralSettingsView: View {
                         // 시각적 피드백 (HUD)
                         SettingToggleRow(title: String(localized: "Show visual feedback"), isOn: $settings.showVisualFeedback)
                         
-                        // 🌟 [추가] 시각 피드백이 켜져 있을 때만 미니 플래그 옵션 표시
+                        // 시각 피드백이 켜져 있을 때만 미니 플래그 옵션 표시
                         if settings.showVisualFeedback {
                             SettingToggleRow(
                                 title: String(localized: "Show mini flag near text cursor"),
@@ -67,6 +67,15 @@ struct GeneralSettingsView: View {
                         Text(String(localized: "Displays a brief overlay indicating the new language."))
                             .font(.caption).foregroundColor(.secondary).lineSpacing(2)
                             .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, -2)
+                        
+                        // 🌟 [추가됨] 사운드 및 햅틱 피드백 토글 스위치 (구분선 Divider 포함)
+                        Divider().padding(.horizontal, 15)
+                        
+                        SettingToggleRow(title: String(localized: "Play sound on switch"), isOn: $settings.isSoundFeedbackEnabled)
+                        
+                        Divider().padding(.horizontal, 15)
+                        
+                        SettingToggleRow(title: String(localized: "Haptic feedback on switch"), isOn: $settings.isHapticFeedbackEnabled)
                         
                         Divider().padding(.horizontal, 15)
                         
@@ -132,7 +141,7 @@ struct GeneralSettingsView: View {
     }
     
     // MARK: - Actions
-    
+    // ... (exportSettings, importBackup 함수 유지) ...
     private func exportSettings() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -164,7 +173,7 @@ struct GeneralSettingsView: View {
     }
 }
 
-// 🌟 에러 해결: 누락되었던 LanguageRow 컴포넌트를 추가했습니다.
+// 🌟 에러 해결: 올려주신 소스코드 하단에 LanguageRow 컴포넌트가 누락되어 있어 다시 추가했습니다.
 struct LanguageRow: View {
     let title: String
     @Binding var isActive: Bool
@@ -174,7 +183,7 @@ struct LanguageRow: View {
     var body: some View {
         HStack {
             Toggle("", isOn: $isActive)
-                .toggleStyle(.checkbox) // 🌟 네모난 체크박스로 복구
+                .toggleStyle(.checkbox) // 네모난 체크박스 스타일
                 .labelsHidden()
             
             Text(title).font(.body).padding(.leading, 5)

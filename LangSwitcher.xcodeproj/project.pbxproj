@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12242E2C2F933CA300690095 /* TypoConverter.swift */; };
+		122AA3F12F9DA544006297F4 /* ClickHigh.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */; };
+		122AA3F22F9DA544006297F4 /* ClickLow.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 122AA3F02F9DA544006297F4 /* ClickLow.mp3 */; };
+		122AA3F42F9DA713006297F4 /* SensoryFeedbackManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */; };
 		1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */; };
 		125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */; };
 		125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D32F658001005DAB0C /* EventMonitor.swift */; };
@@ -29,6 +32,9 @@
 
 /* Begin PBXFileReference section */
 		12242E2C2F933CA300690095 /* TypoConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoConverter.swift; sourceTree = "<group>"; };
+		122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ClickHigh.mp3; sourceTree = "<group>"; };
+		122AA3F02F9DA544006297F4 /* ClickLow.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ClickLow.mp3; sourceTree = "<group>"; };
+		122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensoryFeedbackManager.swift; sourceTree = "<group>"; };
 		1239486B2F9C990D00980FAF /* LangSwitcher.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LangSwitcher.entitlements; sourceTree = "<group>"; };
 		1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMonitor.swift; sourceTree = "<group>"; };
 		125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputSourceManager.swift; sourceTree = "<group>"; };
@@ -98,6 +104,7 @@
 		125FF4CB2F657F1A005DAB0C /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
+				122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */,
 				12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */,
 				1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */,
 				125FF4D32F658001005DAB0C /* EventMonitor.swift */,
@@ -158,6 +165,8 @@
 		12F0804E2F679423005A8424 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */,
+				122AA3F02F9DA544006297F4 /* ClickLow.mp3 */,
 				12F080512F67942F005A8424 /* Carbon.framework */,
 				12F0804F2F679423005A8424 /* ServiceManagement.framework */,
 			);
@@ -233,6 +242,8 @@
 				12F1EF5D2F67BDD3003B94B0 /* InfoPlist.xcstrings in Resources */,
 				12F1EF5B2F67B98A003B94B0 /* Localizable.xcstrings in Resources */,
 				125FF5242F6599E0005DAB0C /* Assets.xcassets in Resources */,
+				122AA3F12F9DA544006297F4 /* ClickHigh.mp3 in Resources */,
+				122AA3F22F9DA544006297F4 /* ClickLow.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -243,6 +254,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				122AA3F42F9DA713006297F4 /* SensoryFeedbackManager.swift in Sources */,
 				125FF4D82F658041005DAB0C /* AppDelegate.swift in Sources */,
 				12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */,
 				126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */,

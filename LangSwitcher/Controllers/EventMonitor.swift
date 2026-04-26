@@ -1,7 +1,5 @@
 //
-//  EventMonitor.swift
 //  LangSwitcher
-//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -19,22 +17,33 @@
 //
 
 import Cocoa
+import Carbon
 
 class EventMonitor {
     static let shared = EventMonitor()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    
-    // 🌟 [추가] 헬스 체크를 위한 타이머
     private var healthCheckTimer: Timer?
         
-    // 🌟 [추가] 현재 탭이 활성화 상태인지 확인하는 계산 프로퍼티
     var isEnabled: Bool {
         guard let tap = eventTap else { return false }
         return CGEvent.tapIsEnabled(tap: tap)
     }
 
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.state", attributes: .concurrent)
+
+    // 스마트 오타 감지용 버퍼
+    private var _typingBuffer: String = ""
+    var typingBuffer: String {
+        get { stateQueue.sync { _typingBuffer } }
+        set { stateQueue.async(flags: .barrier) { self._typingBuffer = newValue } }
+    }
+    
+    private var _lastKeyTime: Date = Date()
+    var lastKeyTime: Date {
+        get { stateQueue.sync { _lastKeyTime } }
+        set { stateQueue.async(flags: .barrier) { self._lastKeyTime = newValue } }
+    }
 
     private var _shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
     var shortcutRecordingCallback: ((NSEvent) -> Void)? {
@@ -83,6 +92,37 @@ class EventMonitor {
 
     private init() {}
 
+    // MARK: - 🌟 언어 감지 및 안전한 전환 헬퍼
+    
+    private func isCurrentLanguageEnglish() -> Bool {
+        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return false }
+        let id = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+        let lower = id.lowercased()
+        return lower.contains("en") || lower.contains("abc") || lower.contains("us")
+    }
+
+    private func safeSwitchToKorean() {
+        // 🌟 [핵심 수정] CFString을 명시적으로 String으로 캐스팅하여 Dictionary 브릿징 에러 완벽 해결
+        let filter: NSDictionary = [
+            (kTISPropertyInputSourceType as String): (kTISTypeKeyboardLayout as String)
+        ]
+        
+        guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?.takeRetainedValue() as? [TISInputSource] else { return }
+
+        for source in list {
+            if let ptr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) {
+                let id = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+                let lower = id.lowercased()
+                if lower.contains("ko") || lower.contains("hangul") || lower.contains("두벌식") || lower.contains("세벌식") {
+                    TISSelectInputSource(source)
+                    SensoryFeedbackManager.shared.playFeedback(forLanguageID: id)
+                    break
+                }
+            }
+        }
+    }
+
     // MARK: - Atomic State Updates
     
     func updateModifierState(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
@@ -129,17 +169,13 @@ class EventMonitor {
         }
         return allowed
     }
-    // -------------------------------------------------------------------------
 
     // MARK: - 기능별 분리된 이벤트 처리기
     
     private func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        // 🌟 [리뷰 반영] 원본 대신 스레드 안전성이 보장된 스냅샷(읽기 전용)을 가져옵니다.
         let snapshot = SettingsManager.shared.snapshot
-        
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
-
         let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         if keyCode == 57 {
@@ -217,9 +253,7 @@ class EventMonitor {
     }
 
     private func handleKeyDown(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        // 🌟 [리뷰 반영] 스레드 안전성이 보장된 스냅샷 가져오기
         let snapshot = SettingsManager.shared.snapshot
-        
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
 
@@ -241,7 +275,6 @@ class EventMonitor {
 
         if !isToggle && snapshot.isAppLaunchEnabled {
             for appLaunch in snapshot.appLaunchShortcuts {
-                // 🌟 [리뷰 반영] 하드코딩된 배열 대신 전역 상수 사용!
                 let isSingleModifier = globalModifierKeyCodes.contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
                 let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
@@ -284,10 +317,7 @@ class EventMonitor {
 
     func start() {
         if eventTap != nil {
-            // 🌟 이미 탭은 있는데 비활성화만 된 경우라면 즉시 활성화 시도
-            if !isEnabled {
-                CGEvent.tapEnable(tap: eventTap!, enable: true)
-            }
+            if !isEnabled { CGEvent.tapEnable(tap: eventTap!, enable: true) }
             return
         }
 
@@ -301,7 +331,6 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
-                // 1. 시스템 차단 해제 로직
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return nil
@@ -310,31 +339,63 @@ class EventMonitor {
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                 let snapshot = SettingsManager.shared.snapshot
 
-                // 🌟 [핵심 수정 1] 녹화기보다 Hyper Key 변환이 무조건 '먼저' 실행되게 끌어올림!
-                // 물리적인 F19를 가로채서 증발시키고, 시스템에 가상의 수식어(⌘⌥⌃⇧) 이벤트를 쏘는 역할.
                 if snapshot.isHyperKeyEnabled {
                     let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
-                    if shouldBlock { return nil } // 원본 F19 이벤트는 여기서 완벽히 차단됨
+                    if shouldBlock { return nil }
                 }
 
-                // HyperKeyManager가 만들어낸 가상 이벤트(⌘⌥⌃⇧)인지 식별표 확인
                 let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
 
-                // 🌟 [핵심 수정 2] 번역이 끝난(가상 플래그가 묻은) 이벤트를 비로소 녹화기가 가로챔!
                 if let callback = EventMonitor.shared.shortcutRecordingCallback {
                     if type == .keyDown || type == .flagsChanged {
                         if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
-                        // 단축키 녹화 중에는 키 이벤트가 시스템으로 새어나가지 않도록 여기서 삼킵니다.
                         return nil
                     }
                 }
 
-                // 🌟 [핵심 수정 3] 녹화 중이 아닐 때, 가상 수식어 이벤트는 안전하게 시스템으로 통과시킴
-                if isSimulated {
-                    return Unmanaged.passUnretained(event)
+                if isSimulated { return Unmanaged.passUnretained(event) }
+                
+                // 스마트 오타 감지 (안전 장치 추가)
+                if type == .keyDown {
+                    if snapshot.isAutoTypoCorrectionEnabled {
+                        let now = Date()
+                        if now.timeIntervalSince(EventMonitor.shared.lastKeyTime) > 2.0 {
+                            EventMonitor.shared.typingBuffer = ""
+                        }
+                        EventMonitor.shared.lastKeyTime = now
+                        
+                        if keyCode == 49 || keyCode == 36 {
+                            let currentBuffer = EventMonitor.shared.typingBuffer
+                            if currentBuffer.count >= 2 {
+                                if EventMonitor.shared.isCurrentLanguageEnglish() {
+                                    if let convertedText = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
+                                        EventMonitor.shared.performAutoCorrection(
+                                            originalLength: currentBuffer.count,
+                                            correctedText: convertedText,
+                                            triggerKeyCode: UInt16(keyCode)
+                                        )
+                                        EventMonitor.shared.typingBuffer = ""
+                                        return nil
+                                    }
+                                }
+                            }
+                            EventMonitor.shared.typingBuffer = ""
+                        }
+                        else if keyCode == 51 || (123...126).contains(keyCode) {
+                            EventMonitor.shared.typingBuffer = ""
+                        }
+                        else if let char = EventMonitor.shared.getCharacter(from: UInt16(keyCode)) {
+                            if EventMonitor.shared.isCurrentLanguageEnglish() {
+                                var newBuffer = EventMonitor.shared.typingBuffer + String(char)
+                                if newBuffer.count > 15 { newBuffer.removeFirst() }
+                                EventMonitor.shared.typingBuffer = newBuffer
+                            } else {
+                                EventMonitor.shared.typingBuffer = ""
+                            }
+                        }
+                    }
                 }
 
-                // --- 이 아래부터는 기존 예외 앱 및 기본 로직과 동일 ---
                 let currentAppID = AppMonitor.shared.activeAppBundleID
                 if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
                     if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
@@ -346,13 +407,8 @@ class EventMonitor {
 
                 let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
 
-                if type == .flagsChanged {
-                    return EventMonitor.shared.handleFlagsChanged(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags)
-                }
-
-                if type == .keyDown {
-                    return EventMonitor.shared.handleKeyDown(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags)
-                }
+                if type == .flagsChanged { return EventMonitor.shared.handleFlagsChanged(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags) }
+                if type == .keyDown { return EventMonitor.shared.handleKeyDown(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags) }
                 
                 return Unmanaged.passUnretained(event)
             }, userInfo: nil)
@@ -361,42 +417,23 @@ class EventMonitor {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource!, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
-            // 🌟 탭 생성이 성공하면 헬스 체크 타이머 시작
             startHealthCheck()
         }
     }
 
-    // MARK: - Health Check
-
     private func startHealthCheck() {
         healthCheckTimer?.invalidate()
-        // 5초 간격으로 감시 (시스템 부하 고려)
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            
-            // 탭 객체는 존재하는데 시스템에 의해 비활성화된 경우 복구 시도
             if self.eventTap != nil && !self.isEnabled {
-                print("⚠️ [EventMonitor] EventTap detected as disabled. Resurrecting...")
                 CGEvent.tapEnable(tap: self.eventTap!, enable: true)
-                
-                // 복구 후 로그 남기기 (선택 사항)
-                SettingsManager.shared.addLog(ActionLog(
-                    timestamp: Date(),
-                    targetApp: "System",
-                    appliedRule: "Auto Resurrect",
-                    finalInputSource: "Restored",
-                    result: .success,
-                    failureReason: .none
-                ))
             }
         }
     }
 
     func stop() {
-        // 🌟 [추가] 타이머 먼저 정지
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
-        
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
         eventTap = nil
@@ -411,7 +448,6 @@ class EventMonitor {
     }
 
     private static func executeAction(targetLang: String?, targetAppID: String?, targetAppName: String? = nil, isToggle: Bool, rule: String) {
-        // addLog는 내부적으로 DispatchQueue.main.async를 쓰므로 안전합니다.
         if !AccessibilityManager.shared.isTrusted {
             SettingsManager.shared.addLog(ActionLog(timestamp: Date(), targetApp: "System", appliedRule: rule, finalInputSource: targetLang ?? "Unknown", result: .failure, failureReason: .permissionIssue))
             return
@@ -419,7 +455,6 @@ class EventMonitor {
 
         guard EventMonitor.shared.canExecuteAction() else { return }
 
-        // 🌟 [리뷰 반영] 스냅샷 기반 읽기
         let snapshot = SettingsManager.shared.snapshot
         if snapshot.isTestMode {
             var testLabel = ""
@@ -442,30 +477,76 @@ class EventMonitor {
             }
         }
     }
+    
+    // MARK: - 🌟 크래시를 방지한 안전한 가상 이벤트 실행기
+    private func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
+        DispatchQueue.global(qos: .userInteractive).async {
+            
+            // 1. 가상 백스페이스 (오타 지우기)
+            for _ in 0..<originalLength {
+                let deleteDown = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true)
+                let deleteUp = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: false)
+                deleteDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
+                deleteUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
+                deleteDown?.post(tap: .cghidEventTap)
+                deleteUp?.post(tap: .cghidEventTap)
+                // 🌟 [핵심 수정] usleep 대신 Thread.sleep 사용하여 Swift 환경 크래시 완전 방지
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+            
+            Thread.sleep(forTimeInterval: 0.01)
+            
+            // 2. 텍스트 주입
+            var chars = Array(correctedText.utf16)
+            if !chars.isEmpty {
+                let textEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+                textEvent?.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
+                textEvent?.setIntegerValueField(.eventSourceUserData, value: 9999)
+                textEvent?.post(tap: .cghidEventTap)
+            }
+            
+            Thread.sleep(forTimeInterval: 0.015)
+            
+            // 3. 한국어로 강제 변경
+            DispatchQueue.main.async {
+                EventMonitor.shared.safeSwitchToKorean()
+            }
+            
+            Thread.sleep(forTimeInterval: 0.015)
+            
+            // 4. 차단했던 스페이스바/엔터 이벤트 다시 발생
+            let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: true)
+            let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: false)
+            triggerDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            triggerUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            triggerDown?.post(tap: .cghidEventTap)
+            triggerUp?.post(tap: .cghidEventTap)
+        }
+    }
+    
+    private func getCharacter(from keyCode: UInt16) -> Character? {
+        let keyMap: [UInt16: Character] = [
+            0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",
+            11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t", 31: "o",
+            32: "u", 34: "i", 35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m"
+        ]
+        return keyMap[keyCode]
+    }
 }
 
-// 🌟 [리뷰 반영] 중복되던 단축키 녹화 로직을 하나로 통합한 공용 매니저 클래스
 class ShortcutRecorder {
     static let shared = ShortcutRecorder()
-    
     typealias Completion = (_ keyCode: UInt16, _ modifiers: UInt64, _ displayString: String) -> Void
-    
     private var timeoutTask: DispatchWorkItem?
-    
     private init() {}
     
     func startRecording(completion: @escaping Completion, onTimeout: @escaping () -> Void) {
         EventMonitor.shared.isPaused = true
-        
         timeoutTask?.cancel()
-        let task = DispatchWorkItem {
-            self.stopRecording()
-            onTimeout()
-        }
+        let task = DispatchWorkItem { self.stopRecording(); onTimeout() }
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 
-        // 상태를 안전하게 관리하기 위해 내부에 struct나 로컬 변수 사용
         class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
         let state = RState()
 
@@ -475,18 +556,14 @@ class ShortcutRecorder {
 
             if e.type == .flagsChanged {
                 let capturedCode = code
-                if capturedCode == 57 {
-                    DispatchQueue.main.async { completion(57, 0, "⇪ Caps Lock") }
-                    return
-                }
+                if capturedCode == 57 { DispatchQueue.main.async { completion(57, 0, "⇪ Caps Lock") }; return }
                 
                 if !flags.isEmpty { state.m.insert(capturedCode); state.f.formUnion(flags); return }
                 else if !state.r && !state.m.isEmpty {
                     if state.m.count == 1 {
                         let c = state.m.first!
                         let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
-                        let capturedC = c
-                        DispatchQueue.main.async { completion(capturedC, 0, str) }
+                        let capturedC = c; DispatchQueue.main.async { completion(capturedC, 0, str) }
                     } else {
                         var str = ""
                         if state.f.contains(.control) { str += "⌃ " }
@@ -500,8 +577,7 @@ class ShortcutRecorder {
                 }
                 state.m.removeAll(); state.f = []; state.r = false; return
             } else if e.type == .keyDown {
-                state.r = true
-                var str = ""
+                state.r = true; var str = ""
                 if flags.contains(.control) { str += "⌃ " }
                 if flags.contains(.option) { str += "⌥ " }
                 if flags.contains(.shift) { str += "⇧ " }

@@ -85,9 +85,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
            let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyLocalizedName) {
             currentLang = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
         }
-        
-        // 🌟 공통으로 사용할 체크마크 아이콘
-        let checkmarkIcon = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
 
         // 1. 현재 입력 소스 (지구본 아이콘)
         let langItem = NSMenuItem(title: "\(String(localized: "Language")): \(currentLang)", action: #selector(toggleLanguage), keyEquivalent: "")
@@ -98,23 +95,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // 2. 앱 일시 정지 (Kill Switch)
         let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "")
-        // .state 대신 .image를 사용하여 아이콘 영역에 체크마크를 표시합니다.
-        pauseItem.image = EventMonitor.shared.isPaused ? checkmarkIcon : nil
+        // 🌟 .image 대신 .state 사용 (켜짐: .on / 꺼짐: .off)
+        pauseItem.state = EventMonitor.shared.isPaused ? .on : .off
         menu.addItem(pauseItem)
 
         menu.addItem(NSMenuItem.separator())
 
         // 3. 핵심 기능 빠른 토글
         let typoItem = NSMenuItem(title: String(localized: "Typo Correction"), action: #selector(toggleTypo), keyEquivalent: "")
-        typoItem.image = snapshot.isTypoCorrectionEnabled ? checkmarkIcon : nil
+        typoItem.state = snapshot.isTypoCorrectionEnabled ? .on : .off
         menu.addItem(typoItem)
 
         let hyperItem = NSMenuItem(title: String(localized: "Hyper Key (Caps Lock)"), action: #selector(toggleHyper), keyEquivalent: "")
-        hyperItem.image = snapshot.isHyperKeyEnabled ? checkmarkIcon : nil
+        hyperItem.state = snapshot.isHyperKeyEnabled ? .on : .off
         menu.addItem(hyperItem)
 
         let windowItem = NSMenuItem(title: String(localized: "Window Memory"), action: #selector(toggleWindowMemory), keyEquivalent: "")
-        windowItem.image = snapshot.isWindowMemoryEnabled ? checkmarkIcon : nil
+        windowItem.state = snapshot.isWindowMemoryEnabled ? .on : .off
         menu.addItem(windowItem)
 
         menu.addItem(NSMenuItem.separator())

@@ -21,12 +21,47 @@ import AppKit
 class TypoConverter {
     static let shared = TypoConverter()
     
-    // 🌟 [리뷰 반영] lazy var의 스레드 불안정성을 피하기 위해 상수(let)로 변경하여 완벽한 스레드 안전성 보장
+    // 🌟 lazy var의 스레드 불안정성을 피하기 위해 상수(let)로 변경하여 완벽한 스레드 안전성 보장
     private let eventSource: CGEventSource? = CGEventSource(stateID: .combinedSessionState)
     
+    // MARK: - 🌟 [새로 추가됨] 스마트 자동 오타 감지용 엔진
+    /// 영문 입력을 분석하여 완벽한 한국어 패턴(자음+모음 조합)이면 변환된 텍스트를 반환, 아니면 nil 반환
+    func detectAndConvert(englishInput: String) -> String? {
+        // 1. 최소 2글자 이상일 때만 분석
+        guard englishInput.count >= 2 else { return nil }
+        
+        // 2. 일단 한글 오토마타 엔진을 돌려 변환 시도
+        let converted = convertToKo(englishInput)
+        
+        var hasSyllable = false
+        var hasIncomplete = false
+        
+        // 3. 변환된 결과물 검증
+        for char in converted {
+            guard let scalar = char.unicodeScalars.first else { continue }
+            
+            // 완성된 한글 음절 (가 ~ 힣 : 0xAC00 ~ 0xD7A3)
+            if scalar.value >= 0xAC00 && scalar.value <= 0xD7A3 {
+                hasSyllable = true
+            }
+            // 조합되지 못하고 남은 찌꺼기 자음/모음 (ㄱ~ㅎ, ㅏ~ㅣ : 0x3130 ~ 0x318F)
+            // 또는 변환되지 않은 영문 알파벳이 남아있는 경우
+            else if (scalar.value >= 0x3130 && scalar.value <= 0x318F) || (char.isASCII && char.isLetter) {
+                hasIncomplete = true
+                break // 하나라도 불완전한 글자가 있으면 영단어로 간주하고 즉시 탈락
+            }
+        }
+        
+        // 4. 완성된 글자가 존재하고, 불완전한 찌꺼기 글자가 '전혀' 없을 때만 완벽한 오타로 간주
+        if hasSyllable && !hasIncomplete {
+            return converted
+        }
+        
+        return nil
+    }
+
+    // MARK: - 기존 수동 단축키 오타 교정
     func executeCorrection() {
-        // [Swift 6 대응] Non-Sendable인 NSPasteboard 객체를 통째로 캡처하지 않고,
-        // Sendable 타입으로 안전한 Int와 String? 값만 미리 추출해 둡니다.
         let initialCount = NSPasteboard.general.changeCount
         let oldString = NSPasteboard.general.string(forType: .string)
 
@@ -47,14 +82,12 @@ class TypoConverter {
             Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
                 attempts += 1
                 
-                // [Swift 6 대응] 블록 내부에서 NSPasteboard.general을 직접 호출하여 캡처를 방지합니다.
                 let localPB = NSPasteboard.general
 
                 // 10번 시도(0.5초) 후 포기 또는 클립보드가 변경되었을 때
                 if localPB.changeCount != initialCount || attempts > 10 {
                     timer.invalidate()
 
-                    // 🌟 헬퍼 함수: 클립보드를 원래 상태로 복구
                     func restoreClipboard() {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                             let restorePB = NSPasteboard.general
@@ -88,13 +121,13 @@ class TypoConverter {
                     localPB.setString(convertedText, forType: .string)
                     self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
                     
-                    // 명시적으로 붙여넣기 명령을 시스템에 하달한 "직후"에 복구 타이머를 시작합니다.
                     restoreClipboard()
                 }
             }
         }
     }
 
+    // MARK: - 한/영 변환 오토마타 로직
     // 영어를 두벌식 한글 조합으로 변환 (오토마타)
     private func convertToKo(_ englishText: String) -> String {
         let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")

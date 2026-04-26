@@ -86,6 +86,9 @@ class InputSourceManager: ObservableObject {
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {
             TISSelectInputSource(target)
+            // 🌟 [추가] 언어 전환 성공 시 햅틱 및 사운드 실행!
+            SensoryFeedbackManager.shared.playFeedback(forLanguageID: id)
+                        
             if SettingsManager.shared.showVisualFeedback {
                 if let namePtr = TISGetInputSourceProperty(target, kTISPropertyLocalizedName) {
                     let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
