@@ -92,7 +92,51 @@ class EventMonitor {
 
     private init() {}
 
-    // MARK: - 🌟 언어 감지 및 안전한 전환 헬퍼
+    // MARK: - 🌟 스레드 안전성을 완벽 보장하는 버퍼 조작 헬퍼 함수들
+    
+    func appendToTypingBuffer(_ char: Character) {
+        stateQueue.async(flags: .barrier) {
+            self._typingBuffer.append(char)
+            if self._typingBuffer.count > 15 {
+                self._typingBuffer.removeFirst()
+            }
+        }
+    }
+    
+    func clearTypingBuffer() {
+        stateQueue.async(flags: .barrier) {
+            self._typingBuffer = ""
+        }
+    }
+    
+    func checkStaleAndResetBuffer() {
+        stateQueue.async(flags: .barrier) {
+            let now = Date()
+            if now.timeIntervalSince(self._lastKeyTime) > 2.0 {
+                self._typingBuffer = ""
+            }
+            self._lastKeyTime = now
+        }
+    }
+    
+    // MARK: - 🌟 캡스락 디바운스를 위한 완벽한 스레드 안전 헬퍼 함수
+    func shouldDebounceCapsLock() -> Bool {
+        var shouldBlock = false
+        // 값을 반환해야 하므로 동기식(sync)으로 기다리되,
+        // 값을 수정할 것이므로 barrier를 쳐서 독점합니다.
+        stateQueue.sync(flags: .barrier) {
+            let now = Date()
+            if now.timeIntervalSince(self._lastCapsLockTime) < 0.25 {
+                shouldBlock = true // 0.25초 이내면 차단(Debounce)
+            } else {
+                self._lastCapsLockTime = now // 통과라면 즉시 현재 시간 갱신
+                shouldBlock = false
+            }
+        }
+        return shouldBlock
+    }
+
+    // MARK: - 언어 감지 및 안전한 전환 헬퍼
     
     private func isCurrentLanguageEnglish() -> Bool {
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
@@ -103,7 +147,6 @@ class EventMonitor {
     }
 
     private func safeSwitchToKorean() {
-        // 🌟 [핵심 수정] CFString을 명시적으로 String으로 캐스팅하여 Dictionary 브릿징 에러 완벽 해결
         let filter: NSDictionary = [
             (kTISPropertyInputSourceType as String): (kTISTypeKeyboardLayout as String)
         ]
@@ -179,9 +222,8 @@ class EventMonitor {
         let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         if keyCode == 57 {
-            let now = Date()
-            if now.timeIntervalSince(self.lastCapsLockTime) < 0.25 { return nil }
-            self.lastCapsLockTime = now
+            // 🌟 [수정됨] Check와 Act를 원자성(Atomic)으로 처리하는 헬퍼 함수 사용
+            if EventMonitor.shared.shouldDebounceCapsLock() { return nil }
 
             if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == 57 && !snapshot.typoDisplayString.isEmpty {
                 DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
@@ -288,7 +330,7 @@ class EventMonitor {
 
         if !isToggle && targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
             for shortcut in snapshot.customShortcuts {
-                let isSingleModifier = [54,55,56,60,58,61,59,62,57,63].contains(shortcut.keyCode) && shortcut.modifierFlags == 0
+                let isSingleModifier = globalModifierKeyCodes.contains(shortcut.keyCode) && shortcut.modifierFlags == 0
                 let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
                     if shortcut.keyCode == keyCode && !shortcut.displayString.isEmpty {
@@ -355,14 +397,12 @@ class EventMonitor {
 
                 if isSimulated { return Unmanaged.passUnretained(event) }
                 
-                // 스마트 오타 감지 (안전 장치 추가)
+                // 🌟 [핵심 수정] 새롭게 만든 헬퍼 함수들을 사용하여 완벽한 스레드 안전성 보장
                 if type == .keyDown {
                     if snapshot.isAutoTypoCorrectionEnabled {
-                        let now = Date()
-                        if now.timeIntervalSince(EventMonitor.shared.lastKeyTime) > 2.0 {
-                            EventMonitor.shared.typingBuffer = ""
-                        }
-                        EventMonitor.shared.lastKeyTime = now
+                        
+                        // 1. 오래된 버퍼 비우기 및 시간 갱신을 한 번에 안전하게 처리
+                        EventMonitor.shared.checkStaleAndResetBuffer()
                         
                         if keyCode == 49 || keyCode == 36 {
                             let currentBuffer = EventMonitor.shared.typingBuffer
@@ -374,23 +414,22 @@ class EventMonitor {
                                             correctedText: convertedText,
                                             triggerKeyCode: UInt16(keyCode)
                                         )
-                                        EventMonitor.shared.typingBuffer = ""
+                                        EventMonitor.shared.clearTypingBuffer()
                                         return nil
                                     }
                                 }
                             }
-                            EventMonitor.shared.typingBuffer = ""
+                            EventMonitor.shared.clearTypingBuffer()
                         }
                         else if keyCode == 51 || (123...126).contains(keyCode) {
-                            EventMonitor.shared.typingBuffer = ""
+                            EventMonitor.shared.clearTypingBuffer()
                         }
                         else if let char = EventMonitor.shared.getCharacter(from: UInt16(keyCode)) {
                             if EventMonitor.shared.isCurrentLanguageEnglish() {
-                                var newBuffer = EventMonitor.shared.typingBuffer + String(char)
-                                if newBuffer.count > 15 { newBuffer.removeFirst() }
-                                EventMonitor.shared.typingBuffer = newBuffer
+                                // 2. 읽고, 자르고, 덧붙이는 위험한 작업을 안전한 금고(헬퍼 함수) 안에서 처리
+                                EventMonitor.shared.appendToTypingBuffer(char)
                             } else {
-                                EventMonitor.shared.typingBuffer = ""
+                                EventMonitor.shared.clearTypingBuffer()
                             }
                         }
                     }
@@ -478,11 +517,8 @@ class EventMonitor {
         }
     }
     
-    // MARK: - 🌟 크래시를 방지한 안전한 가상 이벤트 실행기
     private func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
         DispatchQueue.global(qos: .userInteractive).async {
-            
-            // 1. 가상 백스페이스 (오타 지우기)
             for _ in 0..<originalLength {
                 let deleteDown = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true)
                 let deleteUp = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: false)
@@ -490,13 +526,11 @@ class EventMonitor {
                 deleteUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
                 deleteDown?.post(tap: .cghidEventTap)
                 deleteUp?.post(tap: .cghidEventTap)
-                // 🌟 [핵심 수정] usleep 대신 Thread.sleep 사용하여 Swift 환경 크래시 완전 방지
                 Thread.sleep(forTimeInterval: 0.002)
             }
             
             Thread.sleep(forTimeInterval: 0.01)
             
-            // 2. 텍스트 주입
             var chars = Array(correctedText.utf16)
             if !chars.isEmpty {
                 let textEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
@@ -507,14 +541,12 @@ class EventMonitor {
             
             Thread.sleep(forTimeInterval: 0.015)
             
-            // 3. 한국어로 강제 변경
             DispatchQueue.main.async {
                 EventMonitor.shared.safeSwitchToKorean()
             }
             
             Thread.sleep(forTimeInterval: 0.015)
             
-            // 4. 차단했던 스페이스바/엔터 이벤트 다시 발생
             let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: true)
             let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: false)
             triggerDown?.setIntegerValueField(.eventSourceUserData, value: 9999)

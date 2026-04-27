@@ -142,11 +142,13 @@ struct AdvancedSettingsView: View {
         panel.nameFieldStringValue = "LangSwitcher_Backup_\(formatter.string(from: Date())).json"
         
         if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try settings.exportBackup(to: url)
-                showBackupSuccess = true
-            } catch {
-                print("Export failed: \(error)")
+            // 🌟 [수정됨] try-catch 대신 completion 클로저를 사용합니다.
+            settings.exportBackup(to: url) { success, error in
+                if success {
+                    self.showBackupSuccess = true
+                } else if let error = error {
+                    print("Export failed: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -155,11 +157,13 @@ struct AdvancedSettingsView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try settings.importBackup(from: url)
-                showRestoreSuccess = true
-            } catch {
-                print("Import failed: \(error)")
+            // 🌟 [수정됨] try-catch 대신 completion 클로저를 사용합니다.
+            settings.importBackup(from: url) { success, error in
+                if success {
+                    self.showRestoreSuccess = true
+                } else if let error = error {
+                    print("Import failed: \(error.localizedDescription)")
+                }
             }
         }
     }

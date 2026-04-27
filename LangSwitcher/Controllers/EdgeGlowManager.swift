@@ -23,16 +23,16 @@ class EdgeGlowManager {
     static let shared = EdgeGlowManager()
     private var glowWindow: NSWindow?
     
-    // 🌟 [추가됨] 현재 실행 중인 글로우 효과의 고유 ID (타이머 충돌 방지용)
+    // 현재 실행 중인 글로우 효과의 고유 ID (타이머 충돌 방지용)
     private var currentGlowID = UUID()
     
     private init() {}
 
-    @MainActor // 🌟 지난번 피드백 반영: 메인 스레드 실행 강제 보장
+    @MainActor // 메인 스레드 실행 강제 보장
     func showGlow(forLanguage id: String) {
         guard SettingsManager.shared.snapshot.isEdgeGlowEnabled else { return }
         
-        // 🌟 [핵심 추가] 이번 글로우 효과에 대한 고유 번호표 발급
+        // 이번 글로우 효과에 대한 고유 번호표 발급
         let myID = UUID()
         self.currentGlowID = myID
         
@@ -73,7 +73,7 @@ class EdgeGlowManager {
         
         // 0.8초 후 자동으로 사라짐
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            // 🌟 [핵심 방어 로직] 0.8초가 지나는 동안 새로운 글로우가 켜졌다면,
+            // 0.8초가 지나는 동안 새로운 글로우가 켜졌다면,
             // 현재 타이머는 구버전이므로 남의 창을 건드리지 않고 조용히 종료합니다.
             guard self.currentGlowID == myID else { return }
             
@@ -81,16 +81,20 @@ class EdgeGlowManager {
                 context.duration = 0.3
                 window.animator().alphaValue = 0
             } completionHandler: {
-                // 애니메이션이 끝나는 0.3초 사이에도 새 창이 뜰 수 있으므로 다시 한번 꼼꼼하게 검사
-                guard self.currentGlowID == myID else { return }
-                window.close()
-                self.glowWindow = nil
+                // 🌟 [핵심 방어 로직 적용]
+                // 콜백이 비정상적인 스레드에서 떨어지더라도 UI 작업은 무조건 메인 스레드에서 처리되도록 강제 보장합니다.
+                DispatchQueue.main.async {
+                    // 애니메이션이 끝나는 0.3초 사이에도 새 창이 뜰 수 있으므로 다시 한번 꼼꼼하게 검사
+                    guard self.currentGlowID == myID else { return }
+                    window.close()
+                    self.glowWindow = nil
+                }
             }
         }
     }
 }
 
-// 🌟 SwiftUI 글로우 뷰
+// SwiftUI 글로우 뷰
 struct EdgeGlowView: View {
     let color: Color
     @State private var opacity: Double = 0

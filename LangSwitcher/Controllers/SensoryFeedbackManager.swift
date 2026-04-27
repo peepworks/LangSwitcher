@@ -27,29 +27,25 @@ class SensoryFeedbackManager {
         let snapshot = SettingsManager.shared.snapshot
         
         // 1. 햅틱(진동) 피드백 (트랙패드에서 '달칵' 하는 느낌)
+        // NSHapticFeedbackManager는 내부적으로 스레드 안전하게 처리되므로 그대로 둡니다.
         if snapshot.isHapticFeedbackEnabled {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
         
         // 2. 효과음(사운드) 피드백 (기계식 키보드 소리)
         if snapshot.isSoundFeedbackEnabled {
-            // 무거운 작업(파일 불러오기)은 백그라운드 스레드에서 진행
-            DispatchQueue.global(qos: .userInitiated).async {
+            // 🌟 [핵심 수정] 객체 초기화부터 재생까지 모든 과정을 AppKit이 가장 좋아하는 메인 스레드에서 일괄 처리합니다.
+            DispatchQueue.main.async {
                 let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
                 
-                // 🌟 [수정됨] 사운드 객체 '준비'만 백그라운드에서 수행
                 let soundToPlay: NSSound?
-                
                 if isKorean {
                     soundToPlay = NSSound(named: "ClickHigh") ?? NSSound(named: "Tink")
                 } else {
                     soundToPlay = NSSound(named: "ClickLow") ?? NSSound(named: "Pop")
                 }
                 
-                // 🌟 [수정됨] AppKit 규칙에 따라 실제 '재생' 명령만 메인 스레드에서 안전하게 실행
-                DispatchQueue.main.async {
-                    soundToPlay?.play()
-                }
+                soundToPlay?.play()
             }
         }
     }

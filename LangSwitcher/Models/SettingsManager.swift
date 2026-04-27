@@ -126,7 +126,14 @@ class SettingsManager: ObservableObject {
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
 
-    private var isBatchUpdating = false
+    // ✅ 수정된 코드: 동기화 관리를 위한 전용 큐와 안전한 프로퍼티 래퍼 적용
+    private let syncQueue = DispatchQueue(label: "com.peepworks.langswitcher.sync")
+    private var _isBatchUpdating = false
+        
+    var isBatchUpdating: Bool {
+        get { syncQueue.sync { _isBatchUpdating } }
+        set { syncQueue.sync { self._isBatchUpdating = newValue } }
+    }
     
     @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); updateSnapshot(); syncToCloud() } }
     @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); updateSnapshot(); syncToCloud() } }
@@ -282,52 +289,88 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    func exportBackup(to url: URL) throws {
-        let backup = BackupData(
-            version: currentSettingsVersion,
-            isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive, ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
-            showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
-            toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
-            customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts,
-            excludedApps: excludedApps,
-            isTypoCorrectionEnabled: isTypoCorrectionEnabled,
-            typoKeyCode: typoKeyCode,
-            typoModifierFlags: typoModifierFlags,
-            typoDisplayString: typoDisplayString,
-            isSentenceMode: isSentenceMode,
-            isExcludedAppsEnabled: isExcludedAppsEnabled
-        )
-        let encoder = JSONEncoder(); encoder.outputFormatting = .prettyPrinted
-        let data = try encoder.encode(backup); try data.write(to: url)
+    // MARK: - 안전한 백업 & 복원 (File I/O 최적화 및 Swift 6 호환)
+
+    func exportBackup(to url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
+        do {
+            let backup = BackupData(
+                version: currentSettingsVersion,
+                isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive, ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
+                showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
+                toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
+                customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts,
+                excludedApps: excludedApps,
+                isTypoCorrectionEnabled: isTypoCorrectionEnabled,
+                typoKeyCode: typoKeyCode,
+                typoModifierFlags: typoModifierFlags,
+                typoDisplayString: typoDisplayString,
+                isSentenceMode: isSentenceMode,
+                isExcludedAppsEnabled: isExcludedAppsEnabled
+            )
+            
+            // 🌟 1. JSON 변환(초고속)은 메인 스레드에서 수행하여 Swift 6의 MainActor 에러를 해결합니다.
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(backup)
+            
+            // 🌟 2. 무거운 디스크 쓰기(File I/O)만 백그라운드로 보냅니다.
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try data.write(to: url)
+                    DispatchQueue.main.async { completion(true, nil) } // 성공
+                } catch {
+                    DispatchQueue.main.async { completion(false, error) } // 실패
+                }
+            }
+        } catch {
+            completion(false, error) // 인코딩 실패 시
+        }
     }
     
-    func importBackup(from url: URL) throws {
-        let data = try Data(contentsOf: url)
-        let backup = try JSONDecoder().decode(BackupData.self, from: data)
-        
-        DispatchQueue.main.async {
-            self.isBatchUpdating = true
-            
-            self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
-            self.ctrlLang = backup.ctrlLang; self.cmdLang = backup.cmdLang; self.optLang = backup.optLang
-            self.showVisualFeedback = backup.showVisualFeedback
+    func importBackup(from url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
+        // 🌟 1. 무거운 디스크 읽기(File I/O)는 백그라운드에서 수행하여 UI 멈춤을 방지합니다.
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let data = try Data(contentsOf: url)
+                
+                // 🌟 2. 데이터를 읽어온 후, 디코딩과 UI 업데이트는 다시 메인 스레드로 돌아와서 수행합니다.
+                DispatchQueue.main.async {
+                    do {
+                        let backup = try JSONDecoder().decode(BackupData.self, from: data)
+                        
+                        self.isBatchUpdating = true
+                        
+                        self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
+                        self.ctrlLang = backup.ctrlLang; self.cmdLang = backup.cmdLang; self.optLang = backup.optLang
+                        self.showVisualFeedback = backup.showVisualFeedback
 
-            self.isTestMode = false
-            
-            self.toggleKeyCode = backup.toggleKeyCode; self.toggleModifierFlags = backup.toggleModifierFlags; self.toggleDisplayString = backup.toggleDisplayString
-            self.customShortcuts = backup.customShortcuts; self.customApps = backup.customApps; self.appLaunchShortcuts = backup.appLaunchShortcuts
-            self.excludedApps = backup.excludedApps ?? []
-            self.isTypoCorrectionEnabled = backup.isTypoCorrectionEnabled ?? false
-            self.typoKeyCode = backup.typoKeyCode ?? 0
-            self.typoModifierFlags = backup.typoModifierFlags ?? 0
-            self.typoDisplayString = backup.typoDisplayString ?? ""
-            self.isSentenceMode = backup.isSentenceMode ?? false
-            
-            self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
-            
-            self.isBatchUpdating = false
-            self.saveAll()
-            self.updateSnapshot()
+                        self.isTestMode = false
+                        
+                        self.toggleKeyCode = backup.toggleKeyCode; self.toggleModifierFlags = backup.toggleModifierFlags; self.toggleDisplayString = backup.toggleDisplayString
+                        self.customShortcuts = backup.customShortcuts; self.customApps = backup.customApps; self.appLaunchShortcuts = backup.appLaunchShortcuts
+                        self.excludedApps = backup.excludedApps ?? []
+                        self.isTypoCorrectionEnabled = backup.isTypoCorrectionEnabled ?? false
+                        self.typoKeyCode = backup.typoKeyCode ?? 0
+                        self.typoModifierFlags = backup.typoModifierFlags ?? 0
+                        self.typoDisplayString = backup.typoDisplayString ?? ""
+                        self.isSentenceMode = backup.isSentenceMode ?? false
+                        
+                        self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
+                        
+                        self.isBatchUpdating = false
+                        self.saveAll()
+                        self.updateSnapshot()
+                        
+                        completion(true, nil) // 복원 성공
+                    } catch {
+                        completion(false, error) // 디코딩 실패
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(false, error) // 파일 읽기 실패
+                }
+            }
         }
     }
 }
