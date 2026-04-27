@@ -23,10 +23,18 @@ class EdgeGlowManager {
     static let shared = EdgeGlowManager()
     private var glowWindow: NSWindow?
     
+    // 🌟 [추가됨] 현재 실행 중인 글로우 효과의 고유 ID (타이머 충돌 방지용)
+    private var currentGlowID = UUID()
+    
     private init() {}
 
+    @MainActor // 🌟 지난번 피드백 반영: 메인 스레드 실행 강제 보장
     func showGlow(forLanguage id: String) {
         guard SettingsManager.shared.snapshot.isEdgeGlowEnabled else { return }
+        
+        // 🌟 [핵심 추가] 이번 글로우 효과에 대한 고유 번호표 발급
+        let myID = UUID()
+        self.currentGlowID = myID
         
         // 1. 기존 창이 있으면 닫기 (중복 방지)
         glowWindow?.close()
@@ -54,7 +62,7 @@ class EdgeGlowManager {
         window.ignoresMouseEvents = true // 클릭 통과
         
         // 언어에 따른 색상 (한글: 파랑, 영어: 주황)
-        let isKorean = id.lowercased().contains("ko") || id.contains("Hangul")
+        let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
         let glowColor = isKorean ? Color.blue : Color.orange
         
         let contentView = NSHostingView(rootView: EdgeGlowView(color: glowColor))
@@ -65,10 +73,16 @@ class EdgeGlowManager {
         
         // 0.8초 후 자동으로 사라짐
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            // 🌟 [핵심 방어 로직] 0.8초가 지나는 동안 새로운 글로우가 켜졌다면,
+            // 현재 타이머는 구버전이므로 남의 창을 건드리지 않고 조용히 종료합니다.
+            guard self.currentGlowID == myID else { return }
+            
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
                 window.animator().alphaValue = 0
             } completionHandler: {
+                // 애니메이션이 끝나는 0.3초 사이에도 새 창이 뜰 수 있으므로 다시 한번 꼼꼼하게 검사
+                guard self.currentGlowID == myID else { return }
                 window.close()
                 self.glowWindow = nil
             }

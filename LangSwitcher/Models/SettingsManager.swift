@@ -153,7 +153,7 @@ class SettingsManager: ObservableObject {
     @Published var typoDisplayString: String { didSet { save("typoDisplayString", typoDisplayString); updateSnapshot() } }
     @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode); updateSnapshot() } }
     
-    @Published var recentLogs: [ActionLog] = []
+    @Published private(set) var recentLogs: [ActionLog] = []
     
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled); updateSnapshot(); syncToCloud() }
@@ -262,26 +262,14 @@ class SettingsManager: ObservableObject {
     
     private func saveAll() {
         let d = UserDefaults.standard
-        d.set(isCtrlActive, forKey: "isCtrlActive")
-        d.set(isCmdActive, forKey: "isCmdActive")
-        d.set(isOptActive, forKey: "isOptActive")
-        d.set(ctrlLang, forKey: "ctrlLang")
-        d.set(cmdLang, forKey: "cmdLang")
-        d.set(optLang, forKey: "optLang")
-        d.set(showVisualFeedback, forKey: "showVisualFeedback")
-        d.set(isTestMode, forKey: "isTestMode")
-        d.set(toggleKeyCode, forKey: "toggleKeyCode")
-        d.set(toggleModifierFlags, forKey: "toggleModifierFlags")
-        d.set(toggleDisplayString, forKey: "toggleDisplayString")
+        
+        // @AppStorage가 자동으로 처리하지 못하는 복잡한 배열(Array) 데이터들만 수동으로 인코딩하여 저장합니다.
         if let e = try? JSONEncoder().encode(customShortcuts) { d.set(e, forKey: "customShortcuts") }
         if let e = try? JSONEncoder().encode(customApps) { d.set(e, forKey: "customApps") }
         if let e = try? JSONEncoder().encode(appLaunchShortcuts) { d.set(e, forKey: "appLaunchShortcuts") }
         if let e = try? JSONEncoder().encode(excludedApps) { d.set(e, forKey: "excludedApps") }
-        d.set(isTypoCorrectionEnabled, forKey: "isTypoCorrectionEnabled")
-        d.set(typoKeyCode, forKey: "typoKeyCode")
-        d.set(typoModifierFlags, forKey: "typoModifierFlags")
-        d.set(typoDisplayString, forKey: "typoDisplayString")
-        d.set(isSentenceMode, forKey: "isSentenceMode")
+        
+        // 일반 변수(Bool, String, Int 등)는 @AppStorage가 자동 저장하므로 중복 코드를 제거했습니다.
     }
     
     func addLog(_ log: ActionLog) {
