@@ -232,7 +232,8 @@ class EventMonitor {
             if EventMonitor.shared.shouldDebounceCapsLock() { return nil }
 
             if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == 57 && !snapshot.typoDisplayString.isEmpty {
-                DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+                // ✅ 그냥 직접 호출하세요.
+                TypoConverter.shared.executeCorrection()
                 return nil
             }
 
@@ -255,7 +256,8 @@ class EventMonitor {
                 if !stateSnap.didPressOtherKey {
                     if let singleCode = stateSnap.singleCode {
                         if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == singleCode && !snapshot.typoDisplayString.isEmpty {
-                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+                            // ✅ 그냥 직접 호출하세요.
+                            TypoConverter.shared.executeCorrection()
                             return nil
                         }
 
@@ -273,7 +275,8 @@ class EventMonitor {
                         let modsRaw = UInt64(stateSnap.maxMods.rawValue)
 
                         if snapshot.isTypoCorrectionEnabled && snapshot.typoKeyCode == 0 && snapshot.typoModifierFlags == modsRaw && !snapshot.typoDisplayString.isEmpty {
-                            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+                            // ✅ 그냥 직접 호출하세요.
+                            TypoConverter.shared.executeCorrection()
                             return nil
                         }
 
@@ -312,7 +315,8 @@ class EventMonitor {
            snapshot.typoKeyCode == keyCode &&
            NSEvent.ModifierFlags(rawValue: UInt(snapshot.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
            !snapshot.typoDisplayString.isEmpty {
-            DispatchQueue.global(qos: .userInitiated).async { TypoConverter.shared.executeCorrection() }
+            // ✅ 그냥 직접 호출하세요.
+            TypoConverter.shared.executeCorrection()
             return nil
         }
 
@@ -555,12 +559,13 @@ class EventMonitor {
             
             Thread.sleep(forTimeInterval: 0.015)
             
-            // 🌟 [수정 1] 비동기(async) 추측 대신, 완벽하게 전환이 끝날 때까지 동기식(sync)으로 대기합니다.
-            DispatchQueue.main.sync {
+            // 🌟 [수정됨] 교착 상태(Deadlock)를 방지하기 위해 다시 async로 명령을 내립니다.
+            DispatchQueue.main.async {
                 EventMonitor.shared.safeSwitchToKorean()
             }
             
-            Thread.sleep(forTimeInterval: 0.015)
+            // 🌟 [수정됨] 대신, 시스템이 언어 전환을 완료할 수 있도록 대기 시간을 기존보다 2배 넉넉하게(0.03초) 줍니다.
+            Thread.sleep(forTimeInterval: 0.03)
             
             let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: true)
             let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: false)

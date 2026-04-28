@@ -27,6 +27,7 @@ class WindowMonitor {
     
     private var windowLanguageMemory: [CGWindowID: (lang: String, pid: pid_t)] = [:]
     
+    // 🌟 이 두 줄이 지워져서 발생한 에러였습니다!
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
     
@@ -89,10 +90,18 @@ class WindowMonitor {
     
     func observeApp(pid: pid_t) {
         let snapshot = SettingsManager.shared.snapshot
-        // 🌟 [수정됨] 윈도우 메모리나 앱별 언어 지정 기능 중 하나라도 켜져 있으면 옵저버를 가동합니다.
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
         
-        if self.currentPID == pid { return }
+        // 🌟 TOCTOU 취약점 방어 로직 (원자적 처리)
+        var shouldProceed = false
+        stateQueue.sync(flags: .barrier) {
+            if self._currentPID != pid {
+                self._currentPID = pid
+                shouldProceed = true
+            }
+        }
+        
+        guard shouldProceed else { return }
         
         if let observer = axObserver, let rl = observerRunLoop {
             CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
@@ -100,7 +109,6 @@ class WindowMonitor {
             self.observerRunLoop = nil
         }
         
-        self.currentPID = pid
         var observer: AXObserver?
         
         let callback: AXObserverCallback = { (axObserver, axElement, notification, refcon) in
@@ -147,7 +155,6 @@ class WindowMonitor {
         
         self.stateQueue.sync {
             if let savedData = self.windowLanguageMemory[windowID] {
-                // 🌟 1순위: 윈도우 메모리가 켜져 있고, 이 창에 대한 기록이 이미 존재할 경우
                 if snapshot.isWindowMemoryEnabled {
                     langToSwitch = savedData.lang
                 }
@@ -156,7 +163,6 @@ class WindowMonitor {
             }
         }
         
-        // 🌟 2순위: 윈도우 메모리에 기록이 없고(새로운 창), 앱별 지정 언어 기능이 켜져 있는 경우
         var appliedAppSpecific = false
         if needsToSave && snapshot.isAppSpecificEnabled {
             let currentAppID = AppMonitor.shared.activeAppBundleID
@@ -173,13 +179,13 @@ class WindowMonitor {
         }
         
         if needsToSave {
-            // 앱별 지정 언어가 적용되었으면 그 언어를, 아니면 현재 시스템 언어를 가져와서 저장합니다.
             let currentID = appliedAppSpecific ? langToSwitch! : (self.getCurrentInputSourceID() ?? "")
             
             if !currentID.isEmpty {
                 let pid = self.currentPID
                 self.stateQueue.async(flags: .barrier) {
                     if self.windowLanguageMemory[windowID] == nil {
+                        // 🌟 메모리 무한 증가 방어 (최대 500개)
                         if self.windowLanguageMemory.count >= 500 {
                             let overflow = self.windowLanguageMemory.count - 400
                             self.windowLanguageMemory.keys.prefix(overflow).forEach {

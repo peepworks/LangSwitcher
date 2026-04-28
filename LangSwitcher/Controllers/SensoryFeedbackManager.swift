@@ -42,8 +42,10 @@ class SensoryFeedbackManager {
             DispatchQueue.main.async {
                 let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
                 
-                // 🌟 [핵심 수정] 매번 객체를 생성하지 않고, 미리 준비해 둔 객체의 재생 버튼만 누릅니다!
                 let soundToPlay = isKorean ? self.soundKorean : self.soundEnglish
+                
+                // 🌟 [수정됨] 연속으로 재생될 때 소리가 무시되는 현상을 막기 위해, 재생 전 항상 정지(stop)를 먼저 호출합니다.
+                soundToPlay?.stop()
                 soundToPlay?.play()
             }
         }

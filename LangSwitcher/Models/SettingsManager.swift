@@ -69,6 +69,8 @@ struct SettingsSnapshot {
     var ctrlLang = ""; var cmdLang = ""; var optLang = ""
     var showVisualFeedback = true; var isTestMode = false
     var toggleKeyCode: UInt16 = 0; var toggleModifierFlags: UInt64 = 0; var toggleDisplayString = ""
+    // 🌟 [추가됨] 오타 교정 범위(단어/문장) 상태를 스냅샷에 포함시킵니다.
+    var isSentenceMode = false
     var customShortcuts: [CustomShortcut] = []
     var customApps: [CustomApp] = []
     var appLaunchShortcuts: [AppLaunchShortcut] = []
