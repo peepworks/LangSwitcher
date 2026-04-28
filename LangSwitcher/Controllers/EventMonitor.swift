@@ -24,6 +24,9 @@ class EventMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var healthCheckTimer: Timer?
+    
+    // 🌟 [수정 3] 옵저버를 등록했던 정확한 RunLoop를 기억하기 위한 영수증 변수
+    private var eventRunLoop: CFRunLoop?
         
     var isEnabled: Bool {
         guard let tap = eventTap else { return false }
@@ -32,7 +35,6 @@ class EventMonitor {
 
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.state", attributes: .concurrent)
 
-    // 스마트 오타 감지용 버퍼
     private var _typingBuffer: String = ""
     var typingBuffer: String {
         get { stateQueue.sync { _typingBuffer } }
@@ -89,10 +91,17 @@ class EventMonitor {
 
     private var _lastActionTime: Date = Date.distantPast
     private let actionCooldown: TimeInterval = 0.15
+    
+    // 🌟 [수정 2] 매번 할당되던 딕셔너리를 메모리에 한 번만 올려두는 전역 상수로 변경 (성능 극대화)
+    private static let charKeyMap: [UInt16: Character] = [
+        0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",
+        11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t", 31: "o",
+        32: "u", 34: "i", 35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m"
+    ]
 
     private init() {}
 
-    // MARK: - 🌟 스레드 안전성을 완벽 보장하는 버퍼 조작 헬퍼 함수들
+    // MARK: - 스레드 안전성을 완벽 보장하는 버퍼 조작 헬퍼 함수들
     
     func appendToTypingBuffer(_ char: Character) {
         stateQueue.async(flags: .barrier) {
@@ -119,17 +128,15 @@ class EventMonitor {
         }
     }
     
-    // MARK: - 🌟 캡스락 디바운스를 위한 완벽한 스레드 안전 헬퍼 함수
+    // MARK: - 캡스락 디바운스를 위한 완벽한 스레드 안전 헬퍼 함수
     func shouldDebounceCapsLock() -> Bool {
         var shouldBlock = false
-        // 값을 반환해야 하므로 동기식(sync)으로 기다리되,
-        // 값을 수정할 것이므로 barrier를 쳐서 독점합니다.
         stateQueue.sync(flags: .barrier) {
             let now = Date()
             if now.timeIntervalSince(self._lastCapsLockTime) < 0.25 {
-                shouldBlock = true // 0.25초 이내면 차단(Debounce)
+                shouldBlock = true
             } else {
-                self._lastCapsLockTime = now // 통과라면 즉시 현재 시간 갱신
+                self._lastCapsLockTime = now
                 shouldBlock = false
             }
         }
@@ -222,7 +229,6 @@ class EventMonitor {
         let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         if keyCode == 57 {
-            // 🌟 [수정됨] Check와 Act를 원자성(Atomic)으로 처리하는 헬퍼 함수 사용
             if EventMonitor.shared.shouldDebounceCapsLock() { return nil }
 
             if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == 57 && !snapshot.typoDisplayString.isEmpty {
@@ -397,14 +403,13 @@ class EventMonitor {
 
                 if isSimulated { return Unmanaged.passUnretained(event) }
                 
-                // 🌟 [핵심 수정] 새롭게 만든 헬퍼 함수들을 사용하여 완벽한 스레드 안전성 보장
                 if type == .keyDown {
                     if snapshot.isAutoTypoCorrectionEnabled {
                         
-                        // 1. 오래된 버퍼 비우기 및 시간 갱신을 한 번에 안전하게 처리
                         EventMonitor.shared.checkStaleAndResetBuffer()
+                        let isEnterTrigger = snapshot.isAutoTypoCorrectionOnEnterEnabled && keyCode == 36
                         
-                        if keyCode == 49 || keyCode == 36 {
+                        if keyCode == 49 || isEnterTrigger {
                             let currentBuffer = EventMonitor.shared.typingBuffer
                             if currentBuffer.count >= 2 {
                                 if EventMonitor.shared.isCurrentLanguageEnglish() {
@@ -421,12 +426,11 @@ class EventMonitor {
                             }
                             EventMonitor.shared.clearTypingBuffer()
                         }
-                        else if keyCode == 51 || (123...126).contains(keyCode) {
+                        else if keyCode == 36 || keyCode == 51 || (123...126).contains(keyCode) {
                             EventMonitor.shared.clearTypingBuffer()
                         }
                         else if let char = EventMonitor.shared.getCharacter(from: UInt16(keyCode)) {
                             if EventMonitor.shared.isCurrentLanguageEnglish() {
-                                // 2. 읽고, 자르고, 덧붙이는 위험한 작업을 안전한 금고(헬퍼 함수) 안에서 처리
                                 EventMonitor.shared.appendToTypingBuffer(char)
                             } else {
                                 EventMonitor.shared.clearTypingBuffer()
@@ -454,7 +458,11 @@ class EventMonitor {
 
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource!, .commonModes)
+            let currentRL = CFRunLoopGetCurrent()
+            CFRunLoopAddSource(currentRL, runLoopSource!, .commonModes)
+            // 🌟 [수정 3] 등록한 컨베이어 벨트를 기억해 둡니다.
+            self.eventRunLoop = currentRL
+            
             CGEvent.tapEnable(tap: tap, enable: true)
             startHealthCheck()
         }
@@ -474,9 +482,15 @@ class EventMonitor {
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
-        if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
+        
+        // 🌟 [수정 3] 영수증(eventRunLoop)을 보고 정확한 컨베이어 벨트에서 찾아 지웁니다.
+        if let source = runLoopSource, let rl = eventRunLoop {
+            CFRunLoopRemoveSource(rl, source, .commonModes)
+        }
+        
         eventTap = nil
         runLoopSource = nil
+        eventRunLoop = nil
     }
     
     func cancelShortcutRecording() {
@@ -541,7 +555,8 @@ class EventMonitor {
             
             Thread.sleep(forTimeInterval: 0.015)
             
-            DispatchQueue.main.async {
+            // 🌟 [수정 1] 비동기(async) 추측 대신, 완벽하게 전환이 끝날 때까지 동기식(sync)으로 대기합니다.
+            DispatchQueue.main.sync {
                 EventMonitor.shared.safeSwitchToKorean()
             }
             
@@ -556,13 +571,9 @@ class EventMonitor {
         }
     }
     
+    // 🌟 [수정 2] 전역 상수를 사용하여 더 이상 무거운 딕셔너리를 매번 만들지 않습니다.
     private func getCharacter(from keyCode: UInt16) -> Character? {
-        let keyMap: [UInt16: Character] = [
-            0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",
-            11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t", 31: "o",
-            32: "u", 34: "i", 35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m"
-        ]
-        return keyMap[keyCode]
+        return Self.charKeyMap[keyCode]
     }
 }
 
@@ -575,7 +586,13 @@ class ShortcutRecorder {
     func startRecording(completion: @escaping Completion, onTimeout: @escaping () -> Void) {
         EventMonitor.shared.isPaused = true
         timeoutTask?.cancel()
-        let task = DispatchWorkItem { self.stopRecording(); onTimeout() }
+        
+        // 🌟 [핵심 수정] [weak self]를 사용하여 타이머 클로저가 self(ShortcutRecorder)를 강하게 붙잡지 않도록(메모리 얽힘 방지) 수정합니다.
+        let task = DispatchWorkItem { [weak self] in
+            self?.stopRecording()
+            onTimeout()
+        }
+        
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 

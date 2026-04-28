@@ -21,6 +21,10 @@ import Cocoa
 class SensoryFeedbackManager {
     static let shared = SensoryFeedbackManager()
     
+    // 🌟 [핵심 최적화] 사운드 객체를 매번 하드디스크에서 찾지 않고, 메모리에 딱 한 번만 올려두고 평생 재사용합니다.
+    private let soundKorean = NSSound(named: "ClickHigh") ?? NSSound(named: "Tink")
+    private let soundEnglish = NSSound(named: "ClickLow") ?? NSSound(named: "Pop")
+    
     private init() {}
 
     func playFeedback(forLanguageID id: String) {
@@ -34,17 +38,12 @@ class SensoryFeedbackManager {
         
         // 2. 효과음(사운드) 피드백 (기계식 키보드 소리)
         if snapshot.isSoundFeedbackEnabled {
-            // 🌟 [핵심 수정] 객체 초기화부터 재생까지 모든 과정을 AppKit이 가장 좋아하는 메인 스레드에서 일괄 처리합니다.
+            // AppKit 규칙에 따라 재생은 메인 스레드에서 안전하게 실행합니다.
             DispatchQueue.main.async {
                 let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
                 
-                let soundToPlay: NSSound?
-                if isKorean {
-                    soundToPlay = NSSound(named: "ClickHigh") ?? NSSound(named: "Tink")
-                } else {
-                    soundToPlay = NSSound(named: "ClickLow") ?? NSSound(named: "Pop")
-                }
-                
+                // 🌟 [핵심 수정] 매번 객체를 생성하지 않고, 미리 준비해 둔 객체의 재생 버튼만 누릅니다!
+                let soundToPlay = isKorean ? self.soundKorean : self.soundEnglish
                 soundToPlay?.play()
             }
         }

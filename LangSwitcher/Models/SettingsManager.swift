@@ -59,6 +59,9 @@ struct BackupData: Codable {
     let typoDisplayString: String?
     let isSentenceMode: Bool?
     let isExcludedAppsEnabled: Bool?
+    let isAutoTypoCorrectionEnabled: Bool?
+    let isEdgeGlowEnabled: Bool?
+    let isAutoTypoCorrectionOnEnterEnabled: Bool? // 🌟 [추가됨]
 }
 
 struct SettingsSnapshot {
@@ -75,6 +78,8 @@ struct SettingsSnapshot {
     var isHyperKeyEnabled = false
     var isAppLaunchEnabled = true; var isCustomShortcutsEnabled = true
     var isExcludedAppsEnabled = true
+    // 🌟 [추가됨] 앱별 지정 기능 상태를 스냅샷에 포함시킵니다.
+    var isAppSpecificEnabled = true
     var isWindowMemoryEnabled = false
     var isWindowMemoryCleanupEnabled = true
     var isCursorHUDEnabled = true
@@ -85,6 +90,7 @@ struct SettingsSnapshot {
     var isAutoTypoCorrectionEnabled = false
     // 🌟 [추가] 노치 엣지 글로우 활성화 여부
     var isEdgeGlowEnabled = false
+    var isAutoTypoCorrectionOnEnterEnabled = false // 🌟 [추가됨]
 }
 
 class SettingsManager: ObservableObject {
@@ -114,6 +120,8 @@ class SettingsManager: ObservableObject {
             isHyperKeyEnabled: isHyperKeyEnabled,
             isAppLaunchEnabled: isAppLaunchEnabled, isCustomShortcutsEnabled: isCustomShortcutsEnabled,
             isExcludedAppsEnabled: isExcludedAppsEnabled,
+            // 🌟 [추가됨] AppStorage의 값을 스냅샷으로 복사해 줍니다.
+            isAppSpecificEnabled: isAppSpecificEnabled,
             isWindowMemoryEnabled: isWindowMemoryEnabled,
             isWindowMemoryCleanupEnabled: isWindowMemoryCleanupEnabled,
             isCursorHUDEnabled: isCursorHUDEnabled,
@@ -121,7 +129,8 @@ class SettingsManager: ObservableObject {
             isHapticFeedbackEnabled: isHapticFeedbackEnabled,
             isSoundFeedbackEnabled: isSoundFeedbackEnabled,
             isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled, // 🌟 [추가]
-            isEdgeGlowEnabled: isEdgeGlowEnabled // 🌟 [추가]
+            isEdgeGlowEnabled: isEdgeGlowEnabled, // 🌟 [추가]
+            isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled // 🌟 [추가됨]
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
@@ -186,6 +195,7 @@ class SettingsManager: ObservableObject {
     @AppStorage("isSoundFeedbackEnabled") var isSoundFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isAutoTypoCorrectionEnabled") var isAutoTypoCorrectionEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isEdgeGlowEnabled") var isEdgeGlowEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isAutoTypoCorrectionOnEnterEnabled") var isAutoTypoCorrectionOnEnterEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } } // 🌟 [추가됨]
     
     private init() {
         let d = UserDefaults.standard
@@ -234,8 +244,14 @@ class SettingsManager: ObservableObject {
             if let val = dict["isCursorHUDEnabled"] as? Bool { self.isCursorHUDEnabled = val }
             if let val = dict["isTypoCorrectionEnabled"] as? Bool { self.isTypoCorrectionEnabled = val }
             
+            // 🌟 [수정] iCloud에서 새로운 설정값들도 받아오도록 추가합니다.
+            if let val = dict["isAutoTypoCorrectionEnabled"] as? Bool { self.isAutoTypoCorrectionEnabled = val }
+            if let val = dict["isEdgeGlowEnabled"] as? Bool { self.isEdgeGlowEnabled = val }
+            if let val = dict["isAutoTypoCorrectionOnEnterEnabled"] as? Bool { self.isAutoTypoCorrectionOnEnterEnabled = val }
+            
             if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.excludedApps = dec }
             if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.customShortcuts = dec }
+            if let val = dict["isAutoTypoCorrectionOnEnterEnabled"] as? Bool { self.isAutoTypoCorrectionOnEnterEnabled = val } // 🌟 [추가됨]
             
             self.isBatchUpdating = false
             self.saveAll()
@@ -255,6 +271,10 @@ class SettingsManager: ObservableObject {
         icloudStore.set(isHapticFeedbackEnabled, forKey: "isHapticFeedbackEnabled")
         icloudStore.set(isSoundFeedbackEnabled, forKey: "isSoundFeedbackEnabled")
         icloudStore.set(isAutoTypoCorrectionEnabled, forKey: "isAutoTypoCorrectionEnabled") // 🌟 [추가]
+        // 🌟 [수정] 엣지 글로우도 클라우드에 저장하도록 추가합니다.
+        icloudStore.set(isEdgeGlowEnabled, forKey: "isEdgeGlowEnabled")
+
+        icloudStore.set(isAutoTypoCorrectionOnEnterEnabled, forKey: "isAutoTypoCorrectionOnEnterEnabled") // 🌟 [추가됨]
         
         if let e = try? JSONEncoder().encode(excludedApps) { icloudStore.set(e, forKey: "excludedApps") }
         if let e = try? JSONEncoder().encode(customShortcuts) { icloudStore.set(e, forKey: "customShortcuts") }
@@ -305,7 +325,10 @@ class SettingsManager: ObservableObject {
                 typoModifierFlags: typoModifierFlags,
                 typoDisplayString: typoDisplayString,
                 isSentenceMode: isSentenceMode,
-                isExcludedAppsEnabled: isExcludedAppsEnabled
+                isExcludedAppsEnabled: isExcludedAppsEnabled,
+                isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled, // 🌟 [수정] 이 줄이 빠져있었습니다!
+                isEdgeGlowEnabled: isEdgeGlowEnabled,
+                isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled // 🌟 [추가됨]
             )
             
             // 🌟 1. JSON 변환(초고속)은 메인 스레드에서 수행하여 Swift 6의 MainActor 에러를 해결합니다.
@@ -354,6 +377,11 @@ class SettingsManager: ObservableObject {
                         self.typoModifierFlags = backup.typoModifierFlags ?? 0
                         self.typoDisplayString = backup.typoDisplayString ?? ""
                         self.isSentenceMode = backup.isSentenceMode ?? false
+                        
+                        // 🌟 [수정] 백업에서 새로운 설정값들도 정확히 불러오도록 추가합니다.
+                        self.isAutoTypoCorrectionEnabled = backup.isAutoTypoCorrectionEnabled ?? false
+                        self.isEdgeGlowEnabled = backup.isEdgeGlowEnabled ?? false
+                        self.isAutoTypoCorrectionOnEnterEnabled = backup.isAutoTypoCorrectionOnEnterEnabled ?? false
                         
                         self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
                         

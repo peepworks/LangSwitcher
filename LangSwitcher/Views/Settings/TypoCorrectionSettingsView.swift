@@ -25,7 +25,6 @@ struct TypoCorrectionSettingsView: View {
     @State private var conflictMessage = ""
     @State private var showDuplicateWarning = false
     
-    // 현재 Mac의 시스템 언어가 한국어인지 판별
     private var isKoreanUser: Bool {
         return Locale.preferredLanguages.first?.hasPrefix("ko") == true
     }
@@ -48,9 +47,19 @@ struct TypoCorrectionSettingsView: View {
                         VStack(spacing: 0) {
                             ToggleRow(
                                 title: String(localized: "Smart Auto-Correction (English → Korean)"),
-                                description: String(localized: "Automatically detects when you type Korean words in English layout (e.g., 'dkssud' → '안녕') and converts them instantly upon pressing Space or Enter."),
+                                description: String(localized: "Automatically detects when you type Korean words in English layout (e.g., 'dkssud' → '안녕') and converts them instantly upon pressing Space."),
                                 isOn: $settings.isAutoTypoCorrectionEnabled
                             )
+                            
+                            // 🌟 [추가됨] 엔터 키 옵션 (메인 기능이 켜져 있을 때만 노출)
+                            if settings.isAutoTypoCorrectionEnabled {
+                                Divider().padding(.horizontal, 15)
+                                ToggleRow(
+                                    title: String(localized: "Trigger on Enter Key"),
+                                    description: String(localized: "Also attempt to correct typos when pressing the Enter key. (May cause false positives for short commands like 'cle' in Terminal)"),
+                                    isOn: $settings.isAutoTypoCorrectionOnEnterEnabled
+                                )
+                            }
                         }
                         .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
@@ -119,9 +128,7 @@ struct TypoCorrectionSettingsView: View {
         }
     }
     
-    // MARK: - 🌟 [수정됨] ShortcutRecorder를 활용한 깔끔하고 안전한 로직
     private func startRecording() {
-        // 이미 만들어둔 공용 매니저에게 녹화를 위임합니다. (메모리 누수 원천 차단)
         ShortcutRecorder.shared.startRecording(
             completion: { keyCode, modifiers, display in
                 self.registerShortcut(keyCode: keyCode, modifiers: modifiers, display: display)
@@ -156,22 +163,13 @@ struct TypoCorrectionSettingsView: View {
     
     private func getConflictMessage(keyCode: UInt16, modifierFlags: UInt64) -> String? {
         let settings = SettingsManager.shared
-            
-        if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifierFlags {
-            return String(localized: "This shortcut is already used for Toggle Shortcut.")
-        }
-        if settings.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifierFlags }) {
-            return String(localized: "This shortcut is already used for a Custom Shortcut.")
-        }
-        if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifierFlags }) {
-            return String(localized: "This shortcut is already used for an App Launch Shortcut.")
-        }
-
+        if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifierFlags { return String(localized: "This shortcut is already used for Toggle Shortcut.") }
+        if settings.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifierFlags }) { return String(localized: "This shortcut is already used for a Custom Shortcut.") }
+        if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifierFlags }) { return String(localized: "This shortcut is already used for an App Launch Shortcut.") }
         return nil
     }
 }
 
-// MARK: - Reusable UI Component
 struct ToggleRow: View {
     let title: String
     let description: String
