@@ -27,7 +27,6 @@ class WindowMonitor {
     
     private var windowLanguageMemory: [CGWindowID: (lang: String, pid: pid_t)] = [:]
     
-    // 🌟 이 두 줄이 지워져서 발생한 에러였습니다!
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
     
@@ -92,7 +91,6 @@ class WindowMonitor {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
         
-        // 🌟 TOCTOU 취약점 방어 로직 (원자적 처리)
         var shouldProceed = false
         stateQueue.sync(flags: .barrier) {
             if self._currentPID != pid {
@@ -131,7 +129,8 @@ class WindowMonitor {
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         
         AXObserverAddNotification(newObserver, appElement, kAXFocusedWindowChangedNotification as CFString, refcon)
-        AXObserverAddNotification(newObserver, appElement, kAXUIElementDestroyedNotification as CFString, refcon)
+        
+        // 🌟 [수정됨] 앱 전체(appElement) 레벨에 등록했던 kAXUIElementDestroyedNotification을 여기서 삭제했습니다.
         
         let currentRL = CFRunLoopGetCurrent()
         CFRunLoopAddSource(currentRL, AXObserverGetRunLoopSource(newObserver), .defaultMode)
@@ -150,49 +149,55 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
         
-        var langToSwitch: String? = nil
-        var needsToSave = false
+        // 🌟 데드락(Deadlock)을 피하기 위해 큐 진입 전 필요한 값을 미리 빼둡니다.
+        let currentAppID = AppMonitor.shared.activeAppBundleID
+        let currentInputSource = self.getCurrentInputSourceID() ?? ""
+        let pid = self.currentPID
         
-        self.stateQueue.sync {
+        // 🌟 [핵심 수정] 읽기 - 결정 - 쓰기를 단일 트랜잭션(barrier) 안에서 깔끔하게 통합 처리 (TOCTOU 방어)
+        self.stateQueue.async(flags: .barrier) {
+            
             if let savedData = self.windowLanguageMemory[windowID] {
+                // 1. 기존 창인 경우: 저장된 언어로 복원
                 if snapshot.isWindowMemoryEnabled {
-                    langToSwitch = savedData.lang
+                    DispatchQueue.main.async {
+                        InputSourceManager.shared.switchLanguage(to: savedData.lang)
+                    }
                 }
             } else {
-                needsToSave = true
-            }
-        }
-        
-        var appliedAppSpecific = false
-        if needsToSave && snapshot.isAppSpecificEnabled {
-            let currentAppID = AppMonitor.shared.activeAppBundleID
-            if let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }), !customApp.targetLanguage.isEmpty {
-                langToSwitch = customApp.targetLanguage
-                appliedAppSpecific = true
-            }
-        }
-        
-        if let lang = langToSwitch {
-            DispatchQueue.main.async {
-                InputSourceManager.shared.switchLanguage(to: lang)
-            }
-        }
-        
-        if needsToSave {
-            let currentID = appliedAppSpecific ? langToSwitch! : (self.getCurrentInputSourceID() ?? "")
-            
-            if !currentID.isEmpty {
-                let pid = self.currentPID
-                self.stateQueue.async(flags: .barrier) {
-                    if self.windowLanguageMemory[windowID] == nil {
-                        // 🌟 메모리 무한 증가 방어 (최대 500개)
-                        if self.windowLanguageMemory.count >= 500 {
-                            let overflow = self.windowLanguageMemory.count - 400
-                            self.windowLanguageMemory.keys.prefix(overflow).forEach {
-                                self.windowLanguageMemory.removeValue(forKey: $0)
-                            }
+                // 2. 새로운 창인 경우: 앱별 지정 확인 후 신규 등록
+                var targetLang: String? = nil
+                
+                if snapshot.isAppSpecificEnabled,
+                   let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }),
+                   !customApp.targetLanguage.isEmpty {
+                    targetLang = customApp.targetLanguage
+                }
+                
+                if let lang = targetLang {
+                    DispatchQueue.main.async {
+                        InputSourceManager.shared.switchLanguage(to: lang)
+                    }
+                }
+                
+                // 🌟 [수정됨] 강제 언래핑(!)을 제거하고 안전한 로직으로 대체 (크래시 위험 제거)
+                let langToSave = targetLang ?? currentInputSource
+                
+                if !langToSave.isEmpty {
+                    // 메모리 무한 증가 방어 (최대 500개)
+                    if self.windowLanguageMemory.count >= 500 {
+                        let overflow = self.windowLanguageMemory.count - 400
+                        self.windowLanguageMemory.keys.prefix(overflow).forEach {
+                            self.windowLanguageMemory.removeValue(forKey: $0)
                         }
-                        self.windowLanguageMemory[windowID] = (lang: currentID, pid: pid)
+                    }
+                    
+                    self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
+                    
+                    // 🌟 [핵심 수정] 개별 창 요소(element)에 소멸 센서를 직접 달아줍니다! (개별 창 소멸 감지 누락 해결)
+                    if let observer = self.axObserver {
+                        let refcon = Unmanaged.passUnretained(self).toOpaque()
+                        AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)
                     }
                 }
             }
@@ -214,8 +219,10 @@ class WindowMonitor {
         guard let element = activeWindowElement else { return }
         guard let windowID = getWindowID(from: element) else { return }
         
+        // 데드락 방지용 사전 추출
+        let pid = self.currentPID
+        
         if let currentID = self.getCurrentInputSourceID() {
-            let pid = self.currentPID
             stateQueue.async(flags: .barrier) {
                 if self.windowLanguageMemory[windowID] == nil && self.windowLanguageMemory.count >= 500 {
                     let overflow = self.windowLanguageMemory.count - 400

@@ -62,10 +62,11 @@ class TypoConverter {
 
     // MARK: - 기존 수동 단축키 오타 교정
     func executeCorrection() {
-        // 🌟 [핵심 수정] NSPasteboard 및 UI 관련 로직은 반드시 메인 스레드에서 실행되어야 합니다.
+        // 🌟 [핵심 수정 1] UI 관련 로직은 반드시 메인 스레드에서 실행
         DispatchQueue.main.async {
-            let initialCount = NSPasteboard.general.changeCount
-            let oldString = NSPasteboard.general.string(forType: .string)
+            let localPB = NSPasteboard.general
+            let initialCount = localPB.changeCount
+            let oldString = localPB.string(forType: .string)
 
             // 1. 설정에 따라 블록 지정 시뮬레이션
             if SettingsManager.shared.snapshot.isSentenceMode {
@@ -78,54 +79,44 @@ class TypoConverter {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 self.simulateKey(keyCode: 8, modifiers: [.maskCommand]) // Cmd + C
 
-                // 3. 클립보드 변화 감지 (최대 0.5초 대기)
-                var attempts = 0
+                // 🌟 [핵심 수정 2] 무거운 타이머 폴링(반복 확인)을 제거하고, 0.12초 뒤 딱 한 번만 깔끔하게 확인합니다.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     
-                Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
-                    attempts += 1
-                    
-                    let localPB = NSPasteboard.general
-
-                    // 10번 시도(0.5초) 후 포기 또는 클립보드가 변경되었을 때
-                    if localPB.changeCount != initialCount || attempts > 10 {
-                        timer.invalidate()
-
-                        // 클립보드 복구 헬퍼 함수
-                        func restoreClipboard() {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                                let restorePB = NSPasteboard.general
-                                if let old = oldString {
-                                    restorePB.clearContents()
-                                    restorePB.setString(old, forType: .string)
-                                } else {
-                                    restorePB.clearContents()
-                                }
+                    // 클립보드 복구 헬퍼 함수
+                    func restoreClipboard() {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            if let old = oldString {
+                                localPB.clearContents()
+                                localPB.setString(old, forType: .string)
+                            } else {
+                                localPB.clearContents()
                             }
                         }
-
-                        // 4. 복사된 텍스트 확인 (실패 시 복구하고 종료)
-                        guard let selectedText = localPB.string(forType: .string), !selectedText.isEmpty else {
-                            restoreClipboard()
-                            return
-                        }
-
-                        // 5. 한/영 판단 및 변환 실행
-                        let isEnglish = selectedText.contains { $0.isASCII && $0.isLetter }
-                        let convertedText = isEnglish ? self.convertToKo(selectedText) : self.convertToEn(selectedText)
-
-                        // 6. 변환할 내용이 동일하면 무시
-                        if selectedText == convertedText {
-                            restoreClipboard()
-                            return
-                        }
-
-                        // 7. 변환된 텍스트 붙여넣기
-                        localPB.clearContents()
-                        localPB.setString(convertedText, forType: .string)
-                        self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
-                        
-                        restoreClipboard()
                     }
+
+                    // 3. 복사가 안 되었거나(변화 없음) 텍스트가 비어있으면 복구 후 종료
+                    guard localPB.changeCount != initialCount,
+                          let selectedText = localPB.string(forType: .string), !selectedText.isEmpty else {
+                        restoreClipboard()
+                        return
+                    }
+
+                    // 4. 한/영 판단 및 변환 실행
+                    let isEnglish = selectedText.contains { $0.isASCII && $0.isLetter }
+                    let convertedText = isEnglish ? self.convertToKo(selectedText) : self.convertToEn(selectedText)
+
+                    // 5. 변환할 내용이 동일하면 무시
+                    if selectedText == convertedText {
+                        restoreClipboard()
+                        return
+                    }
+
+                    // 6. 변환된 텍스트 붙여넣기
+                    localPB.clearContents()
+                    localPB.setString(convertedText, forType: .string)
+                    self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
+                    
+                    restoreClipboard()
                 }
             }
         }

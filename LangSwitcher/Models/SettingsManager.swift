@@ -238,6 +238,13 @@ class SettingsManager: ObservableObject {
         DispatchQueue.main.async {
             self.isBatchUpdating = true
             
+            // 🌟 [핵심 방어 로직] defer를 사용하여 함수가 어떻게 종료되든 무조건 잠금을 풀도록 강제합니다.
+            defer {
+                self.isBatchUpdating = false
+                self.saveAll()
+                self.updateSnapshot()
+            }
+            
             let dict = self.icloudStore.dictionaryRepresentation
             
             if let val = dict["showVisualFeedback"] as? Bool { self.showVisualFeedback = val }
@@ -246,18 +253,14 @@ class SettingsManager: ObservableObject {
             if let val = dict["isCursorHUDEnabled"] as? Bool { self.isCursorHUDEnabled = val }
             if let val = dict["isTypoCorrectionEnabled"] as? Bool { self.isTypoCorrectionEnabled = val }
             
-            // 🌟 [수정] iCloud에서 새로운 설정값들도 받아오도록 추가합니다.
             if let val = dict["isAutoTypoCorrectionEnabled"] as? Bool { self.isAutoTypoCorrectionEnabled = val }
             if let val = dict["isEdgeGlowEnabled"] as? Bool { self.isEdgeGlowEnabled = val }
             if let val = dict["isAutoTypoCorrectionOnEnterEnabled"] as? Bool { self.isAutoTypoCorrectionOnEnterEnabled = val }
             
             if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.excludedApps = dec }
             if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.customShortcuts = dec }
-            if let val = dict["isAutoTypoCorrectionOnEnterEnabled"] as? Bool { self.isAutoTypoCorrectionOnEnterEnabled = val } // 🌟 [추가됨]
             
-            self.isBatchUpdating = false
-            self.saveAll()
-            self.updateSnapshot()
+            // defer 안에서 알아서 처리되므로 마지막에 있던 false 전환 코드는 삭제했습니다.
         }
     }
     
@@ -351,19 +354,24 @@ class SettingsManager: ObservableObject {
             completion(false, error) // 인코딩 실패 시
         }
     }
-    
+
     func importBackup(from url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
-        // 🌟 1. 무거운 디스크 읽기(File I/O)는 백그라운드에서 수행하여 UI 멈춤을 방지합니다.
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let data = try Data(contentsOf: url)
                 
-                // 🌟 2. 데이터를 읽어온 후, 디코딩과 UI 업데이트는 다시 메인 스레드로 돌아와서 수행합니다.
                 DispatchQueue.main.async {
                     do {
                         let backup = try JSONDecoder().decode(BackupData.self, from: data)
                         
                         self.isBatchUpdating = true
+                        
+                        // 🌟 [핵심 방어 로직] 여기서도 복원 중 오류가 나더라도 무조건 잠금을 풀도록 보장합니다.
+                        defer {
+                            self.isBatchUpdating = false
+                            self.saveAll()
+                            self.updateSnapshot()
+                        }
                         
                         self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
                         self.ctrlLang = backup.ctrlLang; self.cmdLang = backup.cmdLang; self.optLang = backup.optLang
@@ -380,25 +388,21 @@ class SettingsManager: ObservableObject {
                         self.typoDisplayString = backup.typoDisplayString ?? ""
                         self.isSentenceMode = backup.isSentenceMode ?? false
                         
-                        // 🌟 [수정] 백업에서 새로운 설정값들도 정확히 불러오도록 추가합니다.
                         self.isAutoTypoCorrectionEnabled = backup.isAutoTypoCorrectionEnabled ?? false
                         self.isEdgeGlowEnabled = backup.isEdgeGlowEnabled ?? false
                         self.isAutoTypoCorrectionOnEnterEnabled = backup.isAutoTypoCorrectionOnEnterEnabled ?? false
                         
                         self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
                         
-                        self.isBatchUpdating = false
-                        self.saveAll()
-                        self.updateSnapshot()
-                        
                         completion(true, nil) // 복원 성공
                     } catch {
-                        completion(false, error) // 디코딩 실패
+                        // 에러가 나서 catch로 빠져도 defer가 발동하여 잠금이 안전하게 풀립니다!
+                        completion(false, error)
                     }
                 }
             } catch {
                 DispatchQueue.main.async {
-                    completion(false, error) // 파일 읽기 실패
+                    completion(false, error)
                 }
             }
         }

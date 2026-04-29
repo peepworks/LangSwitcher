@@ -50,23 +50,9 @@ class AppMonitor {
             // 공유 상태 업데이트
             AppMonitor.shared.activeAppBundleID = bundleID
             
-            // 🌟 [추가된 코드] 활성 앱의 PID를 넘겨서 윈도우 감지기 연결!
+            // 🌟 [핵심] 불안정한 0.1초 하드코딩 딜레이를 모두 삭제하고,
+            // 가장 정확한 타이밍을 아는 WindowMonitor에게 윈도우 감지 및 언어 전환 역할을 전적으로 위임합니다.
             WindowMonitor.shared.observeApp(pid: app.processIdentifier)
-
-            let settings = SettingsManager.shared
-            
-            // 🌟 이 코드를 추가하여 기능이 꺼져있으면 여기서 즉시 연산을 중단!
-            guard settings.isAppSpecificEnabled else { return }
-            
-            // 사용자가 등록해둔 앱 목록에 이 앱이 있는지 검사합니다.
-            if let customApp = settings.customApps.first(where: { $0.bundleIdentifier == bundleID }) {
-                // 지정된 언어가 있다면 해당 언어로 전환합니다.
-                if !customApp.targetLanguage.isEmpty {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        InputSourceManager.shared.switchLanguage(to: customApp.targetLanguage)
-                    }
-                }
-            }
         }
     }
 

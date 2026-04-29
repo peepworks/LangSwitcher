@@ -25,7 +25,6 @@ class EventMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var healthCheckTimer: Timer?
     
-    // 🌟 [수정 3] 옵저버를 등록했던 정확한 RunLoop를 기억하기 위한 영수증 변수
     private var eventRunLoop: CFRunLoop?
         
     var isEnabled: Bool {
@@ -92,7 +91,6 @@ class EventMonitor {
     private var _lastActionTime: Date = Date.distantPast
     private let actionCooldown: TimeInterval = 0.15
     
-    // 🌟 [수정 2] 매번 할당되던 딕셔너리를 메모리에 한 번만 올려두는 전역 상수로 변경 (성능 극대화)
     private static let charKeyMap: [UInt16: Character] = [
         0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",
         11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t", 31: "o",
@@ -128,7 +126,6 @@ class EventMonitor {
         }
     }
     
-    // MARK: - 캡스락 디바운스를 위한 완벽한 스레드 안전 헬퍼 함수
     func shouldDebounceCapsLock() -> Bool {
         var shouldBlock = false
         stateQueue.sync(flags: .barrier) {
@@ -232,7 +229,6 @@ class EventMonitor {
             if EventMonitor.shared.shouldDebounceCapsLock() { return nil }
 
             if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == 57 && !snapshot.typoDisplayString.isEmpty {
-                // ✅ 그냥 직접 호출하세요.
                 TypoConverter.shared.executeCorrection()
                 return nil
             }
@@ -256,7 +252,6 @@ class EventMonitor {
                 if !stateSnap.didPressOtherKey {
                     if let singleCode = stateSnap.singleCode {
                         if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == singleCode && !snapshot.typoDisplayString.isEmpty {
-                            // ✅ 그냥 직접 호출하세요.
                             TypoConverter.shared.executeCorrection()
                             return nil
                         }
@@ -275,7 +270,6 @@ class EventMonitor {
                         let modsRaw = UInt64(stateSnap.maxMods.rawValue)
 
                         if snapshot.isTypoCorrectionEnabled && snapshot.typoKeyCode == 0 && snapshot.typoModifierFlags == modsRaw && !snapshot.typoDisplayString.isEmpty {
-                            // ✅ 그냥 직접 호출하세요.
                             TypoConverter.shared.executeCorrection()
                             return nil
                         }
@@ -315,7 +309,6 @@ class EventMonitor {
            snapshot.typoKeyCode == keyCode &&
            NSEvent.ModifierFlags(rawValue: UInt(snapshot.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
            !snapshot.typoDisplayString.isEmpty {
-            // ✅ 그냥 직접 호출하세요.
             TypoConverter.shared.executeCorrection()
             return nil
         }
@@ -464,7 +457,6 @@ class EventMonitor {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             let currentRL = CFRunLoopGetCurrent()
             CFRunLoopAddSource(currentRL, runLoopSource!, .commonModes)
-            // 🌟 [수정 3] 등록한 컨베이어 벨트를 기억해 둡니다.
             self.eventRunLoop = currentRL
             
             CGEvent.tapEnable(tap: tap, enable: true)
@@ -487,7 +479,6 @@ class EventMonitor {
         healthCheckTimer = nil
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
         
-        // 🌟 [수정 3] 영수증(eventRunLoop)을 보고 정확한 컨베이어 벨트에서 찾아 지웁니다.
         if let source = runLoopSource, let rl = eventRunLoop {
             CFRunLoopRemoveSource(rl, source, .commonModes)
         }
@@ -536,7 +527,8 @@ class EventMonitor {
     }
     
     private func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
-        DispatchQueue.global(qos: .userInteractive).async {
+        // 🌟 [핵심 수정] .userInteractive에서 .default로 QoS를 낮춰 스레드 폭발을 방지합니다.
+        DispatchQueue.global(qos: .default).async {
             for _ in 0..<originalLength {
                 let deleteDown = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true)
                 let deleteUp = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: false)
@@ -557,14 +549,10 @@ class EventMonitor {
                 textEvent?.post(tap: .cghidEventTap)
             }
             
-            Thread.sleep(forTimeInterval: 0.015)
-            
-            // 🌟 [수정됨] 교착 상태(Deadlock)를 방지하기 위해 다시 async로 명령을 내립니다.
             DispatchQueue.main.async {
                 EventMonitor.shared.safeSwitchToKorean()
             }
             
-            // 🌟 [수정됨] 대신, 시스템이 언어 전환을 완료할 수 있도록 대기 시간을 기존보다 2배 넉넉하게(0.03초) 줍니다.
             Thread.sleep(forTimeInterval: 0.03)
             
             let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: true)
@@ -576,7 +564,6 @@ class EventMonitor {
         }
     }
     
-    // 🌟 [수정 2] 전역 상수를 사용하여 더 이상 무거운 딕셔너리를 매번 만들지 않습니다.
     private func getCharacter(from keyCode: UInt16) -> Character? {
         return Self.charKeyMap[keyCode]
     }
@@ -592,7 +579,6 @@ class ShortcutRecorder {
         EventMonitor.shared.isPaused = true
         timeoutTask?.cancel()
         
-        // 🌟 [핵심 수정] [weak self]를 사용하여 타이머 클로저가 self(ShortcutRecorder)를 강하게 붙잡지 않도록(메모리 얽힘 방지) 수정합니다.
         let task = DispatchWorkItem { [weak self] in
             self?.stopRecording()
             onTimeout()
