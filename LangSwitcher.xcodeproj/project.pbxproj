@@ -131,6 +131,24 @@
 			path = AppIcon;
 			sourceTree = "<group>";
 		};
+		1280BFF12FA1AFA6007FE696 /* Assets */ = {
+			isa = PBXGroup;
+			children = (
+				1280BFF22FA1AFD7007FE696 /* Audiio */,
+				125FF4D92F6580DE005DAB0C /* AppIcon */,
+			);
+			path = Assets;
+			sourceTree = "<group>";
+		};
+		1280BFF22FA1AFD7007FE696 /* Audiio */ = {
+			isa = PBXGroup;
+			children = (
+				122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */,
+				122AA3F02F9DA544006297F4 /* ClickLow.mp3 */,
+			);
+			path = Audiio;
+			sourceTree = "<group>";
+		};
 		129E05172F657B5200F34ABE = {
 			isa = PBXGroup;
 			children = (
@@ -151,8 +169,8 @@
 		129E05312F657B6A00F34ABE /* LangSwitcher */ = {
 			isa = PBXGroup;
 			children = (
+				1280BFF12FA1AFA6007FE696 /* Assets */,
 				1239486B2F9C990D00980FAF /* LangSwitcher.entitlements */,
-				125FF4D92F6580DE005DAB0C /* AppIcon */,
 				125FF4CC2F657F22005DAB0C /* Views */,
 				125FF4CB2F657F1A005DAB0C /* Controllers */,
 				125FF4CA2F657F10005DAB0C /* Models */,
@@ -168,8 +186,6 @@
 		12F0804E2F679423005A8424 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */,
-				122AA3F02F9DA544006297F4 /* ClickLow.mp3 */,
 				12F080512F67942F005A8424 /* Carbon.framework */,
 				12F0804F2F679423005A8424 /* ServiceManagement.framework */,
 			);
