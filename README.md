@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="LangSwitcher/AppIcon/logo.png" width="150" alt="LangSwitcher Logo">
+  <img src="LangSwitcher/Assets/AppIcon/logo.png" width="150" alt="LangSwitcher Logo">
 </p>
 
 # 🌐 LangSwitcher
