@@ -84,7 +84,7 @@ class TypoConverter {
                     
                     // 클립보드 복구 헬퍼 함수
                     func restoreClipboard() {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             if let old = oldString {
                                 localPB.clearContents()
                                 localPB.setString(old, forType: .string)

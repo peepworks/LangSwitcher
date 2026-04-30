@@ -526,42 +526,69 @@ class EventMonitor {
         }
     }
     
+    // MARK: - 🌟 [Non-blocking] 비동기 오타 교정 로직
+    
     private func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
-        // 🌟 [핵심 수정] .userInteractive에서 .default로 QoS를 낮춰 스레드 폭발을 방지합니다.
-        DispatchQueue.global(qos: .default).async {
-            for _ in 0..<originalLength {
-                let deleteDown = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true)
-                let deleteUp = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: false)
-                deleteDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
-                deleteUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
-                deleteDown?.post(tap: .cghidEventTap)
-                deleteUp?.post(tap: .cghidEventTap)
-                Thread.sleep(forTimeInterval: 0.002)
-            }
+        // 1. 재귀적으로 백스페이스를 전송하여 기존 오타를 삭제합니다.
+        self.recursiveDelete(count: originalLength) {
             
-            Thread.sleep(forTimeInterval: 0.01)
+            // 2. 삭제가 완료되면 변환된 한글 텍스트를 한 번에 입력합니다.
+            self.postUnicodeString(correctedText)
             
-            var chars = Array(correctedText.utf16)
-            if !chars.isEmpty {
-                let textEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
-                textEvent?.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
-                textEvent?.setIntegerValueField(.eventSourceUserData, value: 9999)
-                textEvent?.post(tap: .cghidEventTap)
-            }
-            
-            DispatchQueue.main.async {
+            // 3. 텍스트 입력 후 입력 소스를 한국어로 전환합니다.
+            // 0.01초의 짧은 여유를 주어 텍스트 입력 이벤트가 안정적으로 처리되게 합니다.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
                 EventMonitor.shared.safeSwitchToKorean()
+                
+                // 4. 언어 전환이 완료될 시간을 충분히(0.03초) 준 뒤,
+                // 사용자가 원래 눌렀던 트리거 키(스페이스/엔터)를 다시 보냅니다.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                    self.postTriggerKey(keyCode: triggerKeyCode)
+                }
             }
-            
-            Thread.sleep(forTimeInterval: 0.03)
-            
-            let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: true)
-            let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(triggerKeyCode), keyDown: false)
-            triggerDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
-            triggerUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
-            triggerDown?.post(tap: .cghidEventTap)
-            triggerUp?.post(tap: .cghidEventTap)
         }
+    }
+
+    // 🌟 [재귀 헬퍼] 스레드를 점유하지 않고 백스페이스를 하나씩 예약 전송합니다.
+    private func recursiveDelete(count: Int, completion: @escaping () -> Void) {
+        guard count > 0 else {
+            completion() // 모든 삭제가 끝나면 다음 단계(텍스트 입력) 실행
+            return
+        }
+        
+        let deleteDown = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true)
+        let deleteUp = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: false)
+        deleteDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
+        deleteUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
+        
+        deleteDown?.post(tap: .cghidEventTap)
+        deleteUp?.post(tap: .cghidEventTap)
+        
+        // 0.002초 뒤에 다음 삭제 작업을 예약하고 현재 스레드는 즉시 시스템에 반납합니다.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.002) {
+            self.recursiveDelete(count: count - 1, completion: completion)
+        }
+    }
+
+    // 🌟 [유니코드 입력 헬퍼]
+    private func postUnicodeString(_ text: String) {
+        var chars = Array(text.utf16)
+        if !chars.isEmpty {
+            let textEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+            textEvent?.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
+            textEvent?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            textEvent?.post(tap: .cghidEventTap)
+        }
+    }
+
+    // 🌟 [트리거 키 입력 헬퍼]
+    private func postTriggerKey(keyCode: UInt16) {
+        let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: true)
+        let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: false)
+        triggerDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
+        triggerUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
+        triggerDown?.post(tap: .cghidEventTap)
+        triggerUp?.post(tap: .cghidEventTap)
     }
     
     private func getCharacter(from keyCode: UInt16) -> Character? {

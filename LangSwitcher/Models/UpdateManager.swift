@@ -50,7 +50,21 @@ class UpdateManager: ObservableObject {
     private let apiURL = "https://api.github.com/repos/peepworks/LangSwitcher/releases/latest"
     private var timer: Timer?
 
-    private init() {}
+    private init() {
+        // 🌟 [수정됨] 앱이 꺼지기 직전(willTerminate)에 알림을 받도록 등록합니다.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+    }
+    
+    // 🌟 [추가됨] 앱이 닫힐 때 시스템이 이 함수를 호출하여 안전하게 타이머를 멈춥니다.
+    @objc private func appWillTerminate() {
+        // print("UpdateManager is stopping before app termination") // 필요하다면 주석 해제
+        stopAutoUpdateCheck()
+    }
 
     // 앱 실행 시 백그라운드 체크 시작
     func setupAutoUpdateCheck() {
@@ -67,11 +81,6 @@ class UpdateManager: ObservableObject {
         timer?.invalidate()
         timer = nil
         print("✅ [UpdateManager] Auto update timer invalidated.")
-    }
-
-    // 🌟 [안전장치] 만약의 경우를 대비한 deinit에서의 자원 정리
-    deinit {
-        stopAutoUpdateCheck()
     }
 
     private func checkIfAutoUpdateNeeded() {

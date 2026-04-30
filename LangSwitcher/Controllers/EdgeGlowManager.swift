@@ -82,9 +82,19 @@ class EdgeGlowManager {
             window.setFrame(NSRect(x: 0, y: screenFrame.height - windowHeight, width: screenFrame.width, height: windowHeight), display: true)
         }
         
-        // 🌟 [수정됨] 매번 예쁜 네온 빛깔의 랜덤 색상을 생성합니다.
-        // 채도(saturation: 0.85)와 밝기(brightness: 1.0)를 고정하여 항상 쨍하고 깨끗한 색이 나오게 합니다.
-        let randomHue = Double.random(in: 0...1)
+        // 🌟 [핵심 수정] 언어 ID를 활용하면서도 다채로운 랜덤성을 부여합니다.
+        let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
+                
+        let randomHue: Double
+        if isKorean {
+            // 한글: 푸른색/보라색 계열 (Hue 0.5 ~ 0.8 사이 랜덤)
+            randomHue = Double.random(in: 0.5...0.8)
+        } else {
+            // 영어: 주황색/분홍색 계열 (Hue 0.0 ~ 0.1 또는 0.9 ~ 1.0 사이 랜덤)
+            let warmTones = [Double.random(in: 0.0...0.1), Double.random(in: 0.9...1.0)]
+            randomHue = warmTones.randomElement() ?? 0.1
+        }
+                
         let glowColor = Color(hue: randomHue, saturation: 0.85, brightness: 1.0)
         
         // 🌟 [핵심 3] 무거운 뷰를 다시 만들지 않고, 상태 객체의 색상만 업데이트합니다!
