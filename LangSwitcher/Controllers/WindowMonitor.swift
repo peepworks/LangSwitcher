@@ -83,7 +83,6 @@ class WindowMonitor {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
         
-        // 1. 원자적 PID 체크 및 갱신
         var shouldProceed = false
         stateQueue.sync(flags: .barrier) {
             if self._currentPID != pid {
@@ -92,7 +91,6 @@ class WindowMonitor {
             }
         }
         
-        // 2. [옵저버 등록] 앱이 바뀌었을 때만 새로운 감시자를 생성합니다.
         if shouldProceed {
             if let observer = axObserver, let rl = observerRunLoop {
                 CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
@@ -126,19 +124,19 @@ class WindowMonitor {
             }
         }
         
-        // 3. [즉시 처리] 현재 포커스된 창을 안전하게 1회 실행합니다. (이 로직은 함수 하단에 한 번만 있으면 됩니다)
         let appElement = AXUIElementCreateApplication(pid)
         var focusedWindow: CFTypeRef?
-                
         let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
-                
-        // 🌟 강제 캐스팅(as!)이 완전히 제거된 안전한 블록
+        
+        // 🌟 [수정됨] Swift 컴파일러 경고 해결 및 완벽한 런타임 타입 방어
         if result == .success, let windowRef = focusedWindow {
+            // 1. CoreFoundation 고유의 타입 검사 방식을 사용하여 실제 객체 타입을 확인합니다.
             if CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
+                // 2. 타입 검사가 완벽하게 끝났으므로, 컴파일러가 안심하도록 강제 캐스팅(as!)을 사용합니다.
                 self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
+            } else {
+                print("⚠️ [WindowMonitor] Expected AXUIElement but got a different CFType.")
             }
-        } else {
-            print("ℹ️ [WindowMonitor] No focused window found for PID: \(pid)")
         }
     }
     
@@ -154,41 +152,47 @@ class WindowMonitor {
         let pid = self.currentPID
         
         stateQueue.async(flags: .barrier) {
-            if let savedData = self.windowLanguageMemory[windowID] {
-                // 1. 이미 기록이 있는 창: 저장된 언어로 복구
-                if snapshot.isWindowMemoryEnabled {
-                    DispatchQueue.main.async {
-                        InputSourceManager.shared.switchLanguage(to: savedData.lang)
-                    }
+            // 1. 앱별 설정 지정 언어 확인
+            var appSpecificLang: String? = nil
+            if snapshot.isAppSpecificEnabled,
+               let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }),
+               !customApp.targetLanguage.isEmpty {
+                appSpecificLang = customApp.targetLanguage
+            }
+            
+            // 2. 창별 기억 데이터 확인
+            let savedData = self.windowLanguageMemory[windowID]
+            
+            // 🌟 [핵심 수정] 3. 우선순위에 따른 타겟 언어 결정 (논리적 충돌 해결)
+            var targetLang: String? = nil
+            
+            if snapshot.isWindowMemoryEnabled, let saved = savedData {
+                // [1순위] 창별 기억이 켜져 있고 기록이 있다면 무조건 우선 복원
+                targetLang = saved.lang
+            } else if let appLang = appSpecificLang {
+                // [2순위] 창별 기억이 꺼져 있거나 첫 창인 경우, 앱별 지정 언어 강제 적용
+                targetLang = appLang
+            }
+            
+            // 4. 언어 전환 실행
+            if let lang = targetLang {
+                DispatchQueue.main.async {
+                    InputSourceManager.shared.switchLanguage(to: lang)
                 }
-            } else {
-                // 2. 처음 보는 창: 앱별 설정 확인
-                var targetLang: String? = nil
-                if snapshot.isAppSpecificEnabled,
-                   let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }),
-                   !customApp.targetLanguage.isEmpty {
-                    targetLang = customApp.targetLanguage
+            }
+            
+            // 5. 메모리 갱신 및 파괴 알림 등록
+            let langToSave = targetLang ?? currentInputSource
+            if !langToSave.isEmpty {
+                if self.windowLanguageMemory[windowID] == nil && self.windowLanguageMemory.count >= 500 {
+                    self.windowLanguageMemory.removeValue(forKey: self.windowLanguageMemory.keys.first!)
                 }
                 
-                if let lang = targetLang {
-                    DispatchQueue.main.async {
-                        InputSourceManager.shared.switchLanguage(to: lang)
-                    }
-                }
+                self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
                 
-                // 메모리 등록
-                let langToSave = targetLang ?? currentInputSource
-                if !langToSave.isEmpty {
-                    if self.windowLanguageMemory.count >= 500 {
-                        self.windowLanguageMemory.removeValue(forKey: self.windowLanguageMemory.keys.first!)
-                    }
-                    self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
-                    
-                    // 이 창이 닫힐 때를 대비해 파괴 알림 등록
-                    if let observer = self.axObserver {
-                        let refcon = Unmanaged.passUnretained(self).toOpaque()
-                        AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)
-                    }
+                if savedData == nil, let observer = self.axObserver {
+                    let refcon = Unmanaged.passUnretained(self).toOpaque()
+                    AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)
                 }
             }
         }
@@ -203,13 +207,13 @@ class WindowMonitor {
     
     @objc private func inputSourceChanged() {
         let snapshot = SettingsManager.shared.snapshot
-        guard snapshot.isWindowMemoryEnabled else { return }
+        // 🌟 창별 기억이 꺼져 있더라도 앱별 설정을 위해 메모리를 추적하도록 가드(guard) 조건 완화
+        guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
         
         let pid = self.currentPID
         if let currentID = self.getCurrentInputSourceID() {
             stateQueue.async(flags: .barrier) {
-                // 🌟 [수정] 무조건 저장하여 사용자가 수동으로 바꾼 언어를 기억하게 함
                 self.windowLanguageMemory[windowID] = (lang: currentID, pid: pid)
             }
         }
