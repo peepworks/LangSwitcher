@@ -26,6 +26,7 @@ enum SettingsTab: Hashable {
     case appLaunch
     case typoCorrection
     case excludedApps
+    case stats // 🌟 [추가됨]
     case about
 }
 
@@ -66,6 +67,9 @@ struct SettingsView: View {
                         .tag(SettingsTab.excludedApps)
                 }
                 Section(header: Text(String(localized: "System"))) {
+                    // 🌟 통계 탭 UI 추가
+                    Label(String(localized: "Statistics"), systemImage: "chart.bar.xaxis")
+                            .tag(SettingsTab.stats)
                     Label(String(localized: "About & Support"), systemImage: "info.circle")
                         .tag(SettingsTab.about)
                 }
@@ -82,6 +86,7 @@ struct SettingsView: View {
                 case .typoCorrection:
                     if isKoreanUser { TypoCorrectionSettingsView() }
                 case .excludedApps: ExcludedAppsSettingsView()
+                case .stats: StatsSettingsView() // 🌟 통계 뷰 렌더링 추가
                 case .about: AboutSettingsView()
                 case nil: Text(String(localized: "Select a menu item.")).foregroundColor(.secondary)
                 }

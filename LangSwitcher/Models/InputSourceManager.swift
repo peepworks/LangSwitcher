@@ -86,6 +86,10 @@ class InputSourceManager: ObservableObject {
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {
             TISSelectInputSource(target)
+            
+            // 🌟 [추가됨] 언어가 '실제로' 변경되었을 때만 카운트 증가 (가장 완벽한 길목)
+            StatsManager.shared.incrementLanguageSwitch()
+            
             // 🌟 [추가] 노치 엣지 글로우 피드백 실행
             EdgeGlowManager.shared.showGlow(forLanguage: id)
             

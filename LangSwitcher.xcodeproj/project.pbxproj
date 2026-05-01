@@ -23,6 +23,7 @@
 		126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */; };
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
+		129D74D42FA4329400227AD9 /* StatsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129D74D32FA4329100227AD9 /* StatsManager.swift */; };
 		12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */; };
 		12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */; };
 		12F080502F679423005A8424 /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12F0804F2F679423005A8424 /* ServiceManagement.framework */; };
@@ -48,6 +49,7 @@
 		126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeGlowManager.swift; sourceTree = "<group>"; };
 		12744D562F89E66A0033C06A /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		129930792F679EBC00878827 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
+		129D74D32FA4329100227AD9 /* StatsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsManager.swift; sourceTree = "<group>"; };
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		129E052E2F657B6A00F34ABE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		129E05322F657E1600F34ABE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -92,6 +94,7 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				129D74D32FA4329100227AD9 /* StatsManager.swift */,
 				126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */,
 				12242E2C2F933CA300690095 /* TypoConverter.swift */,
 				12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */,
@@ -276,6 +279,7 @@
 				122AA3F42F9DA713006297F4 /* SensoryFeedbackManager.swift in Sources */,
 				125FF4D82F658041005DAB0C /* AppDelegate.swift in Sources */,
 				12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */,
+				129D74D42FA4329400227AD9 /* StatsManager.swift in Sources */,
 				126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */,
 				125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
@@ -449,7 +453,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.6.0;
+				MARKETING_VERSION = 0.7.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;
@@ -490,7 +494,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.6.0;
+				MARKETING_VERSION = 0.7.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;

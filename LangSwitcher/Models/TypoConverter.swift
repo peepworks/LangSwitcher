@@ -116,6 +116,8 @@ class TypoConverter {
                     localPB.setString(convertedText, forType: .string)
                     self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
                     
+                    StatsManager.shared.incrementTypoCorrection() // 🌟 [추가] 수동 오타 교정 성공 카운트
+                    
                     restoreClipboard()
                 }
             }

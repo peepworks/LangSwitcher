@@ -511,9 +511,13 @@ class EventMonitor {
             else if let langID = targetLang { testLabel = "[Test] \(InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID)" }
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
         } else {
-            if isToggle { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource() } }
+            if isToggle { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource()
+                StatsManager.shared.incrementLanguageSwitch() // 🌟 [추가]
+            } }
             else if let bundleID = targetAppID { launchApp(bundleID: bundleID) }
-            else if let lang = targetLang { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchLanguage(to: lang) } }
+            else if let lang = targetLang { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchLanguage(to: lang)
+                StatsManager.shared.incrementLanguageSwitch() // 🌟 [추가]
+            } }
         }
     }
 
@@ -534,6 +538,8 @@ class EventMonitor {
             
             // 2. 삭제가 완료되면 변환된 한글 텍스트를 한 번에 입력합니다.
             self.postUnicodeString(correctedText)
+            
+            StatsManager.shared.incrementTypoCorrection() // 🌟 [추가] 자동 오타 감지 성공 카운트
             
             // 3. 텍스트 입력 후 입력 소스를 한국어로 전환합니다.
             // 0.01초의 짧은 여유를 주어 텍스트 입력 이벤트가 안정적으로 처리되게 합니다.
