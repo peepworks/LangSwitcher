@@ -154,19 +154,45 @@ class BrowserTabManager {
     func handleBrowserTabChanged(bundleID: String, appName: String) {
         guard SettingsManager.shared.isBrowserTabMemoryEnabled else { return }
         guard let adapter = adapters[bundleID] else { return }
-        
-        // 1. 탭을 이동하기 전, 현재 머물고 있던 탭의 상태를 저장합니다.
+            
         saveCurrentContext()
-        
-        // 2. 비동기로 브라우저에 스크립트를 날려 새 탭의 정보를 가져옵니다.
+            
         adapter.fetchActiveTabInfo(appName: appName) { [weak self] context in
             guard let self = self, let context = context else { return }
+                
+            // 🌟 [추가] 새 탭 여부 확인 및 기본 언어 적용
+            if self.isNewTab(context: context) {
+                let defaultLang = SettingsManager.shared.newTabDefaultLanguage
+                if defaultLang != "None" && !defaultLang.isEmpty {
+                    // 새 탭이면 기억된 값 무시하고 설정된 기본 언어로 강제 전환
+                    InputSourceManager.shared.switchLanguage(to: defaultLang)
+                    self.currentKey = nil
+                    return
+                }
+            }
+                
             guard let newKey = self.generateKey(from: context, bundleID: bundleID) else { return }
-            
-            // 3. 현재 키를 새 탭의 키로 업데이트하고, 저장된 상태가 있다면 복원합니다.
             self.currentKey = newKey
             self.restoreContext(for: newKey)
         }
+    }
+    
+    // 🌟 [추가] 브라우저별 새 탭 주소 패턴 감지
+    private func isNewTab(context: TabContext) -> Bool {
+        guard let url = context.url?.lowercased() else { return true }
+            
+        // 주요 브라우저의 새 탭 특수 주소들
+        let newTabPatterns = [
+            "chrome://newtab",
+            "edge://newtab",
+            "brave://newtab",
+            "about:blank",
+            "favorites://", // Safari
+            "topsites://"   // Safari
+        ]
+            
+        // URL이 비어있거나 위 패턴으로 시작하면 새 탭으로 간주
+        return url.isEmpty || newTabPatterns.contains { url.starts(with: $0) }
     }
     
     // 🌟 앱 포커스가 브라우저가 아닌 다른 곳으로 빠져나갈 때 호출하여 마지막 상태를 저장합니다.

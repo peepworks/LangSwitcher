@@ -95,6 +95,7 @@ struct SettingsSnapshot {
     var isAutoTypoCorrectionOnEnterEnabled = false
     var isBrowserTabMemoryEnabled = false
     var isBrowserDomainModeEnabled = false // 🌟 [에러 수정됨] 스냅샷에 변수 추가
+    var newTabDefaultLanguage = "None" // 기본값은 '사용 안 함'
 }
 
 class SettingsManager: ObservableObject {
@@ -135,7 +136,8 @@ class SettingsManager: ObservableObject {
             isEdgeGlowEnabled: isEdgeGlowEnabled,
             isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled,
             isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
-            isBrowserDomainModeEnabled: isBrowserDomainModeEnabled // 🌟 [에러 수정됨] 스냅샷 생성 시 포함
+            isBrowserDomainModeEnabled: isBrowserDomainModeEnabled, // 🌟 [에러 수정됨] 스냅샷 생성 시 포함
+            newTabDefaultLanguage: newTabDefaultLanguage
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
@@ -203,6 +205,9 @@ class SettingsManager: ObservableObject {
     // 🌟 [에러 수정됨] 누락되었던 AppStorage 변수들을 명시적으로 선언합니다.
     @AppStorage("isBrowserTabMemoryEnabled") var isBrowserTabMemoryEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isBrowserDomainModeEnabled") var isBrowserDomainModeEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("newTabDefaultLanguage") var newTabDefaultLanguage: String = "None" {
+        didSet { updateSnapshot(); syncToCloud() }
+    }
     
     private init() {
         let d = UserDefaults.standard
