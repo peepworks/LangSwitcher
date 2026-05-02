@@ -17,16 +17,17 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers // 백업 파일(.json) 저장을 위해 필수 추가
+import UniformTypeIdentifiers
 
 struct AdvancedSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
     
-    // General에서 이사 온 상태 변수들
     @State private var showBackupSuccess = false
     @State private var showRestoreSuccess = false
     
-    // 🌟 [핵심] 기능 플래그 (Feature Flag): 무료 개발자 계정 제한으로 UI에서만 임시로 숨김
+    // 🌟 [추가됨] 자동화 권한 안내 알림 상태
+    @State private var showAutomationAlert = false
+    
     private let showICloudFeature = false
 
     var body: some View {
@@ -74,7 +75,30 @@ struct AdvancedSettingsView: View {
                     Text(String(localized: "Window Focus Management")).font(.headline)
                 }
                 
-                // 3. 백업 및 복구 섹션
+                // 3. 브라우저 탭 단위 메모리 관리
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 0) {
+                        SettingToggleRow(
+                            title: String(localized: "Remember input source per browser tab (Beta)"),
+                            isOn: $settings.isBrowserTabMemoryEnabled
+                        )
+                        .onChange(of: settings.isBrowserTabMemoryEnabled) { newValue in
+                            if newValue {
+                                // 시스템 권한 요청도 시도하고, 우리 자체 알림창도 띄웁니다.
+                                AccessibilityManager.shared.checkAutomationPermissions(prompt: true)
+                                self.showAutomationAlert = true // 🌟 [핵심] 팝업 띄우기
+                            }
+                        }
+                        
+                        Text(String(localized: "Requires Automation permission on first use. Supports Chrome, Edge, Brave, and Safari. Restores language based on tab ID or domain."))
+                            .font(.caption).foregroundColor(.secondary).lineSpacing(2)
+                            .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, -2)
+                    }
+                } label: {
+                    Text(String(localized: "Browser Tab Management")).font(.headline)
+                }
+                
+                // 4. 백업 및 복구 섹션
                 GroupBox {
                     VStack(alignment: .leading, spacing: 0) {
                         SettingButtonRow(title: String(localized: "Export Settings"), buttonTitle: String(localized: "Export...")) {
@@ -91,7 +115,7 @@ struct AdvancedSettingsView: View {
                     Text(String(localized: "Backup & Restore")).font(.headline)
                 }
                 
-                // 4. 🌟 iCloud 동기화 섹션 (if 문을 사용해 UI 렌더링만 차단)
+                // 5. iCloud 동기화 섹션
                 if showICloudFeature {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 0) {
@@ -130,6 +154,15 @@ struct AdvancedSettingsView: View {
             .alert(String(localized: "Restore Successful"), isPresented: $showRestoreSuccess) {
                 Button("OK", role: .cancel) { }
             }
+            // 🌟 [추가됨] 권한 설정 안내 알림창 (설정 열기 버튼 포함)
+            .alert(String(localized: "Automation Permission Required"), isPresented: $showAutomationAlert) {
+                Button(String(localized: "Open Settings")) {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
+                }
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(String(localized: "To remember tab languages, LangSwitcher needs Automation permission for your browsers. Please enable it in System Settings, or check the 'Info & Support' tab."))
+            }
         }
     }
     
@@ -142,7 +175,6 @@ struct AdvancedSettingsView: View {
         panel.nameFieldStringValue = "LangSwitcher_Backup_\(formatter.string(from: Date())).json"
         
         if panel.runModal() == .OK, let url = panel.url {
-            // 🌟 [수정됨] try-catch 대신 completion 클로저를 사용합니다.
             settings.exportBackup(to: url) { success, error in
                 if success {
                     self.showBackupSuccess = true
@@ -157,7 +189,6 @@ struct AdvancedSettingsView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url {
-            // 🌟 [수정됨] try-catch 대신 completion 클로저를 사용합니다.
             settings.importBackup(from: url) { success, error in
                 if success {
                     self.showRestoreSuccess = true

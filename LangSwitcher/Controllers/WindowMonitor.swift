@@ -81,7 +81,7 @@ class WindowMonitor {
     
     func observeApp(pid: pid_t) {
         let snapshot = SettingsManager.shared.snapshot
-        guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
+        guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled || snapshot.isBrowserTabMemoryEnabled else { return }
         
         var shouldProceed = false
         stateQueue.sync(flags: .barrier) {
@@ -105,6 +105,8 @@ class WindowMonitor {
                 let notifString = notification as String
                 if notifString == kAXFocusedWindowChangedNotification as String {
                     monitor.handleWindowFocusChanged(element: axElement)
+                } else if notifString == kAXTitleChangedNotification as String {
+                    monitor.handleWindowTitleChanged(element: axElement)
                 } else if notifString == kAXUIElementDestroyedNotification as String {
                     monitor.handleWindowDestroyed(element: axElement)
                 }
@@ -117,6 +119,8 @@ class WindowMonitor {
                 let refcon = Unmanaged.passUnretained(self).toOpaque()
                 
                 AXObserverAddNotification(newObserver, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
+                // 🌟 브라우저 탭 전환을 감지하기 위한 Title Changed 이벤트 구독
+                AXObserverAddNotification(newObserver, appRef, kAXTitleChangedNotification as CFString, refcon)
                 
                 let currentRL = CFRunLoopGetCurrent()
                 CFRunLoopAddSource(currentRL, AXObserverGetRunLoopSource(newObserver), .defaultMode)
@@ -128,11 +132,8 @@ class WindowMonitor {
         var focusedWindow: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
         
-        // 🌟 [수정됨] Swift 컴파일러 경고 해결 및 완벽한 런타임 타입 방어
         if result == .success, let windowRef = focusedWindow {
-            // 1. CoreFoundation 고유의 타입 검사 방식을 사용하여 실제 객체 타입을 확인합니다.
             if CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
-                // 2. 타입 검사가 완벽하게 끝났으므로, 컴파일러가 안심하도록 강제 캐스팅(as!)을 사용합니다.
                 self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
             } else {
                 print("⚠️ [WindowMonitor] Expected AXUIElement but got a different CFType.")
@@ -152,7 +153,6 @@ class WindowMonitor {
         let pid = self.currentPID
         
         stateQueue.async(flags: .barrier) {
-            // 1. 앱별 설정 지정 언어 확인
             var appSpecificLang: String? = nil
             if snapshot.isAppSpecificEnabled,
                let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }),
@@ -160,28 +160,21 @@ class WindowMonitor {
                 appSpecificLang = customApp.targetLanguage
             }
             
-            // 2. 창별 기억 데이터 확인
             let savedData = self.windowLanguageMemory[windowID]
-            
-            // 🌟 [핵심 수정] 3. 우선순위에 따른 타겟 언어 결정 (논리적 충돌 해결)
             var targetLang: String? = nil
             
             if snapshot.isWindowMemoryEnabled, let saved = savedData {
-                // [1순위] 창별 기억이 켜져 있고 기록이 있다면 무조건 우선 복원
                 targetLang = saved.lang
             } else if let appLang = appSpecificLang {
-                // [2순위] 창별 기억이 꺼져 있거나 첫 창인 경우, 앱별 지정 언어 강제 적용
                 targetLang = appLang
             }
             
-            // 4. 언어 전환 실행
             if let lang = targetLang {
                 DispatchQueue.main.async {
                     InputSourceManager.shared.switchLanguage(to: lang)
                 }
             }
             
-            // 5. 메모리 갱신 및 파괴 알림 등록
             let langToSave = targetLang ?? currentInputSource
             if !langToSave.isEmpty {
                 if self.windowLanguageMemory[windowID] == nil && self.windowLanguageMemory.count >= 500 {
@@ -205,9 +198,10 @@ class WindowMonitor {
         }
     }
     
+    // 🌟 [핵심 수정 1] 오류를 유발했던 중복 코드를 제거하고 깔끔하게 윈도우 메모리만 관리하도록 원복했습니다.
+    // (이유: 브라우저 탭 메모리는 사용자가 타이핑 중 언어를 바꾸더라도 탭을 이동할 때 매니저가 알아서 '마지막 언어'를 캡처하여 저장하기 때문입니다.)
     @objc private func inputSourceChanged() {
         let snapshot = SettingsManager.shared.snapshot
-        // 🌟 창별 기억이 꺼져 있더라도 앱별 설정을 위해 메모리를 추적하도록 가드(guard) 조건 완화
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
         
@@ -223,5 +217,20 @@ class WindowMonitor {
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return nil }
         return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+    }
+    
+    // 🌟 [핵심 수정 2] 창 제목 변경(탭 전환) 시 코어 엔진 호출
+    func handleWindowTitleChanged(element: AXUIElement) {
+        let snapshot = SettingsManager.shared.snapshot
+        guard snapshot.isBrowserTabMemoryEnabled else { return }
+
+        let pid = self.currentPID
+        if let app = NSRunningApplication(processIdentifier: pid),
+           let bundleID = app.bundleIdentifier,
+           let appName = app.localizedName {
+            
+            // 🔥 BrowserTabManager가 내부적으로 탭 전환 감지, 현재 상태 캡처, 새 상태 복원까지 모든 것을 비동기로 자동 수행합니다!
+            BrowserTabManager.shared.handleBrowserTabChanged(bundleID: bundleID, appName: appName)
+        }
     }
 }

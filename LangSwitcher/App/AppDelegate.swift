@@ -95,7 +95,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // 2. 앱 일시 정지 (Kill Switch)
         let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "")
-        // 🌟 .image 대신 .state 사용 (켜짐: .on / 꺼짐: .off)
         pauseItem.state = EventMonitor.shared.isPaused ? .on : .off
         menu.addItem(pauseItem)
 
@@ -113,6 +112,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let windowItem = NSMenuItem(title: String(localized: "Window Memory"), action: #selector(toggleWindowMemory), keyEquivalent: "")
         windowItem.state = snapshot.isWindowMemoryEnabled ? .on : .off
         menu.addItem(windowItem)
+        
+        // 🌟 [수정됨] 영어를 기본값으로 변경하고, 변수명 에러(statusMenu) 해결
+        let browserTabMenuItem = NSMenuItem(
+            title: String(localized: "Browser Tab Memory"),
+            action: #selector(toggleBrowserTabMemory(_:)),
+            keyEquivalent: ""
+        )
+        browserTabMenuItem.state = snapshot.isBrowserTabMemoryEnabled ? .on : .off
+        browserTabMenuItem.target = self
+        menu.addItem(browserTabMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -124,7 +133,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 : String(localized: "Add \(activeAppName) to Excluded Apps")
             
             let excludeItem = NSMenuItem(title: title, action: #selector(toggleExcludeCurrentApp), keyEquivalent: "")
-            // 추가할 땐 +, 제거할 땐 - 아이콘 표시
             excludeItem.image = NSImage(systemSymbolName: isExcluded ? "minus.circle" : "plus.circle", accessibilityDescription: nil)
             excludeItem.representedObject = ["id": activeAppID, "name": activeAppName]
             menu.addItem(excludeItem)
@@ -190,5 +198,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func quitApp() {
         NSApplication.shared.terminate(self)
+    }
+    
+    // MARK: - Menu Actions
+
+    @objc func toggleBrowserTabMemory(_ sender: NSMenuItem) {
+        let manager = SettingsManager.shared
+        let newState = !manager.isBrowserTabMemoryEnabled
+        manager.isBrowserTabMemoryEnabled = newState
+        
+        sender.state = newState ? .on : .off
+        
+        if newState {
+            // 1. 시스템에 기본 권한 팝업을 요청합니다.
+            AccessibilityManager.shared.checkAutomationPermissions(prompt: true)
+            
+            // 2. 🌟 [핵심 UX] 크롬이나 사파리 중 하나라도 권한이 없다면 커스텀 알림을 띄웁니다.
+            let acc = AccessibilityManager.shared
+            let needsPermission = !acc.isChromeAutomationTrusted || !acc.isSafariAutomationTrusted
+            
+            if needsPermission {
+                // 백그라운드 앱(Accessory)의 알림창이 다른 앱 뒤에 숨지 않도록 강제로 최상단으로 끌어올립니다.
+                NSApp.activate(ignoringOtherApps: true)
+                
+                let alert = NSAlert()
+                alert.messageText = String(localized: "Automation Permission Required")
+                alert.informativeText = String(localized: "To remember tab languages, LangSwitcher needs Automation permission for your browsers. Please enable it in System Settings, or check the 'Info & Support' tab.")
+                alert.addButton(withTitle: String(localized: "Open System Settings")) // 첫 번째 버튼 (Return)
+                alert.addButton(withTitle: String(localized: "OK")) // 두 번째 버튼 (Cancel)
+                
+                // 알림창 띄우기 및 버튼 클릭 결과 확인
+                if alert.runModal() == .alertFirstButtonReturn {
+                    // "설정 열기" 버튼을 누른 경우
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
+                }
+            }
+        }
     }
 }

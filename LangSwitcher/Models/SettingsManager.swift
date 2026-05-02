@@ -61,7 +61,11 @@ struct BackupData: Codable {
     let isExcludedAppsEnabled: Bool?
     let isAutoTypoCorrectionEnabled: Bool?
     let isEdgeGlowEnabled: Bool?
-    let isAutoTypoCorrectionOnEnterEnabled: Bool? // 🌟 [추가됨]
+    let isAutoTypoCorrectionOnEnterEnabled: Bool?
+    
+    // 🌟 [에러 수정됨] 중복 선언된 isBrowserTabMemoryEnabled 제거 및 Domain 옵션 유지
+    let isBrowserTabMemoryEnabled: Bool?
+    let isBrowserDomainModeEnabled: Bool?
 }
 
 struct SettingsSnapshot {
@@ -69,7 +73,6 @@ struct SettingsSnapshot {
     var ctrlLang = ""; var cmdLang = ""; var optLang = ""
     var showVisualFeedback = true; var isTestMode = false
     var toggleKeyCode: UInt16 = 0; var toggleModifierFlags: UInt64 = 0; var toggleDisplayString = ""
-    // 🌟 [추가됨] 오타 교정 범위(단어/문장) 상태를 스냅샷에 포함시킵니다.
     var isSentenceMode = false
     var customShortcuts: [CustomShortcut] = []
     var customApps: [CustomApp] = []
@@ -80,7 +83,6 @@ struct SettingsSnapshot {
     var isHyperKeyEnabled = false
     var isAppLaunchEnabled = true; var isCustomShortcutsEnabled = true
     var isExcludedAppsEnabled = true
-    // 🌟 [추가됨] 앱별 지정 기능 상태를 스냅샷에 포함시킵니다.
     var isAppSpecificEnabled = true
     var isWindowMemoryEnabled = false
     var isWindowMemoryCleanupEnabled = true
@@ -88,18 +90,17 @@ struct SettingsSnapshot {
     var isCloudSyncEnabled = false
     var isHapticFeedbackEnabled = false
     var isSoundFeedbackEnabled = false
-    // 🌟 [추가] 스마트 자동 오타 감지
     var isAutoTypoCorrectionEnabled = false
-    // 🌟 [추가] 노치 엣지 글로우 활성화 여부
     var isEdgeGlowEnabled = false
-    var isAutoTypoCorrectionOnEnterEnabled = false // 🌟 [추가됨]
+    var isAutoTypoCorrectionOnEnterEnabled = false
+    var isBrowserTabMemoryEnabled = false
+    var isBrowserDomainModeEnabled = false // 🌟 [에러 수정됨] 스냅샷에 변수 추가
 }
 
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     let currentSettingsVersion = "1.0.0"
     
-    // 🌟 iCloud 저장소 접근 객체
     private let icloudStore = NSUbiquitousKeyValueStore.default
     
     private let snapshotQueue = DispatchQueue(label: "com.peepworks.settings.snapshot", attributes: .concurrent)
@@ -115,6 +116,7 @@ class SettingsManager: ObservableObject {
             ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
             toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
+            isSentenceMode: isSentenceMode,
             customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts,
             excludedApps: excludedApps,
             isTypoCorrectionEnabled: isTypoCorrectionEnabled,
@@ -122,7 +124,6 @@ class SettingsManager: ObservableObject {
             isHyperKeyEnabled: isHyperKeyEnabled,
             isAppLaunchEnabled: isAppLaunchEnabled, isCustomShortcutsEnabled: isCustomShortcutsEnabled,
             isExcludedAppsEnabled: isExcludedAppsEnabled,
-            // 🌟 [추가됨] AppStorage의 값을 스냅샷으로 복사해 줍니다.
             isAppSpecificEnabled: isAppSpecificEnabled,
             isWindowMemoryEnabled: isWindowMemoryEnabled,
             isWindowMemoryCleanupEnabled: isWindowMemoryCleanupEnabled,
@@ -130,14 +131,15 @@ class SettingsManager: ObservableObject {
             isCloudSyncEnabled: isCloudSyncEnabled,
             isHapticFeedbackEnabled: isHapticFeedbackEnabled,
             isSoundFeedbackEnabled: isSoundFeedbackEnabled,
-            isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled, // 🌟 [추가]
-            isEdgeGlowEnabled: isEdgeGlowEnabled, // 🌟 [추가]
-            isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled // 🌟 [추가됨]
+            isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled,
+            isEdgeGlowEnabled: isEdgeGlowEnabled,
+            isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled,
+            isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
+            isBrowserDomainModeEnabled: isBrowserDomainModeEnabled // 🌟 [에러 수정됨] 스냅샷 생성 시 포함
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
 
-    // ✅ 수정된 코드: 동기화 관리를 위한 전용 큐와 안전한 프로퍼티 래퍼 적용
     private let syncQueue = DispatchQueue(label: "com.peepworks.langswitcher.sync")
     private var _isBatchUpdating = false
         
@@ -186,7 +188,6 @@ class SettingsManager: ObservableObject {
     @AppStorage("isWindowMemoryCleanupEnabled") var isWindowMemoryCleanupEnabled: Bool = true { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isCursorHUDEnabled") var isCursorHUDEnabled: Bool = true { didSet { updateSnapshot(); syncToCloud() } }
     
-    // 🌟 동기화 켜기/끄기 설정
     @AppStorage("isCloudSyncEnabled") var isCloudSyncEnabled: Bool = false {
         didSet {
             updateSnapshot()
@@ -197,7 +198,11 @@ class SettingsManager: ObservableObject {
     @AppStorage("isSoundFeedbackEnabled") var isSoundFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isAutoTypoCorrectionEnabled") var isAutoTypoCorrectionEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isEdgeGlowEnabled") var isEdgeGlowEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
-    @AppStorage("isAutoTypoCorrectionOnEnterEnabled") var isAutoTypoCorrectionOnEnterEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } } // 🌟 [추가됨]
+    @AppStorage("isAutoTypoCorrectionOnEnterEnabled") var isAutoTypoCorrectionOnEnterEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    
+    // 🌟 [에러 수정됨] 누락되었던 AppStorage 변수들을 명시적으로 선언합니다.
+    @AppStorage("isBrowserTabMemoryEnabled") var isBrowserTabMemoryEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isBrowserDomainModeEnabled") var isBrowserDomainModeEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     
     private init() {
         let d = UserDefaults.standard
@@ -221,7 +226,6 @@ class SettingsManager: ObservableObject {
         
         updateSnapshot()
         
-        // 🌟 iCloud 외부 변경 알림 구독 (다른 Mac에서 설정이 바뀌면 감지)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(icloudUpdateReceived(_:)),
@@ -231,14 +235,12 @@ class SettingsManager: ObservableObject {
         icloudStore.synchronize()
     }
     
-    // 🌟 다른 기기에서 설정이 변경되어 iCloud를 통해 전달받았을 때
     @objc private func icloudUpdateReceived(_ notification: Notification) {
         guard isCloudSyncEnabled else { return }
         
         DispatchQueue.main.async {
             self.isBatchUpdating = true
             
-            // 🌟 [핵심 방어 로직] defer를 사용하여 함수가 어떻게 종료되든 무조건 잠금을 풀도록 강제합니다.
             defer {
                 self.isBatchUpdating = false
                 self.saveAll()
@@ -260,11 +262,11 @@ class SettingsManager: ObservableObject {
             if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.excludedApps = dec }
             if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.customShortcuts = dec }
             
-            // defer 안에서 알아서 처리되므로 마지막에 있던 false 전환 코드는 삭제했습니다.
+            if let val = dict["isBrowserTabMemoryEnabled"] as? Bool { self.isBrowserTabMemoryEnabled = val }
+            if let val = dict["isBrowserDomainModeEnabled"] as? Bool { self.isBrowserDomainModeEnabled = val } // 🌟 [에러 수정됨] iCloud 수신
         }
     }
     
-    // 🌟 현재 기기의 설정을 iCloud로 밀어넣기
     func syncToCloud() {
         guard isCloudSyncEnabled, !isBatchUpdating else { return }
         
@@ -275,11 +277,12 @@ class SettingsManager: ObservableObject {
         icloudStore.set(isTypoCorrectionEnabled, forKey: "isTypoCorrectionEnabled")
         icloudStore.set(isHapticFeedbackEnabled, forKey: "isHapticFeedbackEnabled")
         icloudStore.set(isSoundFeedbackEnabled, forKey: "isSoundFeedbackEnabled")
-        icloudStore.set(isAutoTypoCorrectionEnabled, forKey: "isAutoTypoCorrectionEnabled") // 🌟 [추가]
-        // 🌟 [수정] 엣지 글로우도 클라우드에 저장하도록 추가합니다.
+        icloudStore.set(isAutoTypoCorrectionEnabled, forKey: "isAutoTypoCorrectionEnabled")
         icloudStore.set(isEdgeGlowEnabled, forKey: "isEdgeGlowEnabled")
-
-        icloudStore.set(isAutoTypoCorrectionOnEnterEnabled, forKey: "isAutoTypoCorrectionOnEnterEnabled") // 🌟 [추가됨]
+        icloudStore.set(isAutoTypoCorrectionOnEnterEnabled, forKey: "isAutoTypoCorrectionOnEnterEnabled")
+        
+        icloudStore.set(isBrowserTabMemoryEnabled, forKey: "isBrowserTabMemoryEnabled")
+        icloudStore.set(isBrowserDomainModeEnabled, forKey: "isBrowserDomainModeEnabled") // 🌟 [에러 수정됨] iCloud 전송
         
         if let e = try? JSONEncoder().encode(excludedApps) { icloudStore.set(e, forKey: "excludedApps") }
         if let e = try? JSONEncoder().encode(customShortcuts) { icloudStore.set(e, forKey: "customShortcuts") }
@@ -294,28 +297,21 @@ class SettingsManager: ObservableObject {
     
     private func saveAll() {
         let d = UserDefaults.standard
-        
-        // @AppStorage가 자동으로 처리하지 못하는 복잡한 배열(Array) 데이터들만 수동으로 인코딩하여 저장합니다.
         if let e = try? JSONEncoder().encode(customShortcuts) { d.set(e, forKey: "customShortcuts") }
         if let e = try? JSONEncoder().encode(customApps) { d.set(e, forKey: "customApps") }
         if let e = try? JSONEncoder().encode(appLaunchShortcuts) { d.set(e, forKey: "appLaunchShortcuts") }
         if let e = try? JSONEncoder().encode(excludedApps) { d.set(e, forKey: "excludedApps") }
-        
-        // 일반 변수(Bool, String, Int 등)는 @AppStorage가 자동 저장하므로 중복 코드를 제거했습니다.
     }
     
     func addLog(_ log: ActionLog) {
         DispatchQueue.main.async {
             self.recentLogs.insert(log, at: 0)
-            
             while self.recentLogs.count > 50 {
                 self.recentLogs.removeLast()
             }
         }
     }
     
-    // MARK: - 안전한 백업 & 복원 (File I/O 최적화 및 Swift 6 호환)
-
     func exportBackup(to url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
         do {
             let backup = BackupData(
@@ -331,27 +327,27 @@ class SettingsManager: ObservableObject {
                 typoDisplayString: typoDisplayString,
                 isSentenceMode: isSentenceMode,
                 isExcludedAppsEnabled: isExcludedAppsEnabled,
-                isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled, // 🌟 [수정] 이 줄이 빠져있었습니다!
+                isAutoTypoCorrectionEnabled: isAutoTypoCorrectionEnabled,
                 isEdgeGlowEnabled: isEdgeGlowEnabled,
-                isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled // 🌟 [추가됨]
+                isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled,
+                isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
+                isBrowserDomainModeEnabled: isBrowserDomainModeEnabled
             )
             
-            // 🌟 1. JSON 변환(초고속)은 메인 스레드에서 수행하여 Swift 6의 MainActor 에러를 해결합니다.
             let encoder = JSONEncoder()
             encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(backup)
             
-            // 🌟 2. 무거운 디스크 쓰기(File I/O)만 백그라운드로 보냅니다.
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try data.write(to: url)
-                    DispatchQueue.main.async { completion(true, nil) } // 성공
+                    DispatchQueue.main.async { completion(true, nil) }
                 } catch {
-                    DispatchQueue.main.async { completion(false, error) } // 실패
+                    DispatchQueue.main.async { completion(false, error) }
                 }
             }
         } catch {
-            completion(false, error) // 인코딩 실패 시
+            completion(false, error)
         }
     }
 
@@ -366,7 +362,6 @@ class SettingsManager: ObservableObject {
                         
                         self.isBatchUpdating = true
                         
-                        // 🌟 [핵심 방어 로직] 여기서도 복원 중 오류가 나더라도 무조건 잠금을 풀도록 보장합니다.
                         defer {
                             self.isBatchUpdating = false
                             self.saveAll()
@@ -392,11 +387,13 @@ class SettingsManager: ObservableObject {
                         self.isEdgeGlowEnabled = backup.isEdgeGlowEnabled ?? false
                         self.isAutoTypoCorrectionOnEnterEnabled = backup.isAutoTypoCorrectionOnEnterEnabled ?? false
                         
+                        self.isBrowserTabMemoryEnabled = backup.isBrowserTabMemoryEnabled ?? false
+                        self.isBrowserDomainModeEnabled = backup.isBrowserDomainModeEnabled ?? false
+                        
                         self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
                         
-                        completion(true, nil) // 복원 성공
+                        completion(true, nil)
                     } catch {
-                        // 에러가 나서 catch로 빠져도 defer가 발동하여 잠금이 안전하게 풀립니다!
                         completion(false, error)
                     }
                 }

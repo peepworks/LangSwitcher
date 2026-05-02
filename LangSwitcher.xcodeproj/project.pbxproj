@@ -24,6 +24,7 @@
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
 		129D74D42FA4329400227AD9 /* StatsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129D74D32FA4329100227AD9 /* StatsManager.swift */; };
+		12C6E7F02FA579AA004C7A0A /* BrowserTabManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */; };
 		12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */; };
 		12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */; };
 		12F080502F679423005A8424 /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12F0804F2F679423005A8424 /* ServiceManagement.framework */; };
@@ -53,6 +54,7 @@
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		129E052E2F657B6A00F34ABE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		129E05322F657E1600F34ABE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTabManager.swift; sourceTree = "<group>"; };
 		12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowMonitor.swift; sourceTree = "<group>"; };
 		12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDManager.swift; sourceTree = "<group>"; };
 		12F0804F2F679423005A8424 /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
@@ -94,6 +96,7 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */,
 				129D74D32FA4329100227AD9 /* StatsManager.swift */,
 				126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */,
 				12242E2C2F933CA300690095 /* TypoConverter.swift */,
@@ -285,6 +288,7 @@
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
 				12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */,
 				1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */,
+				12C6E7F02FA579AA004C7A0A /* BrowserTabManager.swift in Sources */,
 				1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */,
 				125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */,
 				125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */,

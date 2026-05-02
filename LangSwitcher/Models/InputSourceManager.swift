@@ -119,4 +119,26 @@ class InputSourceManager: ObservableObject {
             switchLanguage(to: availableKeyboards[0].id)
         }
     }
+    
+    // MARK: - Browser Tab Memory Helpers
+    
+    /// 현재 활성화된 키보드 입력 소스의 고유 ID(예: "com.apple.keylayout.ABC")를 반환합니다.
+    func currentInputSourceID() -> String {
+        let currentSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        if let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) {
+            return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+        }
+        return ""
+    }
+    
+    /// 주어진 고유 ID를 가진 입력 소스로 즉시 전환합니다.
+    func switchInputSource(to sourceID: String) {
+        let filter = [kTISPropertyInputSourceID as String: sourceID] as CFDictionary
+        // 필터 조건에 맞는 입력 소스 검색
+        guard let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
+              let source = list.first else { return }
+        
+        // 해당 입력 소스로 전환
+        TISSelectInputSource(source)
+    }
 }
