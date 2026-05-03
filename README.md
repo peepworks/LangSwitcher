@@ -37,6 +37,9 @@ LangSwitcher helps solve that by combining direct language switching, app-specif
 ## 🖼 Screenshots
 
 <p align="center">
+  <img src="images/screen_menu_v0.6.0.png" width="300" alt="LangSwitcher Settings">
+</p>
+<p align="center">
   <img src="images/screen_v0.6.0.png" width="500" alt="LangSwitcher Settings">
 </p>
 
@@ -131,6 +134,9 @@ LangSwitcher는 직접 언어 전환, 앱별 자동 규칙, 앱 실행 단축키
 
 ## 🖼 스크린샷
 
+<p align="center">
+  <img src="images/screen_menu_v0.6.0.png" width="300" alt="LangSwitcher 설정 화면">
+</p>
 <p align="center">
   <img src="images/screen_v0.6.0.png" width="500" alt="LangSwitcher 설정 화면">
 </p>
