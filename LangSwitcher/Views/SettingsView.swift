@@ -20,13 +20,14 @@ import SwiftUI
 
 enum SettingsTab: Hashable {
     case general
-    case advanced // 🌟 [추가됨] 고급 설정 탭
+    case advanced
     case customShortcuts
     case appSpecific
+    case domainRules // 🌟 [추가됨] 웹사이트별 키보드 탭
     case appLaunch
     case typoCorrection
     case excludedApps
-    case stats // 🌟 [추가됨]
+    case stats
     case about
 }
 
@@ -46,18 +47,22 @@ struct SettingsView: View {
                     Label(String(localized: "General"), systemImage: "gearshape")
                         .tag(SettingsTab.general)
                     
-                    // 🌟 [추가됨] 톱니바퀴 두 개 아이콘을 사용한 고급 메뉴
                     Label(String(localized: "Advanced"), systemImage: "gearshape.2")
                         .tag(SettingsTab.advanced)
                     
                     Label(String(localized: "Custom Shortcuts"), systemImage: "keyboard")
                         .tag(SettingsTab.customShortcuts)
+                        
                     Label(String(localized: "App-Specific Keyboards"), systemImage: "macwindow")
                         .tag(SettingsTab.appSpecific)
+                        
+                    // 🌟 [추가됨] 앱별 키보드 밑에 자연스럽게 배치
+                    Label(String(localized: "Website Keyboards"), systemImage: "globe")
+                        .tag(SettingsTab.domainRules)
+                        
                     Label(String(localized: "App Launch Shortcuts"), systemImage: "square.grid.2x2")
                         .tag(SettingsTab.appLaunch)
                     
-                    // 한국어 사용자일 때만 '한/영 오타 변환' 메뉴를 사이드바에 표시
                     if isKoreanUser {
                         Label(String(localized: "Typo Correction"), systemImage: "text.cursor")
                             .tag(SettingsTab.typoCorrection)
@@ -67,7 +72,6 @@ struct SettingsView: View {
                         .tag(SettingsTab.excludedApps)
                 }
                 Section(header: Text(String(localized: "System"))) {
-                    // 🌟 통계 탭 UI 추가
                     Label(String(localized: "Statistics"), systemImage: "chart.bar.xaxis")
                             .tag(SettingsTab.stats)
                     Label(String(localized: "About & Support"), systemImage: "info.circle")
@@ -79,14 +83,15 @@ struct SettingsView: View {
             Group {
                 switch selectedTab {
                 case .general: GeneralSettingsView()
-                case .advanced: AdvancedSettingsView() // 🌟 [추가됨] 선택 시 렌더링할 뷰
+                case .advanced: AdvancedSettingsView()
                 case .customShortcuts: CustomShortcutsSettingsView()
                 case .appSpecific: AppSpecificSettingsView()
+                case .domainRules: DomainRuleSettingsView() // 🌟 [추가됨] 선택 시 렌더링할 뷰 연결
                 case .appLaunch: AppLaunchSettingsView()
                 case .typoCorrection:
                     if isKoreanUser { TypoCorrectionSettingsView() }
                 case .excludedApps: ExcludedAppsSettingsView()
-                case .stats: StatsSettingsView() // 🌟 통계 뷰 렌더링 추가
+                case .stats: StatsSettingsView()
                 case .about: AboutSettingsView()
                 case nil: Text(String(localized: "Select a menu item.")).foregroundColor(.secondary)
                 }

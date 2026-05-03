@@ -63,9 +63,11 @@ struct BackupData: Codable {
     let isEdgeGlowEnabled: Bool?
     let isAutoTypoCorrectionOnEnterEnabled: Bool?
     
-    // 🌟 [에러 수정됨] 중복 선언된 isBrowserTabMemoryEnabled 제거 및 Domain 옵션 유지
     let isBrowserTabMemoryEnabled: Bool?
     let isBrowserDomainModeEnabled: Bool?
+    
+    // 🌟 [추가] 백업 시 도메인 규칙 포함
+    let domainRules: [DomainRule]?
 }
 
 struct SettingsSnapshot {
@@ -94,8 +96,11 @@ struct SettingsSnapshot {
     var isEdgeGlowEnabled = false
     var isAutoTypoCorrectionOnEnterEnabled = false
     var isBrowserTabMemoryEnabled = false
-    var isBrowserDomainModeEnabled = false // 🌟 [에러 수정됨] 스냅샷에 변수 추가
-    var newTabDefaultLanguage = "None" // 기본값은 '사용 안 함'
+    var isBrowserDomainModeEnabled = false
+    var newTabDefaultLanguage = "None"
+    
+    // 🌟 [추가] 스냅샷에 도메인 규칙 배열 포함
+    var domainRules: [DomainRule] = []
 }
 
 class SettingsManager: ObservableObject {
@@ -136,29 +141,25 @@ class SettingsManager: ObservableObject {
             isEdgeGlowEnabled: isEdgeGlowEnabled,
             isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled,
             isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
-            isBrowserDomainModeEnabled: isBrowserDomainModeEnabled, // 🌟 [에러 수정됨] 스냅샷 생성 시 포함
-            newTabDefaultLanguage: newTabDefaultLanguage
+            isBrowserDomainModeEnabled: isBrowserDomainModeEnabled,
+            newTabDefaultLanguage: newTabDefaultLanguage,
+            domainRules: domainRules // 🌟 [추가]
         )
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
 
-    // ✅ 수정 후: 데드락 위험이 없고 훨씬 가볍고 빠른 NSLock 방식
     private let batchUpdateLock = NSLock()
     private var _isBatchUpdating: Bool = false
 
     var isBatchUpdating: Bool {
         get {
             batchUpdateLock.lock()
-            // 🌟 자물쇠를 잠그자마자, "나갈 때 무조건 풀어라"고 예약합니다.
             defer { batchUpdateLock.unlock() }
-            
             return _isBatchUpdating
         }
         set {
             batchUpdateLock.lock()
-            // 🌟 값을 변경하는 setter에서도 마찬가지로 안전하게 예약합니다.
             defer { batchUpdateLock.unlock() }
-            
             _isBatchUpdating = newValue
         }
     }
@@ -181,6 +182,18 @@ class SettingsManager: ObservableObject {
     @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e); updateSnapshot(); syncToCloud() } } }
     @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e); updateSnapshot(); syncToCloud() } } }
     @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e); updateSnapshot(); syncToCloud() } } }
+    
+    // 🌟 [추가] 도메인 규칙 저장 및 DomainRuleManager 즉시 동기화
+    @Published var domainRules: [DomainRule] = [] {
+        didSet {
+            if let e = try? JSONEncoder().encode(domainRules) {
+                save("domainRules", e)
+                updateSnapshot()
+                syncToCloud()
+                DomainRuleManager.shared.rules = domainRules
+            }
+        }
+    }
     
     @Published var isTypoCorrectionEnabled: Bool { didSet { save("isTypoCorrectionEnabled", isTypoCorrectionEnabled); updateSnapshot(); syncToCloud() } }
     @Published var typoKeyCode: UInt16 { didSet { save("typoKeyCode", typoKeyCode); updateSnapshot() } }
@@ -215,7 +228,6 @@ class SettingsManager: ObservableObject {
     @AppStorage("isEdgeGlowEnabled") var isEdgeGlowEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isAutoTypoCorrectionOnEnterEnabled") var isAutoTypoCorrectionOnEnterEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     
-    // 🌟 [에러 수정됨] 누락되었던 AppStorage 변수들을 명시적으로 선언합니다.
     @AppStorage("isBrowserTabMemoryEnabled") var isBrowserTabMemoryEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isBrowserDomainModeEnabled") var isBrowserDomainModeEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("newTabDefaultLanguage") var newTabDefaultLanguage: String = "None" {
@@ -235,6 +247,12 @@ class SettingsManager: ObservableObject {
         if let data = d.data(forKey: "customApps"), let dec = try? JSONDecoder().decode([CustomApp].self, from: data) { customApps = dec }
         if let data = d.data(forKey: "appLaunchShortcuts"), let dec = try? JSONDecoder().decode([AppLaunchShortcut].self, from: data) { appLaunchShortcuts = dec }
         if let data = d.data(forKey: "excludedApps"), let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { excludedApps = dec }
+        
+        // 🌟 [추가] 초기화 시 도메인 규칙을 불러오고 엔진에 즉시 주입
+        if let data = d.data(forKey: "domainRules"), let dec = try? JSONDecoder().decode([DomainRule].self, from: data) {
+            domainRules = dec
+            DomainRuleManager.shared.rules = dec
+        }
         
         isTypoCorrectionEnabled = d.object(forKey: "isTypoCorrectionEnabled") as? Bool ?? false
         typoKeyCode = UInt16(d.integer(forKey: "typoKeyCode"))
@@ -280,8 +298,14 @@ class SettingsManager: ObservableObject {
             if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.excludedApps = dec }
             if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.customShortcuts = dec }
             
+            // 🌟 [추가] iCloud에서 도메인 규칙 수신 및 엔진 동기화
+            if let data = dict["domainRules"] as? Data, let dec = try? JSONDecoder().decode([DomainRule].self, from: data) {
+                self.domainRules = dec
+                DomainRuleManager.shared.rules = dec
+            }
+            
             if let val = dict["isBrowserTabMemoryEnabled"] as? Bool { self.isBrowserTabMemoryEnabled = val }
-            if let val = dict["isBrowserDomainModeEnabled"] as? Bool { self.isBrowserDomainModeEnabled = val } // 🌟 [에러 수정됨] iCloud 수신
+            if let val = dict["isBrowserDomainModeEnabled"] as? Bool { self.isBrowserDomainModeEnabled = val }
         }
     }
     
@@ -300,10 +324,13 @@ class SettingsManager: ObservableObject {
         icloudStore.set(isAutoTypoCorrectionOnEnterEnabled, forKey: "isAutoTypoCorrectionOnEnterEnabled")
         
         icloudStore.set(isBrowserTabMemoryEnabled, forKey: "isBrowserTabMemoryEnabled")
-        icloudStore.set(isBrowserDomainModeEnabled, forKey: "isBrowserDomainModeEnabled") // 🌟 [에러 수정됨] iCloud 전송
+        icloudStore.set(isBrowserDomainModeEnabled, forKey: "isBrowserDomainModeEnabled")
         
         if let e = try? JSONEncoder().encode(excludedApps) { icloudStore.set(e, forKey: "excludedApps") }
         if let e = try? JSONEncoder().encode(customShortcuts) { icloudStore.set(e, forKey: "customShortcuts") }
+        
+        // 🌟 [추가] iCloud에 도메인 규칙 업로드
+        if let e = try? JSONEncoder().encode(domainRules) { icloudStore.set(e, forKey: "domainRules") }
         
         icloudStore.synchronize()
     }
@@ -319,6 +346,9 @@ class SettingsManager: ObservableObject {
         if let e = try? JSONEncoder().encode(customApps) { d.set(e, forKey: "customApps") }
         if let e = try? JSONEncoder().encode(appLaunchShortcuts) { d.set(e, forKey: "appLaunchShortcuts") }
         if let e = try? JSONEncoder().encode(excludedApps) { d.set(e, forKey: "excludedApps") }
+        
+        // 🌟 [추가] 일괄 저장 시 도메인 규칙 포함
+        if let e = try? JSONEncoder().encode(domainRules) { d.set(e, forKey: "domainRules") }
     }
     
     func addLog(_ log: ActionLog) {
@@ -349,7 +379,8 @@ class SettingsManager: ObservableObject {
                 isEdgeGlowEnabled: isEdgeGlowEnabled,
                 isAutoTypoCorrectionOnEnterEnabled: isAutoTypoCorrectionOnEnterEnabled,
                 isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
-                isBrowserDomainModeEnabled: isBrowserDomainModeEnabled
+                isBrowserDomainModeEnabled: isBrowserDomainModeEnabled,
+                domainRules: domainRules // 🌟 [추가]
             )
             
             let encoder = JSONEncoder()
@@ -407,6 +438,10 @@ class SettingsManager: ObservableObject {
                         
                         self.isBrowserTabMemoryEnabled = backup.isBrowserTabMemoryEnabled ?? false
                         self.isBrowserDomainModeEnabled = backup.isBrowserDomainModeEnabled ?? false
+                        
+                        // 🌟 [추가] 백업에서 복원 시 도메인 규칙 적용 및 엔진 동기화
+                        self.domainRules = backup.domainRules ?? []
+                        DomainRuleManager.shared.rules = self.domainRules
                         
                         self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
                         

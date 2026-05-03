@@ -1,5 +1,5 @@
 //
-//  HyperKeyManager.swift
+//  BrowserTabManager.swift
 //  LangSwitcher
 //
 //  Copyright (C) 2026 peepboy
@@ -18,13 +18,11 @@
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
-
 import Cocoa
 import Foundation
 
 // MARK: - Data Models
 
-// 🌟 [수정됨] Swift 6 동시성 에러 방지를 위해 Sendable 프로토콜 추가
 struct TabContext: Codable, Sendable {
     let id: String?
     let url: String?
@@ -39,11 +37,10 @@ struct TabContext: Codable, Sendable {
 
 protocol BrowserAdapter {
     var supportedBundleIDs: [String] { get }
-    /// 브라우저에 AppleScript/JXA를 전송하여 현재 활성 탭의 정보를 비동기로 가져옵니다.
     func fetchActiveTabInfo(appName: String, completion: @escaping (TabContext?) -> Void)
 }
 
-// MARK: - Chromium Adapter (Chrome, Edge, Brave)
+// MARK: - Chromium Adapter
 
 class ChromiumAdapter: BrowserAdapter {
     let supportedBundleIDs = [
@@ -53,7 +50,6 @@ class ChromiumAdapter: BrowserAdapter {
     ]
     
     func fetchActiveTabInfo(appName: String, completion: @escaping (TabContext?) -> Void) {
-        // JXA (JavaScript for Automation)를 사용하여 크롬 계열 브라우저의 활성 탭 id와 url을 추출합니다.
         let script = """
         function run(argv) {
             try {
@@ -76,7 +72,6 @@ class SafariAdapter: BrowserAdapter {
     let supportedBundleIDs = ["com.apple.Safari"]
     
     func fetchActiveTabInfo(appName: String, completion: @escaping (TabContext?) -> Void) {
-        // Safari는 탭 고유 ID 추출이 제한적이므로 url을 우선적으로 추출합니다.
         let script = """
         function run(argv) {
             try {
@@ -93,9 +88,8 @@ class SafariAdapter: BrowserAdapter {
     }
 }
 
-// MARK: - JXA Helper (비동기 처리 핵심)
+// MARK: - JXA Helper
 
-/// 메인 스레드(UI)를 블로킹하지 않도록 백그라운드에서 별도의 프로세스로 JXA 스크립트를 실행합니다.
 private func executeJXA(script: String, completion: @escaping (TabContext?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
         let process = Process()
@@ -113,8 +107,6 @@ private func executeJXA(script: String, completion: @escaping (TabContext?) -> V
             if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                let jsonData = output.data(using: .utf8) {
                 
-                // 🌟 [핵심 수정] Swift 6 동시성 에러 해결
-                // 메인 스레드 영역(Main Actor)으로 디코딩 작업을 안전하게 넘깁니다.
                 DispatchQueue.main.async {
                     let context = try? JSONDecoder().decode(TabContext.self, from: jsonData)
                     completion(context)
@@ -130,27 +122,27 @@ private func executeJXA(script: String, completion: @escaping (TabContext?) -> V
 
 // MARK: - Core Manager
 
-// 🌟 [핵심] 이 클래스의 모든 동작은 메인 스레드에서 안전하게 실행됨을 보장합니다.
 @MainActor
 class BrowserTabManager {
     static let shared = BrowserTabManager()
         
     private var adapters: [String: BrowserAdapter] = [:]
         
-    // 🌟 무거운 accessQueue를 제거하고, 원래의 가장 단순하고 빠른 딕셔너리 형태로 돌아왔습니다.
     private var tabMemory: [String: String] = [:]
-    var currentKey: String? = nil
     
-    // 🌟 1. 디바운스를 위한 타이머(WorkItem) 변수 추가
+    // 🌟 [수정] 탭별로 마지막으로 검사/적용한 도메인을 기억합니다. (중복 검사 방지)
+    private var lastEvaluatedHostForTab: [String: String] = [:]
+    
+    var currentKey: String? = nil
     private var jxaWorkItem: DispatchWorkItem?
         
     func clearMemory() {
         tabMemory.removeAll()
+        lastEvaluatedHostForTab.removeAll()
         currentKey = nil
     }
     
     private init() {
-        // 어댑터 등록
         let chromium = ChromiumAdapter()
         for id in chromium.supportedBundleIDs { adapters[id] = chromium }
         
@@ -158,87 +150,98 @@ class BrowserTabManager {
         for id in safari.supportedBundleIDs { adapters[id] = safari }
     }
     
-    // 🌟 2. 디바운스가 적용된 새로운 진입점
     func handleBrowserTabChanged(bundleID: String, appName: String) {
-        guard SettingsManager.shared.isBrowserTabMemoryEnabled else { return }
+        guard SettingsManager.shared.isBrowserTabMemoryEnabled || SettingsManager.shared.isBrowserDomainModeEnabled else { return }
         guard let adapter = adapters[bundleID] else { return }
 
-        // 떠나기 전 현재 탭의 언어는 즉시 저장합니다. (저장은 가벼운 작업이므로 딜레이 불필요)
         saveCurrentContext()
                 
-        // [핵심] 0.1초 안에 탭이 또 바뀌어서 이 함수가 다시 불렸다면?
-        // 기존에 출발하려고 대기 중이던 JXA 작업을 취소(Cancel)해버립니다. (새치기 방지)
         jxaWorkItem?.cancel()
                 
-        // 새로운 작업을 생성합니다.
         let item = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            // 진짜 무거운 JXA 스크립트 실행은 이 안에서 진행됩니다.
             self.executeTabFetchAndRestore(bundleID: bundleID, appName: appName, adapter: adapter)
         }
 
-        // 타이머 변수에 덮어씌웁니다.
         jxaWorkItem = item
-
-        // 0.1초(100ms) 뒤에 예약된 작업을 실행합니다.
-        // 0.1초 안에 또 탭을 넘기면 위에서 cancel() 되므로 절대 중복 실행되지 않습니다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: item)
     }
         
-    // 🌟 3. 기존에 있던 JXA 호출 및 복원 로직을 별도의 함수로 분리합니다.
-    // 🌟 분리된 JXA 탭 정보 가져오기 및 언어 복원 로직
     private func executeTabFetchAndRestore(bundleID: String, appName: String, adapter: BrowserAdapter) {
         adapter.fetchActiveTabInfo(appName: appName) { [weak self] context in
             DispatchQueue.main.async {
                 guard let self = self, let context = context else { return }
                     
-                guard let newKey = self.generateKey(from: context, bundleID: bundleID) else { return }
+                // 🌟 1. 항상 탭 고유 식별자로 키를 생성합니다. (도메인 설정 무관)
+                guard let newKey = self.generateTabKey(from: context, bundleID: bundleID) else { return }
                 
-                // 🌟 [핵심 방어 로직] 탭은 그대로인데 타이틀만 바뀐 경우 (예: 새 탭에서 타이핑 중)
-                // 이미 해당 탭에 들어와 있으므로 언어를 강제로 다시 바꾸거나 복원할 필요가 없습니다.
-                if self.currentKey == newKey {
+                let isTabSwitched = (self.currentKey != newKey)
+                
+                // 🌟 [우선순위 1] 웹사이트별 키보드 자동 전환 (도메인 규칙)
+                if SettingsManager.shared.isBrowserDomainModeEnabled, let urlString = context.url, let host = context.host {
+                    
+                    let lastHost = self.lastEvaluatedHostForTab[newKey]
+                    
+                    // 호스트(도메인)가 바뀌었거나, 다른 탭으로 넘어왔을 때만 규칙 검사
+                    if lastHost != host || isTabSwitched {
+                        // 검사 완료 마킹
+                        self.lastEvaluatedHostForTab[newKey] = host
+                        
+                        if let matchedRule = DomainRuleManager.shared.findMatchingRule(for: urlString, browserBundleID: bundleID) {
+                            
+                            // 단, 다른 탭으로 넘어왔고 && 사용자가 이 탭에서 수동으로 언어를 바꾼 기억(tabMemory)이 있다면 덮어쓰지 않음
+                            let hasManualMemory = (self.tabMemory[newKey] != nil)
+                            if isTabSwitched && SettingsManager.shared.isBrowserTabMemoryEnabled && hasManualMemory {
+                                // 탭 메모리에 양보 (아래 우선순위 3에서 처리)
+                            } else {
+                                InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
+                                self.currentKey = newKey
+                                self.tabMemory[newKey] = matchedRule.targetInputSourceID
+                                return // 규칙을 적용했으면 종료
+                            }
+                        }
+                    }
+                }
+                    
+                // 완전히 동일한 탭이고 주소도 안 바뀌었으면 종료
+                if !isTabSwitched {
                     return
                 }
                     
-                // 🌟 완전히 새로운 탭(다른 탭)으로 이동한 경우
+                // 🌟 [우선순위 2] 새 탭(특수 URL) 검사
                 if self.isNewTab(context: context) {
                     let defaultLang = SettingsManager.shared.newTabDefaultLanguage
                     if defaultLang != "None" && !defaultLang.isEmpty {
                         InputSourceManager.shared.switchLanguage(to: defaultLang)
-                        
-                        // 🚨 수정됨: currentKey를 nil로 날려버리지 않고, 현재 탭의 키를 정상적으로 기억하게 만듭니다.
                         self.currentKey = newKey
-                        // 메모리에도 새 탭의 언어를 명시적으로 저장해 둡니다.
                         self.tabMemory[newKey] = defaultLang
                         return
                     }
                 }
                     
-                // 🌟 일반적인 기존 탭 이동 시의 언어 복원 로직
+                // 🌟 [우선순위 3] 일반적인 탭 메모리 복원
                 self.currentKey = newKey
-                self.restoreContext(for: newKey)
+                if SettingsManager.shared.isBrowserTabMemoryEnabled {
+                    self.restoreContext(for: newKey)
+                }
             }
         }
     }
     
-    // 🌟 브라우저별 새 탭 주소 패턴 감지
     private func isNewTab(context: TabContext) -> Bool {
-        // 비교를 위해 URL을 모두 소문자로 변환합니다.
         guard let url = context.url?.lowercased() else { return true }
             
-        // 주요 브라우저의 새 탭 특수 주소들
         let newTabPatterns = [
             "chrome://newtab",
             "edge://newtab",
             "brave://newtab",
             "about:blank",
-            "favorites://",                 // Safari: 즐겨찾기 시작 페이지
-            "topsites://",                  // Safari: 과거 버전의 탑 사이트
-            "safari-resource://topsites",   // 🌟 [추가됨] Safari: 최신 버전의 탑 사이트 명시적 지정 (소문자)
-            "safari-resource://"            // Safari: 기타 모든 내부 리소스 포괄
+            "favorites://",
+            "topsites://",
+            "safari-resource://topsites",
+            "safari-resource://"
         ]
             
-        // URL이 비어있거나 위 패턴으로 시작하면 새 탭으로 간주
         return url.isEmpty || newTabPatterns.contains { url.starts(with: $0) }
     }
     
@@ -250,28 +253,19 @@ class BrowserTabManager {
     private func saveCurrentContext() {
         guard let key = currentKey else { return }
         let currentSource = InputSourceManager.shared.currentInputSourceID()
-        
-        // 🌟 헬퍼 메서드 대신 아주 직관적인 원래 코드로 복구
         tabMemory[key] = currentSource
     }
     
     private func restoreContext(for key: String) {
         if let savedSourceID = tabMemory[key] {
-            // 🌟 이미 @MainActor 덕분에 메인 스레드임이 보장되므로 DispatchQueue.main.async를 한 번 더 씌울 필요가 없습니다.
             InputSourceManager.shared.switchLanguage(to: savedSourceID)
         }
     }
     
-    private func generateKey(from context: TabContext, bundleID: String) -> String? {
-        let isDomainMode = SettingsManager.shared.isBrowserDomainModeEnabled
-        
-        if isDomainMode {
-            guard let host = context.host else { return nil }
-            return "\(bundleID)_\(host)"
-        } else {
-            if let id = context.id { return "\(bundleID)_tab_\(id)" }
-            if let url = context.url { return "\(bundleID)_url_\(url)" }
-            return nil
-        }
+    // 🌟 치명적 버그 수정: 도메인 설정과 상관없이 무조건 탭 고유 식별자로 키를 만듭니다.
+    private func generateTabKey(from context: TabContext, bundleID: String) -> String? {
+        if let id = context.id { return "\(bundleID)_tab_\(id)" }
+        if let url = context.url { return "\(bundleID)_url_\(url)" }
+        return nil
     }
 }
