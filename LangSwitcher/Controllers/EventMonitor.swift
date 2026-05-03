@@ -383,6 +383,34 @@ class EventMonitor {
 
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                 let snapshot = SettingsManager.shared.snapshot
+                
+                // 🌟 [여기에 추가해 주세요!] 글로벌 단축키 (⌃⌥⌘ + S) 감지 로직
+                // 🌟 글로벌 단축키 (⌃⌥⌘ + S) 감지 로직
+                if type == .keyDown {
+                    let flags = event.flags
+                    let isCommand = flags.contains(.maskCommand)
+                    let isOption = flags.contains(.maskAlternate)
+                    let isControl = flags.contains(.maskControl)
+                    let isShift = flags.contains(.maskShift)
+                    
+                    // 🚨 위에서 만든 변수들을 여기서 반드시 사용해야 경고가 사라집니다!
+                    if isCommand && isOption && isControl && !isShift && keyCode == 1 {
+                        DispatchQueue.main.async {
+                            let currentState = EventMonitor.shared.isPaused
+                            let newState = !currentState
+                            EventMonitor.shared.isPaused = newState
+                            
+                            let statusMessage = newState ? String(localized: "LangSwitcher Paused") : String(localized: "LangSwitcher Resumed")
+                            HUDManager.shared.showHUD(languageName: statusMessage)
+                            
+                            #if DEBUG
+                            print("LangSwitcher 일시 정지 상태 토글: \(newState)")
+                            #endif
+                        }
+                        return nil
+                    }
+                }
+                // 🌟 [추가 끝]
 
                 if snapshot.isHyperKeyEnabled {
                     let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)

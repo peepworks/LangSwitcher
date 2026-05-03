@@ -94,7 +94,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // 2. 앱 일시 정지 (Kill Switch)
-        let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "")
+        // 🌟 1. keyEquivalent를 빈칸("")에서 "s"로 변경합니다.
+        let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "s")
+        
+        // 🌟 2. 어떤 수식키가 필요한지 지정해 줍니다. (⌃⌥⌘)
+        pauseItem.keyEquivalentModifierMask = [.control, .option, .command]
+        
         pauseItem.state = EventMonitor.shared.isPaused ? .on : .off
         menu.addItem(pauseItem)
 

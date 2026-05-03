@@ -186,21 +186,35 @@ class BrowserTabManager {
     }
         
     // 🌟 3. 기존에 있던 JXA 호출 및 복원 로직을 별도의 함수로 분리합니다.
+    // 🌟 분리된 JXA 탭 정보 가져오기 및 언어 복원 로직
     private func executeTabFetchAndRestore(bundleID: String, appName: String, adapter: BrowserAdapter) {
         adapter.fetchActiveTabInfo(appName: appName) { [weak self] context in
             DispatchQueue.main.async {
                 guard let self = self, let context = context else { return }
                     
+                guard let newKey = self.generateKey(from: context, bundleID: bundleID) else { return }
+                
+                // 🌟 [핵심 방어 로직] 탭은 그대로인데 타이틀만 바뀐 경우 (예: 새 탭에서 타이핑 중)
+                // 이미 해당 탭에 들어와 있으므로 언어를 강제로 다시 바꾸거나 복원할 필요가 없습니다.
+                if self.currentKey == newKey {
+                    return
+                }
+                    
+                // 🌟 완전히 새로운 탭(다른 탭)으로 이동한 경우
                 if self.isNewTab(context: context) {
                     let defaultLang = SettingsManager.shared.newTabDefaultLanguage
                     if defaultLang != "None" && !defaultLang.isEmpty {
                         InputSourceManager.shared.switchLanguage(to: defaultLang)
-                        self.currentKey = nil
+                        
+                        // 🚨 수정됨: currentKey를 nil로 날려버리지 않고, 현재 탭의 키를 정상적으로 기억하게 만듭니다.
+                        self.currentKey = newKey
+                        // 메모리에도 새 탭의 언어를 명시적으로 저장해 둡니다.
+                        self.tabMemory[newKey] = defaultLang
                         return
                     }
                 }
-                        
-                guard let newKey = self.generateKey(from: context, bundleID: bundleID) else { return }
+                    
+                // 🌟 일반적인 기존 탭 이동 시의 언어 복원 로직
                 self.currentKey = newKey
                 self.restoreContext(for: newKey)
             }
