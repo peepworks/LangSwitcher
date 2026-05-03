@@ -143,8 +143,11 @@ class WindowMonitor {
     
     func handleWindowFocusChanged(element: AXUIElement) {
         let snapshot = SettingsManager.shared.snapshot
+                
+        // 1. 둘 다 꺼져있으면 아예 실행하지 않고 조기 종료
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
-        
+                
+        // 2. 먼저 변수들을 안전하게 추출합니다. (순서가 매우 중요합니다!)
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
         
@@ -152,37 +155,48 @@ class WindowMonitor {
         let currentInputSource = self.getCurrentInputSourceID() ?? ""
         let pid = self.currentPID
         
+        // 3. 상태 변경은 반드시 stateQueue 안에서 처리합니다.
         stateQueue.async(flags: .barrier) {
-            var appSpecificLang: String? = nil
-            if snapshot.isAppSpecificEnabled,
-               let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }),
-               !customApp.targetLanguage.isEmpty {
-                appSpecificLang = customApp.targetLanguage
-            }
-            
-            let savedData = self.windowLanguageMemory[windowID]
             var targetLang: String? = nil
+            let savedData = self.windowLanguageMemory[windowID]
             
-            if snapshot.isWindowMemoryEnabled, let saved = savedData {
-                targetLang = saved.lang
-            } else if let appLang = appSpecificLang {
-                targetLang = appLang
+            // 🌟 [핵심 수정] 기능별로 우선순위를 정하고, 독립적으로 체크합니다.
+            
+            // 우선순위 1: 창(Window) 단위 기억이 켜져 있을 때
+            if snapshot.isWindowMemoryEnabled {
+                if let saved = savedData {
+                    targetLang = saved.lang
+                }
             }
             
+            // 우선순위 2: 앱(App) 단위 설정이 켜져 있고, 앞선 창 단위 데이터가 없을 때
+            if targetLang == nil && snapshot.isAppSpecificEnabled {
+                if let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }),
+                   !customApp.targetLanguage.isEmpty {
+                    targetLang = customApp.targetLanguage
+                }
+            }
+            
+            // 4. 최종적으로 찾은 언어가 있다면 메인 스레드에서 언어 전환 실행
             if let lang = targetLang {
                 DispatchQueue.main.async {
                     InputSourceManager.shared.switchLanguage(to: lang)
                 }
             }
             
+            // 5. 메모리에 현재 언어 상태 저장 및 옵저버 등록 로직 (기존 코드 완벽 유지)
             let langToSave = targetLang ?? currentInputSource
             if !langToSave.isEmpty {
+                // 용량 제한 관리 (500개)
                 if self.windowLanguageMemory[windowID] == nil && self.windowLanguageMemory.count >= 500 {
-                    self.windowLanguageMemory.removeValue(forKey: self.windowLanguageMemory.keys.first!)
+                    if let firstKey = self.windowLanguageMemory.keys.first {
+                        self.windowLanguageMemory.removeValue(forKey: firstKey)
+                    }
                 }
                 
                 self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
                 
+                // 새 창일 경우 파괴 이벤트 옵저버 등록
                 if savedData == nil, let observer = self.axObserver {
                     let refcon = Unmanaged.passUnretained(self).toOpaque()
                     AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)

@@ -142,12 +142,25 @@ class SettingsManager: ObservableObject {
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
 
-    private let syncQueue = DispatchQueue(label: "com.peepworks.langswitcher.sync")
-    private var _isBatchUpdating = false
-        
+    // ✅ 수정 후: 데드락 위험이 없고 훨씬 가볍고 빠른 NSLock 방식
+    private let batchUpdateLock = NSLock()
+    private var _isBatchUpdating: Bool = false
+
     var isBatchUpdating: Bool {
-        get { syncQueue.sync { _isBatchUpdating } }
-        set { syncQueue.sync { self._isBatchUpdating = newValue } }
+        get {
+            batchUpdateLock.lock()
+            // 🌟 자물쇠를 잠그자마자, "나갈 때 무조건 풀어라"고 예약합니다.
+            defer { batchUpdateLock.unlock() }
+            
+            return _isBatchUpdating
+        }
+        set {
+            batchUpdateLock.lock()
+            // 🌟 값을 변경하는 setter에서도 마찬가지로 안전하게 예약합니다.
+            defer { batchUpdateLock.unlock() }
+            
+            _isBatchUpdating = newValue
+        }
     }
     
     @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); updateSnapshot(); syncToCloud() } }

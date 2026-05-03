@@ -102,7 +102,7 @@ class EdgeGlowManager {
         
         // 🌟 [최적화] SwiftUI의 onAppear를 대체하여, 창 자체가 서서히 나타나게 만듭니다. (깜빡임 방지)
         window.alphaValue = 0.0
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2

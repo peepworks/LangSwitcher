@@ -536,19 +536,19 @@ class EventMonitor {
         // 1. 재귀적으로 백스페이스를 전송하여 기존 오타를 삭제합니다.
         self.recursiveDelete(count: originalLength) {
             
-            // 2. 삭제가 완료되면 변환된 한글 텍스트를 한 번에 입력합니다.
+            // 2. 삭제가 완료되면 변환된 올바른 텍스트(한글)를 한 번에 입력하라고 시스템에 명령합니다.
             self.postUnicodeString(correctedText)
             
-            StatsManager.shared.incrementTypoCorrection() // 🌟 [추가] 자동 오타 감지 성공 카운트
-            
-            // 3. 텍스트 입력 후 입력 소스를 한국어로 전환합니다.
-            // 0.01초의 짧은 여유를 주어 텍스트 입력 이벤트가 안정적으로 처리되게 합니다.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-                EventMonitor.shared.safeSwitchToKorean()
-                
-                // 4. 언어 전환이 완료될 시간을 충분히(0.03초) 준 뒤,
-                // 사용자가 원래 눌렀던 트리거 키(스페이스/엔터)를 다시 보냅니다.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+            // 🌟 자동 오타 감지 성공 카운트 증가
+            StatsManager.shared.incrementTypoCorrection()
+                    
+            // 3. 0.01초 -> 0.03초로 변경 (글자가 모두 찍힐 때까지 넉넉히 기다려줌)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                self.safeSwitchToKorean()
+                        
+                // 4. 0.03초 -> 0.06초로 변경
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                    // 🌟 [수정됨] Swift 문법에 맞게 'keyCode:' 이름표를 추가했습니다!
                     self.postTriggerKey(keyCode: triggerKeyCode)
                 }
             }

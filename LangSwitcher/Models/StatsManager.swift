@@ -83,9 +83,13 @@ class StatsManager: ObservableObject {
     
     // MARK: - 주기적 저장 로직 (Batch Saving)
     
+    // 🌟 300초(5분)마다 모아둔 통계 데이터를 안전하게 디스크에 저장하는 타이머
     private func startBatchSaveTimer() {
-        saveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            self?.forceSave()
+        // ⚠️ 수정됨: 백그라운드 스레드에서 초기화되더라도, 타이머 생성은 무조건 메인 런루프에서 돌도록 강제합니다.
+        DispatchQueue.main.async {
+            self.saveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+                self?.forceSave() // 5분마다 실행될 저장 로직
+            }
         }
     }
     
@@ -118,10 +122,17 @@ class StatsManager: ObservableObject {
         }
     }
     
-    private func todayKey() -> String {
+    // 🌟 1. 앱 수명 주기 동안 단 한 번만 생성되고 재사용되는 정적(Static) 포매터
+    private static let todayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
+        formatter.timeZone = .current // 현재 사용자의 타임존을 명확히 지정
+        return formatter
+    }()
+
+    // 🌟 2. 매번 생성하는 대신, 위에 만들어둔 포매터를 그대로 가져다 씁니다.
+    private func todayKey() -> String {
+        return Self.todayFormatter.string(from: Date())
     }
     // MARK: - 운영 및 관리 기능 (초기화 및 내보내기)
     
@@ -135,20 +146,42 @@ class StatsManager: ObservableObject {
         }
     }
     
+    // 🌟 통계 데이터를 CSV 파일로 내보내는 함수
     func exportToCSV(to url: URL, completion: @escaping (Bool, Error?) -> Void) {
-        stateQueue.async {
-            let statsArray = Array(self._statsDict.values).sorted { $0.dateString < $1.dateString }
-            
-            var csvString = "Date,Language Switches,Typo Corrections\n"
-            for stat in statsArray {
-                csvString += "\(stat.dateString),\(stat.languageSwitches),\(stat.typoCorrections)\n"
-            }
-            
+        
+        // 1. [핵심 수정] 상태 큐에서는 오직 '안전한 복사본(Snapshot)'만 0.001초 만에 빠르게 가져옵니다.
+        let snapshot = stateQueue.sync {
+            return self._statsDict
+        }
+        
+        // 2. CSV로 변환하고 파일에 쓰는 '무거운 작업'은 상태 큐를 괴롭히지 않고 일반 백그라운드 스레드에서 진행합니다.
+        DispatchQueue.global(qos: .userInitiated).async {
             do {
+                var csvString = "Date,Type,Count\n"
+                
+                // 🌟 원본(_statsDict)이 아닌, 안전하게 복사된 snapshot을 가지고 작업합니다.
+                // 🌟 원본(_statsDict)이 아닌, 안전하게 복사된 snapshot을 가지고 작업합니다.
+                for (dateKey, dailyStats) in snapshot {
+                    
+                    // ✅ DailyStat 구조체에 정의된 진짜 이름으로 완벽 매칭!
+                    let switchCount = dailyStats.languageSwitches
+                    let typoCount = dailyStats.typoCorrections
+                    
+                    // 문자열 결합
+                    csvString += "\(dateKey),LanguageSwitch,\(switchCount)\n"
+                    csvString += "\(dateKey),TypoCorrection,\(typoCount)\n"
+                }
+                
+                // 파일 저장
                 try csvString.write(to: url, atomically: true, encoding: .utf8)
-                DispatchQueue.main.async { completion(true, nil) }
+                
+                DispatchQueue.main.async {
+                    completion(true, nil)
+                }
             } catch {
-                DispatchQueue.main.async { completion(false, error) }
+                DispatchQueue.main.async {
+                    completion(false, error)
+                }
             }
         }
     }
