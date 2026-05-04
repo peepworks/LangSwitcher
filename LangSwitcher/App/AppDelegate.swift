@@ -18,7 +18,7 @@
 
 import Cocoa
 import SwiftUI
-import Carbon // TIS API 사용을 위해 추가
+import Carbon
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
@@ -77,27 +77,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             currentLang = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
         }
 
-        // 1. 현재 입력 소스 (지구본 아이콘)
+        // 1. 현재 입력 소스
         let langItem = NSMenuItem(title: "\(String(localized: "Language")): \(currentLang)", action: #selector(toggleLanguage), keyEquivalent: "")
         langItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         menu.addItem(langItem)
         
         menu.addItem(NSMenuItem.separator())
 
-        // 2. 앱 일시 정지 및 기억 비우기 (글로벌 단축키 세트)
-        // 🌟 [수정됨] 체크마크(state)를 없애고 아이콘을 적용하여 하단의 휴지통 아이콘과 텍스트 줄맞춤을 완벽하게 맞춥니다.
+        // 2. 앱 일시 정지 (🌟 요청하신 대로 아이콘을 제거하고 '체크 표시' 방식으로 복구)
         let isPaused = EventMonitor.shared.isPaused
-        let pauseTitle = isPaused ? String(localized: "Resume LangSwitcher") : String(localized: "Pause LangSwitcher")
-        let pauseItem = NSMenuItem(title: pauseTitle, action: #selector(togglePause), keyEquivalent: "s")
+        let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "s")
         pauseItem.keyEquivalentModifierMask = [.control, .option, .command]
-        pauseItem.image = NSImage(systemSymbolName: isPaused ? "play.circle" : "pause.circle", accessibilityDescription: nil)
+        pauseItem.state = isPaused ? .on : .off // 일시 정지 상태일 때 체크 표시가 나타납니다.
         menu.addItem(pauseItem)
-
-        // 앱 기억 초기화 메뉴 (단축키: ⌃⌥⌘ + C)
-        let clearCacheItem = NSMenuItem(title: String(localized: "Clear App Memory"), action: #selector(clearAppMemory), keyEquivalent: "c")
-        clearCacheItem.keyEquivalentModifierMask = [.control, .option, .command]
-        clearCacheItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
-        menu.addItem(clearCacheItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -114,11 +106,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowItem.state = snapshot.isWindowMemoryEnabled ? .on : .off
         menu.addItem(windowItem)
         
-        let browserTabMenuItem = NSMenuItem(
-            title: String(localized: "Browser Tab Memory"),
-            action: #selector(toggleBrowserTabMemory(_:)),
-            keyEquivalent: ""
-        )
+        let browserTabMenuItem = NSMenuItem(title: String(localized: "Browser Tab Memory"), action: #selector(toggleBrowserTabMemory(_:)), keyEquivalent: "")
         browserTabMenuItem.state = snapshot.isBrowserTabMemoryEnabled ? .on : .off
         browserTabMenuItem.target = self
         menu.addItem(browserTabMenuItem)
@@ -140,7 +128,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(NSMenuItem.separator())
         }
 
-        // 5. 시스템 메뉴
+        // 5. 시스템 메뉴 (🌟 요청하신 대로 '앱 기록 초기화'를 환경설정 바로 위로 이동)
+        let clearCacheItem = NSMenuItem(title: String(localized: "Clear App Memory"), action: #selector(clearAppMemory), keyEquivalent: "c")
+        clearCacheItem.keyEquivalentModifierMask = [.control, .option, .command]
+        clearCacheItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+        menu.addItem(clearCacheItem)
+        
+
         let settingsItem = NSMenuItem(title: String(localized: "Settings..."), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         menu.addItem(settingsItem)
@@ -153,9 +147,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Actions
 
     @objc func toggleLanguage() { InputSourceManager.shared.switchToNextInputSource() }
-    @objc func togglePause() { EventMonitor.shared.isPaused.toggle() }
-    @objc func clearAppMemory() { SettingsManager.shared.clearAllAppCaches() }
     
+    // 🌟 [수정됨] 메인 스레드 강제 할당 및 상태 업데이트 동기화
+    @objc func togglePause() {
+        DispatchQueue.main.async {
+            let currentState = EventMonitor.shared.isPaused
+            let newState = !currentState
+            EventMonitor.shared.isPaused = newState
+            
+            // 상태값 텍스트 생성
+            let statusMessage = newState ? String(localized: "LangSwitcher Paused") : String(localized: "LangSwitcher Resumed")
+            
+            // HUD 호출
+            HUDManager.shared.showHUD(languageName: statusMessage)
+            
+            #if DEBUG
+            print("메뉴바 클릭: LangSwitcher 일시 정지 상태 -> \(newState)")
+            #endif
+        }
+    }
+    
+    @objc func clearAppMemory() { SettingsManager.shared.clearAllAppCaches() }
     @objc func toggleTypo() { SettingsManager.shared.isTypoCorrectionEnabled.toggle() }
     @objc func toggleHyper() { SettingsManager.shared.isHyperKeyEnabled.toggle() }
     @objc func toggleWindowMemory() { SettingsManager.shared.isWindowMemoryEnabled.toggle() }
@@ -181,14 +193,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let contentView = SettingsView()
-
-        // 🌟 [수정됨] 설정 창의 기본 크기를 대폭 늘려 스크롤바가 생기지 않도록 방지합니다.
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 850), // height 720 -> 850
+            contentRect: NSRect(x: 0, y: 0, width: 750, height: 850),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
 
-        window.minSize = NSSize(width: 700, height: 750) // 최소 높이 방어선 상향
+        window.minSize = NSSize(width: 700, height: 750)
         window.center()
         window.title = String(localized: "LangSwitcher Settings")
         window.contentView = NSHostingView(rootView: contentView)
@@ -203,30 +213,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApplication.shared.terminate(self)
     }
     
-    // MARK: - Menu Actions
-
     @objc func toggleBrowserTabMemory(_ sender: NSMenuItem) {
         let manager = SettingsManager.shared
         let newState = !manager.isBrowserTabMemoryEnabled
         manager.isBrowserTabMemoryEnabled = newState
-        
         sender.state = newState ? .on : .off
         
         if newState {
             AccessibilityManager.shared.checkAutomationPermissions(prompt: true)
-            
             let acc = AccessibilityManager.shared
-            let needsPermission = !acc.isChromeAutomationTrusted || !acc.isSafariAutomationTrusted
-            
-            if needsPermission {
+            if !acc.isChromeAutomationTrusted || !acc.isSafariAutomationTrusted {
                 NSApp.activate(ignoringOtherApps: true)
-                
                 let alert = NSAlert()
                 alert.messageText = String(localized: "Automation Permission Required")
                 alert.informativeText = String(localized: "To remember tab languages, LangSwitcher needs Automation permission for your browsers. Please enable it in System Settings, or check the 'Info & Support' tab.")
                 alert.addButton(withTitle: String(localized: "Open System Settings"))
                 alert.addButton(withTitle: String(localized: "OK"))
-                
                 if alert.runModal() == .alertFirstButtonReturn {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
                 }
