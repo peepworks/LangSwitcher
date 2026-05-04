@@ -21,10 +21,16 @@ import AppKit
 class TypoConverter {
     static let shared = TypoConverter()
     
-    // 🌟 lazy var의 스레드 불안정성을 피하기 위해 상수(let)로 변경하여 완벽한 스레드 안전성 보장
+    // lazy var의 스레드 불안정성을 피하기 위해 상수(let)로 변경하여 완벽한 스레드 안전성 보장
     private let eventSource: CGEventSource? = CGEventSource(stateID: .combinedSessionState)
     
-    // MARK: - 🌟 [새로 추가됨] 스마트 자동 오타 감지용 엔진
+    // 타이밍 충돌을 막아줄 튼튼한 자물쇠 (진행 상태 플래그)
+    private var isConvertingInProgress = false
+    
+    // 클립보드 원본 백업용 변수
+    private var savedClipboardString: String?
+    
+    // MARK: - 스마트 자동 오타 감지용 엔진
     /// 영문 입력을 분석하여 완벽한 한국어 패턴(자음+모음 조합)이면 변환된 텍스트를 반환, 아니면 nil 반환
     func detectAndConvert(englishInput: String) -> String? {
         // 1. 최소 2글자 이상일 때만 분석
@@ -62,66 +68,76 @@ class TypoConverter {
 
     // MARK: - 기존 수동 단축키 오타 교정
     func executeCorrection() {
-        // 🌟 [핵심 수정 1] UI 관련 로직은 반드시 메인 스레드에서 실행
+        // 1. 이미 작업 중이라면 사용자가 연타해도 무시하고 돌려보냅니다.
+        guard !isConvertingInProgress else { return }
+        isConvertingInProgress = true
+            
         DispatchQueue.main.async {
+            // 원본 클립보드 백업
+            self.backupClipboard()
+                
             let localPB = NSPasteboard.general
             let initialCount = localPB.changeCount
-            let oldString = localPB.string(forType: .string)
-
-            // 1. 설정에 따라 블록 지정 시뮬레이션
-            if SettingsManager.shared.snapshot.isSentenceMode {
-                self.simulateKey(keyCode: 123, modifiers: [.maskCommand, .maskShift]) // Cmd + Shift + Left
-            } else {
-                self.simulateKey(keyCode: 123, modifiers: [.maskAlternate, .maskShift]) // Opt + Shift + Left
-            }
-
-            // 2. 블록 지정이 완료될 시간을 위해 아주 짧게 대기 후 복사 실행
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                self.simulateKey(keyCode: 8, modifiers: [.maskCommand]) // Cmd + C
-
-                // 🌟 [핵심 수정 2] 무거운 타이머 폴링(반복 확인)을 제거하고, 0.12초 뒤 딱 한 번만 깔끔하게 확인합니다.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            
+            // Cmd+C 이벤트 발생 (8은 'C' 키코드)
+            self.postKeyEvent(keyCode: 8, useCommand: true)
+                
+            // 0.1초 뒤에 클립보드 확인
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // 2. 복사 실패 시 안전하게 복구하고 자물쇠를 풉니다.
+                guard localPB.changeCount != initialCount,
+                        let selectedText = localPB.string(forType: .string),
+                        !selectedText.isEmpty
+                else {
+                    self.safeRestoreAndUnlock()
+                    return
+                }
                     
-                    // 클립보드 복구 헬퍼 함수
-                    func restoreClipboard() {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                            if let old = oldString {
-                                localPB.clearContents()
-                                localPB.setString(old, forType: .string)
-                            } else {
-                                localPB.clearContents()
-                            }
-                        }
-                    }
-
-                    // 3. 복사가 안 되었거나(변화 없음) 텍스트가 비어있으면 복구 후 종료
-                    guard localPB.changeCount != initialCount,
-                          let selectedText = localPB.string(forType: .string), !selectedText.isEmpty else {
-                        restoreClipboard()
-                        return
-                    }
-
-                    // 4. 한/영 판단 및 변환 실행
-                    let isEnglish = selectedText.contains { $0.isASCII && $0.isLetter }
-                    let convertedText = isEnglish ? self.convertToKo(selectedText) : self.convertToEn(selectedText)
-
-                    // 5. 변환할 내용이 동일하면 무시
-                    if selectedText == convertedText {
-                        restoreClipboard()
-                        return
-                    }
-
-                    // 6. 변환된 텍스트 붙여넣기
-                    localPB.clearContents()
-                    localPB.setString(convertedText, forType: .string)
-                    self.simulateKey(keyCode: 9, modifiers: [.maskCommand]) // Cmd + V
+                // 한영 변환 수행
+                let convertedText = self.convertString(selectedText)
                     
-                    StatsManager.shared.incrementTypoCorrection() // 🌟 [추가] 수동 오타 교정 성공 카운트
+                // 변환된 텍스트를 클립보드에 넣고 Cmd+V (9는 'V' 키코드)
+                localPB.clearContents()
+                localPB.setString(convertedText, forType: .string)
+                self.postKeyEvent(keyCode: 9, useCommand: true)
                     
-                    restoreClipboard()
+                // 3. 붙여넣기가 완료될 때까지 충분히(0.6초) 기다렸다가 클립보드를 복구하고 자물쇠를 풉니다.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    self.safeRestoreAndUnlock()
                 }
             }
         }
+    }
+        
+    // 클립보드 복구와 자물쇠 해제를 동시에 안전하게 처리하는 통합 함수
+    private func safeRestoreAndUnlock() {
+        restoreClipboard()
+        self.isConvertingInProgress = false
+    }
+
+    // MARK: - 클립보드 및 키보드 헬퍼 함수
+    private func backupClipboard() {
+        self.savedClipboardString = NSPasteboard.general.string(forType: .string)
+    }
+    
+    private func restoreClipboard() {
+        if let saved = savedClipboardString {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(saved, forType: .string)
+        }
+    }
+    
+    private func postKeyEvent(keyCode: CGKeyCode, useCommand: Bool) {
+        let flags: CGEventFlags = useCommand ? .maskCommand : []
+        simulateKey(keyCode: keyCode, modifiers: flags)
+    }
+    
+    // 텍스트 내 한글 포함 여부에 따라 변환 방향 결정
+    private func convertString(_ text: String) -> String {
+        let hasKorean = text.unicodeScalars.contains {
+            ($0.value >= 0xAC00 && $0.value <= 0xD7A3) || ($0.value >= 0x3130 && $0.value <= 0x318F)
+        }
+        return hasKorean ? convertToEn(text) : convertToKo(text)
     }
 
     // MARK: - 한/영 변환 오토마타 로직

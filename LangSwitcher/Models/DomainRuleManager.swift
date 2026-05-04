@@ -60,7 +60,7 @@ class DomainRuleManager {
         guard let currentHost = Self.normalize(urlOrDomain: urlString) else { return nil }
         
         // 2. 활성화된 규칙만 필터링
-        let activeRules = rules.filter { $0.isEnabled }
+        let activeRules = SettingsManager.shared.snapshot.domainRules.filter { $0.isEnabled }
         
         for rule in activeRules {
             // 브라우저 제한이 걸려있는데 현재 브라우저와 다르면 패스

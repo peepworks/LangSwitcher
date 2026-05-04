@@ -1,7 +1,5 @@
 //
-//  HyperKeyManager.swift
 //  LangSwitcher
-//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -32,20 +30,22 @@ class HyperKeyManager {
 
     private let f19KeyCode: CGKeyCode = 80
     private let hyperKeyCodes: [CGKeyCode] = [55, 58, 59, 56]
+    
+    // 🌟 [추가됨] Caps Lock 디바운스를 위한 WorkItem 저장 변수
+    private var capsLockWorkItem: DispatchWorkItem?
 
     private init() {}
 
     func updateState(isEnabled: Bool) {
         setupHardwareMapping(enable: isEnabled)
         
-        // 🌟 외부(UI 스레드)에서 상태를 변경할 때도 안전하게 잠금 처리
+        // 외부(UI 스레드)에서 상태를 변경할 때도 안전하게 잠금 처리
         stateLock.lock()
         if !isEnabled { isHyperDown = false }
         stateLock.unlock()
     }
 
-    // 🌟 [리뷰 반영] 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
-    // 🌟 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
+    // 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
     private func setupHardwareMapping(enable: Bool) {
         DispatchQueue.global(qos: .userInitiated).async {
             let task = Process()
@@ -59,10 +59,8 @@ class HyperKeyManager {
 
             do {
                 try task.run()
-                // 백그라운드 스레드에서 대기하므로 메인 UI 스위치 애니메이션은 버벅거리지 않습니다.
                 task.waitUntilExit()
                     
-                // 🌟 [리뷰 반영] 성공적으로 실행되었는지 확인하기 위해 종료 코드를 체크할 수도 있습니다.
                 if task.terminationStatus != 0 {
                     let errorMessage = "hidutil exited with code: \(task.terminationStatus)"
                     SettingsManager.shared.addLog(ActionLog(
@@ -71,13 +69,12 @@ class HyperKeyManager {
                         appliedRule: "Hyper Key Mapping",
                         finalInputSource: "Failed",
                         result: .failure,
-                        failureReason: .unknown // 또는 permissionIssue 등
+                        failureReason: .unknown
                     ))
                     print("hidutil 실행 실패: \(errorMessage)")
                 }
                     
             } catch {
-                // 🌟 [리뷰 반영] 완전히 실행조차 못 했을 경우 명시적으로 ActionLog를 남깁니다.
                 SettingsManager.shared.addLog(ActionLog(
                     timestamp: Date(),
                     targetApp: "System",
@@ -93,9 +90,15 @@ class HyperKeyManager {
 
     private func postHyperModifiers(isDown: Bool) {
         guard let eventSource = CGEventSource(stateID: .hidSystemState) else { return }
+        
+        // 🌟 [수정됨] 불필요한 플래그(fn, caps lock 등)가 섞이지 않도록,
+        // 하이퍼 키를 구성하는 정확히 4개의 모디파이어만 조합하여 안전한 플래그 세트를 만듭니다.
+        let hyperFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+        
         for keyCode in hyperKeyCodes {
             if let event = CGEvent(keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: isDown) {
-                event.flags = isDown ? CGEventFlags(rawValue: UInt64(NSEvent.ModifierFlags.deviceIndependentFlagsMask.rawValue)) : []
+                // 🌟 [수정됨] 뭉뚱그려진 deviceIndependentFlagsMask 대신 정확한 hyperFlags를 주입합니다.
+                event.flags = isDown ? hyperFlags : []
                 event.setIntegerValueField(.eventSourceUserData, value: 9999)
                 event.post(tap: .cghidEventTap)
             }
@@ -109,15 +112,14 @@ class HyperKeyManager {
     }
 
     func processEvent(type: CGEventType, event: CGEvent, keyCode: CGKeyCode) -> Bool {
-        // 🌟 시스템에 이벤트를 전송(Side-Effect)할 동작들을 임시 저장할 변수들
         var shouldBlock = false
         var shouldPostDown = false
         var shouldPostUp = false
         var shouldHandleTap = false
-        var shouldToggleCapsLock = false // 🌟 [추가됨] 대/소문자 전환 플래그
+        var shouldToggleCapsLock = false
         var modifiedFlags: CGEventFlags? = nil
 
-        // 🌟 1단계: 자물쇠를 잠그고 내부 상태(State)만 안전하게 평가 및 수정합니다.
+        // 1단계: 자물쇠를 잠그고 내부 상태(State)만 안전하게 평가 및 수정합니다.
         stateLock.lock()
         
         if keyCode == f19KeyCode {
@@ -126,19 +128,19 @@ class HyperKeyManager {
                     isHyperDown = true
                     tapStartTime = Date()
                     isUsedAsModifier = false
-                    shouldPostDown = true // 나중에 실행할 예약
+                    shouldPostDown = true
                 }
                 shouldBlock = true
             } else if type == .keyUp {
                 isHyperDown = false
-                shouldPostUp = true // 나중에 실행할 예약
+                shouldPostUp = true
                 
                 if let startTime = tapStartTime, !isUsedAsModifier {
                     let duration = Date().timeIntervalSince(startTime)
                     if duration < 0.3 {
-                        shouldHandleTap = true // 나중에 실행할 예약
+                        shouldHandleTap = true
                     } else {
-                        shouldToggleCapsLock = true // 🌟 0.3초 이상: 대/소문자 전환(Caps Lock)
+                        shouldToggleCapsLock = true // 0.3초 이상: 대/소문자 전환(Caps Lock)
                     }
                 }
                 shouldBlock = true
@@ -149,29 +151,45 @@ class HyperKeyManager {
             if type == .keyDown { isUsedAsModifier = true }
             var flags = event.flags
             flags.insert([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-            modifiedFlags = flags // 나중에 플래그 교체할 예약
+            modifiedFlags = flags
         }
         
         stateLock.unlock()
         // 🔓 자물쇠 해제 완료
 
-        // 🌟 2단계: 자물쇠가 풀린 안전한 상태에서 시스템 관련 동작(Side-Effect)을 실행합니다. (데드락 방지)
+        // 2단계: 자물쇠가 풀린 안전한 상태에서 시스템 관련 동작을 실행합니다.
         if shouldPostDown { postHyperModifiers(isDown: true) }
         if shouldPostUp { postHyperModifiers(isDown: false) }
         if shouldHandleTap { handleTap() }
-        if shouldToggleCapsLock { toggleNativeCapsLock() } // 🌟 [추가됨] 대/소문자 전환 실행
+        if shouldToggleCapsLock { toggleNativeCapsLock() } // 대/소문자 전환 실행
         if let newFlags = modifiedFlags { event.flags = newFlags }
 
         return shouldBlock
     }
-    // 🌟 [수정된 메서드] 시스템 IOKit을 활용해 물리적인 Caps Lock 하드웨어 상태(LED 포함)를 강제로 전환합니다.
+    
+    // 🌟 [수정됨] 디바운스 적용: 빠른 연타 시 이전 작업을 취소하고 마지막 1번만 실행합니다.
     private func toggleNativeCapsLock() {
-        // 1. 현재 macOS 시스템의 Caps Lock 상태를 정확한 API로 읽어옵니다. (.maskAlphaShift가 Caps Lock을 의미)
+        // 1. 이전에 예약된 작업이 있다면 취소 (연타 방지)
+        capsLockWorkItem?.cancel()
+        
+        // 2. 실행할 작업 정의
+        let item = DispatchWorkItem { [weak self] in
+            self?.executeCapsLockToggle()
+        }
+        
+        // 3. 작업 저장 (다음 연타 시 취소할 수 있도록)
+        capsLockWorkItem = item
+        
+        // 4. 0.05초(50ms) 대기 후 백그라운드 스레드에서 실행
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05, execute: item)
+    }
+
+    // 🌟 [추가됨] 실제 JXA 스크립트를 실행하는 로직 분리
+    private func executeCapsLockToggle() {
         let currentFlags = CGEventSource.flagsState(.hidSystemState)
         let currentState = currentFlags.contains(.maskAlphaShift)
         let newState = !currentState
 
-        // 2. IOKit의 IOHIDSetModifierLockState API를 직접 호출하기 위한 JXA 스크립트
         let script = """
         ObjC.import('IOKit');
         var ioConnect = Ref();
@@ -185,17 +203,14 @@ class HyperKeyManager {
         $.IOServiceClose(ioConnect);
         """
 
-        // 3. 이벤트 탭(Event Tap) 스레드 블로킹을 방지하기 위해 백그라운드에서 비동기로 실행
-        DispatchQueue.global(qos: .userInitiated).async {
-            let task = Process()
-            task.launchPath = "/usr/bin/osascript"
-            task.arguments = ["-l", "JavaScript", "-e", script]
-            do {
-                try task.run()
-                task.waitUntilExit()
-            } catch {
-                print("Caps Lock toggle failed: \(error)")
-            }
+        let task = Process()
+        task.launchPath = "/usr/bin/osascript"
+        task.arguments = ["-l", "JavaScript", "-e", script]
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            print("Caps Lock toggle failed: \(error)")
         }
     }
 }

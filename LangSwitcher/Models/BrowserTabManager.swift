@@ -1,7 +1,5 @@
 //
-//  BrowserTabManager.swift
 //  LangSwitcher
-//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -128,18 +126,29 @@ class BrowserTabManager {
         
     private var adapters: [String: BrowserAdapter] = [:]
         
+    // 🌟 탭 메모리 관련 변수들
     private var tabMemory: [String: String] = [:]
-    
-    // 🌟 [수정] 탭별로 마지막으로 검사/적용한 도메인을 기억합니다. (중복 검사 방지)
     private var lastEvaluatedHostForTab: [String: String] = [:]
+    
+    // 🌟 [수정됨] Array(O(n))를 버리고, 초고속 O(1) Dictionary와 Tick 카운터를 도입
+    private var tabAccessTicks: [String: Int] = [:]
+    private var currentTick: Int = 0
+    private let maxTabMemoryLimit = 100
     
     var currentKey: String? = nil
     private var jxaWorkItem: DispatchWorkItem?
+    
+    private var fetchGeneration: Int = 0
         
     func clearMemory() {
         tabMemory.removeAll()
         lastEvaluatedHostForTab.removeAll()
+        // 🌟 수정된 변수 초기화
+        tabAccessTicks.removeAll()
+        currentTick = 0
+        
         currentKey = nil
+        fetchGeneration = 0
     }
     
     private init() {
@@ -157,58 +166,53 @@ class BrowserTabManager {
         saveCurrentContext()
                 
         jxaWorkItem?.cancel()
+        
+        fetchGeneration += 1
+        let currentGeneration = fetchGeneration
                 
         let item = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            self.executeTabFetchAndRestore(bundleID: bundleID, appName: appName, adapter: adapter)
+            self.executeTabFetchAndRestore(bundleID: bundleID, appName: appName, adapter: adapter, generation: currentGeneration)
         }
 
         jxaWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: item)
     }
         
-    private func executeTabFetchAndRestore(bundleID: String, appName: String, adapter: BrowserAdapter) {
+    private func executeTabFetchAndRestore(bundleID: String, appName: String, adapter: BrowserAdapter, generation: Int) {
         adapter.fetchActiveTabInfo(appName: appName) { [weak self] context in
             DispatchQueue.main.async {
-                guard let self = self, let context = context else { return }
+                guard let self = self, self.fetchGeneration == generation, let context = context else { return }
                     
-                // 🌟 1. 항상 탭 고유 식별자로 키를 생성합니다. (도메인 설정 무관)
                 guard let newKey = self.generateTabKey(from: context, bundleID: bundleID) else { return }
+                
+                // 🌟 [추가됨] 이 탭에 접근했으므로 LRU 캐시 갱신
+                self.touchTabMemory(key: newKey)
                 
                 let isTabSwitched = (self.currentKey != newKey)
                 
-                // 🌟 [우선순위 1] 웹사이트별 키보드 자동 전환 (도메인 규칙)
                 if SettingsManager.shared.isBrowserDomainModeEnabled, let urlString = context.url, let host = context.host {
-                    
                     let lastHost = self.lastEvaluatedHostForTab[newKey]
                     
-                    // 호스트(도메인)가 바뀌었거나, 다른 탭으로 넘어왔을 때만 규칙 검사
                     if lastHost != host || isTabSwitched {
-                        // 검사 완료 마킹
                         self.lastEvaluatedHostForTab[newKey] = host
                         
                         if let matchedRule = DomainRuleManager.shared.findMatchingRule(for: urlString, browserBundleID: bundleID) {
-                            
-                            // 단, 다른 탭으로 넘어왔고 && 사용자가 이 탭에서 수동으로 언어를 바꾼 기억(tabMemory)이 있다면 덮어쓰지 않음
                             let hasManualMemory = (self.tabMemory[newKey] != nil)
                             if isTabSwitched && SettingsManager.shared.isBrowserTabMemoryEnabled && hasManualMemory {
-                                // 탭 메모리에 양보 (아래 우선순위 3에서 처리)
+                                // 탭 메모리에 양보
                             } else {
                                 InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
                                 self.currentKey = newKey
                                 self.tabMemory[newKey] = matchedRule.targetInputSourceID
-                                return // 규칙을 적용했으면 종료
+                                return
                             }
                         }
                     }
                 }
                     
-                // 완전히 동일한 탭이고 주소도 안 바뀌었으면 종료
-                if !isTabSwitched {
-                    return
-                }
+                if !isTabSwitched { return }
                     
-                // 🌟 [우선순위 2] 새 탭(특수 URL) 검사
                 if self.isNewTab(context: context) {
                     let defaultLang = SettingsManager.shared.newTabDefaultLanguage
                     if defaultLang != "None" && !defaultLang.isEmpty {
@@ -219,11 +223,28 @@ class BrowserTabManager {
                     }
                 }
                     
-                // 🌟 [우선순위 3] 일반적인 탭 메모리 복원
                 self.currentKey = newKey
                 if SettingsManager.shared.isBrowserTabMemoryEnabled {
                     self.restoreContext(for: newKey)
                 }
+            }
+        }
+    }
+    
+    // 🌟 [추가됨] LRU 캐시 업데이트 로직 (가장 최근에 본 탭을 위로 올리고, 100개가 넘으면 오래된 탭을 삭제)
+    // 🌟 [수정됨] O(n) 선형 탐색을 제거한 초고속 LRU 캐시 갱신
+    private func touchTabMemory(key: String) {
+        // 1. 배열을 뒤질 필요 없이, O(1) 속도로 해당 탭에 최신 번호표(Tick)를 부여합니다.
+        currentTick += 1
+        tabAccessTicks[key] = currentTick
+        
+        // 2. 100개가 넘었을 때만 가장 오래된(번호표가 가장 작은) 탭을 찾아 삭제합니다.
+        if tabAccessTicks.count > maxTabMemoryLimit {
+            if let oldest = tabAccessTicks.min(by: { $0.value < $1.value }) {
+                let oldestKey = oldest.key
+                tabMemory.removeValue(forKey: oldestKey)
+                lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
+                tabAccessTicks.removeValue(forKey: oldestKey)
             }
         }
     }
@@ -254,6 +275,8 @@ class BrowserTabManager {
         guard let key = currentKey else { return }
         let currentSource = InputSourceManager.shared.currentInputSourceID()
         tabMemory[key] = currentSource
+        // 🌟 저장할 때도 접근한 것이므로 LRU 갱신
+        touchTabMemory(key: key)
     }
     
     private func restoreContext(for key: String) {
@@ -262,7 +285,6 @@ class BrowserTabManager {
         }
     }
     
-    // 🌟 치명적 버그 수정: 도메인 설정과 상관없이 무조건 탭 고유 식별자로 키를 만듭니다.
     private func generateTabKey(from context: TabContext, bundleID: String) -> String? {
         if let id = context.id { return "\(bundleID)_tab_\(id)" }
         if let url = context.url { return "\(bundleID)_url_\(url)" }

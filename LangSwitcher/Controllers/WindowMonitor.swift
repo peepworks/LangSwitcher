@@ -119,7 +119,6 @@ class WindowMonitor {
                 let refcon = Unmanaged.passUnretained(self).toOpaque()
                 
                 AXObserverAddNotification(newObserver, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
-                // 🌟 브라우저 탭 전환을 감지하기 위한 Title Changed 이벤트 구독
                 AXObserverAddNotification(newObserver, appRef, kAXTitleChangedNotification as CFString, refcon)
                 
                 let currentRL = CFRunLoopGetCurrent()
@@ -134,60 +133,54 @@ class WindowMonitor {
         
         if result == .success, let windowRef = focusedWindow {
             if CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
-                self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
+                let element = windowRef as! AXUIElement
+                self.handleWindowFocusChanged(element: element)
             } else {
-                print("⚠️ [WindowMonitor] Expected AXUIElement but got a different CFType.")
+                print("Invalid window reference format.")
             }
         }
     }
     
     func handleWindowFocusChanged(element: AXUIElement) {
         let snapshot = SettingsManager.shared.snapshot
-                
-        // 1. 둘 다 꺼져있으면 아예 실행하지 않고 조기 종료
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
                 
-        // 2. 먼저 변수들을 안전하게 추출합니다. (순서가 매우 중요합니다!)
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
         
-        let currentAppID = AppMonitor.shared.activeAppBundleID
-        let currentInputSource = self.getCurrentInputSourceID() ?? ""
+        // 🌟 [핵심 수정] TIS API와 App ID는 반드시 메인 스레드(현재 컨텍스트)에서 미리 안전하게 읽어 캡처합니다.
+        let latestAppID = AppMonitor.shared.activeAppBundleID
+        let latestInputSource = self.getCurrentInputSourceID() ?? ""
         let pid = self.currentPID
         
-        // 3. 상태 변경은 반드시 stateQueue 안에서 처리합니다.
-        stateQueue.async(flags: .barrier) {
+        // 🌟 캡처된 값을 배리어 클로저 내부로 전달하여 스레드 충돌 없이 딕셔너리에만 안전하게 씁니다.
+        stateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            
             var targetLang: String? = nil
             let savedData = self.windowLanguageMemory[windowID]
             
-            // 🌟 [핵심 수정] 기능별로 우선순위를 정하고, 독립적으로 체크합니다.
-            
-            // 우선순위 1: 창(Window) 단위 기억이 켜져 있을 때
             if snapshot.isWindowMemoryEnabled {
                 if let saved = savedData {
                     targetLang = saved.lang
                 }
             }
             
-            // 우선순위 2: 앱(App) 단위 설정이 켜져 있고, 앞선 창 단위 데이터가 없을 때
             if targetLang == nil && snapshot.isAppSpecificEnabled {
-                if let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == currentAppID }),
+                if let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID }),
                    !customApp.targetLanguage.isEmpty {
                     targetLang = customApp.targetLanguage
                 }
             }
             
-            // 4. 최종적으로 찾은 언어가 있다면 메인 스레드에서 언어 전환 실행
             if let lang = targetLang {
                 DispatchQueue.main.async {
                     InputSourceManager.shared.switchLanguage(to: lang)
                 }
             }
             
-            // 5. 메모리에 현재 언어 상태 저장 및 옵저버 등록 로직 (기존 코드 완벽 유지)
-            let langToSave = targetLang ?? currentInputSource
+            let langToSave = targetLang ?? latestInputSource
             if !langToSave.isEmpty {
-                // 용량 제한 관리 (500개)
                 if self.windowLanguageMemory[windowID] == nil && self.windowLanguageMemory.count >= 500 {
                     if let firstKey = self.windowLanguageMemory.keys.first {
                         self.windowLanguageMemory.removeValue(forKey: firstKey)
@@ -196,7 +189,6 @@ class WindowMonitor {
                 
                 self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
                 
-                // 새 창일 경우 파괴 이벤트 옵저버 등록
                 if savedData == nil, let observer = self.axObserver {
                     let refcon = Unmanaged.passUnretained(self).toOpaque()
                     AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)
@@ -212,28 +204,29 @@ class WindowMonitor {
         }
     }
     
-    // 🌟 [핵심 수정 1] 오류를 유발했던 중복 코드를 제거하고 깔끔하게 윈도우 메모리만 관리하도록 원복했습니다.
-    // (이유: 브라우저 탭 메모리는 사용자가 타이핑 중 언어를 바꾸더라도 탭을 이동할 때 매니저가 알아서 '마지막 언어'를 캡처하여 저장하기 때문입니다.)
     @objc private func inputSourceChanged() {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled else { return }
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
         
         let pid = self.currentPID
-        if let currentID = self.getCurrentInputSourceID() {
-            stateQueue.async(flags: .barrier) {
-                self.windowLanguageMemory[windowID] = (lang: currentID, pid: pid)
+        
+        // 🌟 [핵심 수정] 여기서도 TIS API는 메인 스레드에서 미리 호출하여 안전하게 캡처합니다.
+        if let latestID = self.getCurrentInputSourceID() {
+            stateQueue.async(flags: .barrier) { [weak self] in
+                guard let self = self else { return }
+                self.windowLanguageMemory[windowID] = (lang: latestID, pid: pid)
             }
         }
     }
     
+    // ⚠️ 주의: 이 함수는 반드시 메인 스레드 또는 메인 런루프와 연결된 컨텍스트에서만 호출되어야 합니다. (Carbon 제약)
     private func getCurrentInputSourceID() -> String? {
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return nil }
         return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
     }
     
-    // 🌟 [핵심 수정 2] 창 제목 변경(탭 전환) 시 코어 엔진 호출
     func handleWindowTitleChanged(element: AXUIElement) {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isBrowserTabMemoryEnabled else { return }
@@ -243,7 +236,6 @@ class WindowMonitor {
            let bundleID = app.bundleIdentifier,
            let appName = app.localizedName {
             
-            // 🔥 BrowserTabManager가 내부적으로 탭 전환 감지, 현재 상태 캡처, 새 상태 복원까지 모든 것을 비동기로 자동 수행합니다!
             BrowserTabManager.shared.handleBrowserTabChanged(bundleID: bundleID, appName: appName)
         }
     }

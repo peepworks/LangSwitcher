@@ -384,8 +384,7 @@ class EventMonitor {
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                 let snapshot = SettingsManager.shared.snapshot
                 
-                // 🌟 [여기에 추가해 주세요!] 글로벌 단축키 (⌃⌥⌘ + S) 감지 로직
-                // 🌟 글로벌 단축키 (⌃⌥⌘ + S) 감지 로직
+                // 글로벌 단축키 (⌃⌥⌘ + S) 감지 로직
                 if type == .keyDown {
                     let flags = event.flags
                     let isCommand = flags.contains(.maskCommand)
@@ -393,7 +392,6 @@ class EventMonitor {
                     let isControl = flags.contains(.maskControl)
                     let isShift = flags.contains(.maskShift)
                     
-                    // 🚨 위에서 만든 변수들을 여기서 반드시 사용해야 경고가 사라집니다!
                     if isCommand && isOption && isControl && !isShift && keyCode == 1 {
                         DispatchQueue.main.async {
                             let currentState = EventMonitor.shared.isPaused
@@ -410,7 +408,6 @@ class EventMonitor {
                         return nil
                     }
                 }
-                // 🌟 [추가 끝]
 
                 if snapshot.isHyperKeyEnabled {
                     let shouldBlock = HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode)
@@ -540,11 +537,11 @@ class EventMonitor {
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
         } else {
             if isToggle { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource()
-                StatsManager.shared.incrementLanguageSwitch() // 🌟 [추가]
+                StatsManager.shared.incrementLanguageSwitch()
             } }
             else if let bundleID = targetAppID { launchApp(bundleID: bundleID) }
             else if let lang = targetLang { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchLanguage(to: lang)
-                StatsManager.shared.incrementLanguageSwitch() // 🌟 [추가]
+                StatsManager.shared.incrementLanguageSwitch()
             } }
         }
     }
@@ -558,25 +555,22 @@ class EventMonitor {
         }
     }
     
-    // MARK: - 🌟 [Non-blocking] 비동기 오타 교정 로직
+    // MARK: - [Non-blocking] 비동기 오타 교정 로직
     
     private func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
-        // 1. 재귀적으로 백스페이스를 전송하여 기존 오타를 삭제합니다.
-        self.recursiveDelete(count: originalLength) {
+        // 시간에 의존하지 않고, 삭제가 완벽히 끝났다는 콜백을 받으면 다음 단계를 실행합니다.
+        self.recursiveDelete(count: originalLength) { [weak self] in
+            guard let self = self else { return }
             
-            // 2. 삭제가 완료되면 변환된 올바른 텍스트(한글)를 한 번에 입력하라고 시스템에 명령합니다.
+            // 1. [바통 터치] 삭제가 완전히 끝남! 이제 안전하게 새 텍스트를 붙여넣습니다.
             self.postUnicodeString(correctedText)
             
-            // 🌟 자동 오타 감지 성공 카운트 증가
-            StatsManager.shared.incrementTypoCorrection()
-                    
-            // 3. 0.01초 -> 0.03초로 변경 (글자가 모두 찍힐 때까지 넉넉히 기다려줌)
+            // 2. 텍스트 입력 후, 언어 전환 및 트리거 키 입력 로직을 순차적으로 실행
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
                 self.safeSwitchToKorean()
-                        
-                // 4. 0.03초 -> 0.06초로 변경
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                    // 🌟 [수정됨] Swift 문법에 맞게 'keyCode:' 이름표를 추가했습니다!
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                    // 🌟 [수정됨] 누락되었던 파라미터를 정상적으로 전달합니다.
                     self.postTriggerKey(keyCode: triggerKeyCode)
                 }
             }
@@ -586,25 +580,28 @@ class EventMonitor {
     // 🌟 [재귀 헬퍼] 스레드를 점유하지 않고 백스페이스를 하나씩 예약 전송합니다.
     private func recursiveDelete(count: Int, completion: @escaping () -> Void) {
         guard count > 0 else {
-            completion() // 모든 삭제가 끝나면 다음 단계(텍스트 입력) 실행
+            DispatchQueue.main.async {
+                completion()
+            }
             return
         }
-        
-        let deleteDown = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: true)
-        let deleteUp = CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: false)
-        deleteDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
-        deleteUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
-        
-        deleteDown?.post(tap: .cghidEventTap)
-        deleteUp?.post(tap: .cghidEventTap)
-        
-        // 0.002초 뒤에 다음 삭제 작업을 예약하고 현재 스레드는 즉시 시스템에 반납합니다.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.002) {
+
+        self.postKeyEvent(keyCode: 51, keyDown: true)
+        self.postKeyEvent(keyCode: 51, keyDown: false)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
             self.recursiveDelete(count: count - 1, completion: completion)
         }
     }
 
-    // 🌟 [유니코드 입력 헬퍼]
+    // 🌟 [누락 복구] 키 이벤트를 발생시키는 헬퍼 함수
+    private func postKeyEvent(keyCode: UInt16, keyDown: Bool) {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: keyDown)
+        event?.setIntegerValueField(.eventSourceUserData, value: 9999)
+        event?.post(tap: .cghidEventTap)
+    }
+
+    // 유니코드 입력 헬퍼
     private func postUnicodeString(_ text: String) {
         var chars = Array(text.utf16)
         if !chars.isEmpty {
@@ -615,7 +612,7 @@ class EventMonitor {
         }
     }
 
-    // 🌟 [트리거 키 입력 헬퍼]
+    // 트리거 키 입력 헬퍼
     private func postTriggerKey(keyCode: UInt16) {
         let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: true)
         let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: false)
