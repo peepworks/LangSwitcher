@@ -36,7 +36,7 @@ struct AdvancedSettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text(String(localized: "Advanced Features"))
                     .font(.title2.bold())
-                    .padding(.top, -5) // 타이틀을 살짝 위로 밀어올림
+                    .padding(.top, -5)
 
                 hardwareKeyboardSection
                 windowFocusSection
@@ -47,18 +47,21 @@ struct AdvancedSettingsView: View {
                     cloudSyncSection
                 }
                 
+                // 🌟 [새로 추가됨] 메모리 관리 섹션 연결
+                memoryManagementSection
+                
                 Spacer()
             }
             .padding(.horizontal, 30)
-            .padding(.top, 15) // 상단 패딩 축소
+            .padding(.top, 15)
             .padding(.bottom, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .alert(String(localized: "Backup Successful"), isPresented: $showBackupSuccess) {
-            Button("OK", role: .cancel) { }
+            Button(String(localized: "OK"), role: .cancel) { }
         }
         .alert(String(localized: "Restore Successful"), isPresented: $showRestoreSuccess) {
-            Button("OK", role: .cancel) { }
+            Button(String(localized: "OK"), role: .cancel) { }
         }
         .alert(String(localized: "Automation Permission Required"), isPresented: $showAutomationAlert) {
             Button(String(localized: "Open Settings")) {
@@ -81,7 +84,6 @@ struct AdvancedSettingsView: View {
                 )
                 Text(String(localized: "Mapped instantly in the background. Short press toggles input source, long press acts as Hyper Key."))
                     .font(.caption).foregroundColor(.secondary).lineSpacing(2)
-                    // 🌟 텍스트 하단 여백 12 -> 8로 축소
                     .padding(.horizontal, 15).padding(.bottom, 8).padding(.top, -2)
             }
         } label: {
@@ -152,7 +154,7 @@ struct AdvancedSettingsView: View {
                         .frame(width: 150)
                     }
                     .padding(.horizontal, 15)
-                    .padding(.vertical, 6) // 🌟 Picker 상하 여백 8 -> 6으로 축소
+                    .padding(.vertical, 6)
                     
                     Text(String(localized: "Automatically switches to this language when you open a new tab or window."))
                         .font(.caption).foregroundColor(.secondary)
@@ -211,6 +213,37 @@ struct AdvancedSettingsView: View {
         }
     }
     
+    // 🌟 [새로 추가됨] 메모리 초기화 UI 섹션
+    private var memoryManagementSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(String(localized: "Clear App Memory"))
+                            .font(.body)
+                        Text(String(localized: "Instantly deletes all saved language states for windows and browser tabs. Use this if language switching gets tangled or to free up memory."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    
+                    Spacer(minLength: 15)
+                    
+                    Button(action: {
+                        settings.clearAllAppCaches()
+                    }) {
+                        Text(String(localized: "Clear Memory"))
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 15)
+                .padding(.vertical, 8)
+            }
+        } label: {
+            Text(String(localized: "Memory Management")).font(.headline)
+        }
+    }
+    
     // MARK: - Actions
     private func exportSettings() {
         let panel = NSSavePanel()
@@ -250,7 +283,7 @@ struct AdvancedSettingsView: View {
 struct InputSourceInfo: Identifiable, Hashable {
     let id: String
     let localizedName: String
-} // 🌟 여기에 구조체를 닫는 괄호가 있어야 합니다!
+}
 
 extension InputSourceManager {
     /// 현재 Mac에 설치되고 선택 가능한 모든 키보드 입력 소스 목록을 반환합니다.
@@ -264,13 +297,11 @@ extension InputSourceManager {
         }
         
         for source in list {
-            // 🌟 [수정됨] 포인터(Ptr)가 비어있는지만 guard let으로 검사합니다.
             guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID),
                   let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else {
                 continue
             }
             
-            // 🌟 [수정됨] CFString은 무조건 String이 되므로 물음표 없이 'as String'으로 확정합니다.
             let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
             let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
             

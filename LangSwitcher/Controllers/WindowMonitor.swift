@@ -239,4 +239,14 @@ class WindowMonitor {
             BrowserTabManager.shared.handleBrowserTabChanged(bundleID: bundleID, appName: appName)
         }
     }
+    
+    // WindowMonitor 클래스 내부에 추가
+    func clearMemory() {
+        stateQueue.async(flags: .barrier) {
+            self.windowLanguageMemory.removeAll()
+            // 필요한 경우 현재 활성화된 PID 추적 정보도 초기화
+            self._currentPID = 0
+            self._activeWindowElement = nil
+        }
+    }
 }

@@ -25,25 +25,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 앱이 메뉴바 전용(Accessory)으로 동작하도록 설정
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
 
-        // 1. 앱 실행 시 접근성 권한이 있다면 즉시 키보드 감지(EventMonitor) 시작
         if AccessibilityManager.shared.isTrusted {
             EventMonitor.shared.start()
         } else {
-            // 권한이 없다면 사용자에게 권한 요청 알림을 띄웁니다.
             AccessibilityManager.shared.checkPermission(prompt: true)
         }
 
-        // 앱 실행 시 활성 앱 감지기(AppMonitor)를 명시적으로 시작합니다.
         AppMonitor.shared.start()
-
-        // 백그라운드 24시간 단위 자동 업데이트 확인 타이머 가동
         UpdateManager.shared.setupAutoUpdateCheck()
-
-        // 앱 시작 시, 저장된 설정값을 불러와서 Hyper Key 기능을 켤지 말지 결정합니다.
         HyperKeyManager.shared.updateState(isEnabled: UserDefaults.standard.bool(forKey: "isHyperKeyEnabled"))
     }
 
@@ -68,11 +60,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.autoenablesItems = false
-        menu.delegate = self // 🌟 동적 메뉴를 위해 delegate 연결
+        menu.delegate = self
         statusItem.menu = menu
     }
 
-    // 🌟 메뉴가 열리기 직전에 호출됨: 여기서 실시간 상태 및 아이콘 정렬 반영
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
         let snapshot = SettingsManager.shared.snapshot
@@ -93,15 +84,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         menu.addItem(NSMenuItem.separator())
 
-        // 2. 앱 일시 정지 (Kill Switch)
-        // 🌟 1. keyEquivalent를 빈칸("")에서 "s"로 변경합니다.
-        let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "s")
-        
-        // 🌟 2. 어떤 수식키가 필요한지 지정해 줍니다. (⌃⌥⌘)
+        // 2. 앱 일시 정지 및 기억 비우기 (글로벌 단축키 세트)
+        // 🌟 [수정됨] 체크마크(state)를 없애고 아이콘을 적용하여 하단의 휴지통 아이콘과 텍스트 줄맞춤을 완벽하게 맞춥니다.
+        let isPaused = EventMonitor.shared.isPaused
+        let pauseTitle = isPaused ? String(localized: "Resume LangSwitcher") : String(localized: "Pause LangSwitcher")
+        let pauseItem = NSMenuItem(title: pauseTitle, action: #selector(togglePause), keyEquivalent: "s")
         pauseItem.keyEquivalentModifierMask = [.control, .option, .command]
-        
-        pauseItem.state = EventMonitor.shared.isPaused ? .on : .off
+        pauseItem.image = NSImage(systemSymbolName: isPaused ? "play.circle" : "pause.circle", accessibilityDescription: nil)
         menu.addItem(pauseItem)
+
+        // 앱 기억 초기화 메뉴 (단축키: ⌃⌥⌘ + C)
+        let clearCacheItem = NSMenuItem(title: String(localized: "Clear App Memory"), action: #selector(clearAppMemory), keyEquivalent: "c")
+        clearCacheItem.keyEquivalentModifierMask = [.control, .option, .command]
+        clearCacheItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+        menu.addItem(clearCacheItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -118,7 +114,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowItem.state = snapshot.isWindowMemoryEnabled ? .on : .off
         menu.addItem(windowItem)
         
-        // 🌟 [수정됨] 영어를 기본값으로 변경하고, 변수명 에러(statusMenu) 해결
         let browserTabMenuItem = NSMenuItem(
             title: String(localized: "Browser Tab Memory"),
             action: #selector(toggleBrowserTabMemory(_:)),
@@ -130,7 +125,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // 4. 동적 예외 앱 관리 (+ / - 아이콘 적용)
+        // 4. 동적 예외 앱 관리
         if !activeAppID.isEmpty && activeAppID != Bundle.main.bundleIdentifier {
             let isExcluded = snapshot.excludedApps.contains { $0.bundleIdentifier == activeAppID }
             let title = isExcluded
@@ -145,13 +140,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(NSMenuItem.separator())
         }
 
-        // 5. 시스템 메뉴 (설정 및 종료 아이콘 적용)
+        // 5. 시스템 메뉴
         let settingsItem = NSMenuItem(title: String(localized: "Settings..."), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         menu.addItem(settingsItem)
 
         let quitItem = NSMenuItem(title: String(localized: "Quit"), action: #selector(quitApp), keyEquivalent: "q")
-        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil) // 🌟 전원(종료) 아이콘
+        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
         menu.addItem(quitItem)
     }
 
@@ -159,6 +154,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func toggleLanguage() { InputSourceManager.shared.switchToNextInputSource() }
     @objc func togglePause() { EventMonitor.shared.isPaused.toggle() }
+    @objc func clearAppMemory() { SettingsManager.shared.clearAllAppCaches() }
+    
     @objc func toggleTypo() { SettingsManager.shared.isTypoCorrectionEnabled.toggle() }
     @objc func toggleHyper() { SettingsManager.shared.isHyperKeyEnabled.toggle() }
     @objc func toggleWindowMemory() { SettingsManager.shared.isWindowMemoryEnabled.toggle() }
@@ -185,12 +182,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let contentView = SettingsView()
 
+        // 🌟 [수정됨] 설정 창의 기본 크기를 대폭 늘려 스크롤바가 생기지 않도록 방지합니다.
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 750, height: 850), // height 720 -> 850
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
 
-        window.minSize = NSSize(width: 700, height: 600)
+        window.minSize = NSSize(width: 700, height: 750) // 최소 높이 방어선 상향
         window.center()
         window.title = String(localized: "LangSwitcher Settings")
         window.contentView = NSHostingView(rootView: contentView)
@@ -215,26 +213,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sender.state = newState ? .on : .off
         
         if newState {
-            // 1. 시스템에 기본 권한 팝업을 요청합니다.
             AccessibilityManager.shared.checkAutomationPermissions(prompt: true)
             
-            // 2. 🌟 [핵심 UX] 크롬이나 사파리 중 하나라도 권한이 없다면 커스텀 알림을 띄웁니다.
             let acc = AccessibilityManager.shared
             let needsPermission = !acc.isChromeAutomationTrusted || !acc.isSafariAutomationTrusted
             
             if needsPermission {
-                // 백그라운드 앱(Accessory)의 알림창이 다른 앱 뒤에 숨지 않도록 강제로 최상단으로 끌어올립니다.
                 NSApp.activate(ignoringOtherApps: true)
                 
                 let alert = NSAlert()
                 alert.messageText = String(localized: "Automation Permission Required")
                 alert.informativeText = String(localized: "To remember tab languages, LangSwitcher needs Automation permission for your browsers. Please enable it in System Settings, or check the 'Info & Support' tab.")
-                alert.addButton(withTitle: String(localized: "Open System Settings")) // 첫 번째 버튼 (Return)
-                alert.addButton(withTitle: String(localized: "OK")) // 두 번째 버튼 (Cancel)
+                alert.addButton(withTitle: String(localized: "Open System Settings"))
+                alert.addButton(withTitle: String(localized: "OK"))
                 
-                // 알림창 띄우기 및 버튼 클릭 결과 확인
                 if alert.runModal() == .alertFirstButtonReturn {
-                    // "설정 열기" 버튼을 누른 경우
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
                 }
             }

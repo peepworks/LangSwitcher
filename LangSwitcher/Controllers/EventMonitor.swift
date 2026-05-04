@@ -407,6 +407,13 @@ class EventMonitor {
                         }
                         return nil
                     }
+                    // 🌟 [새로 추가됨] 앱 기억 초기화 (⌃⌥⌘ + C) (keyCode 8은 'C'키 입니다)
+                    if isCommand && isOption && isControl && !isShift && keyCode == 8 {
+                        DispatchQueue.main.async {
+                            SettingsManager.shared.clearAllAppCaches()
+                        }
+                        return nil
+                    }
                 }
 
                 if snapshot.isHyperKeyEnabled {

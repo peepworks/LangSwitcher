@@ -23,7 +23,7 @@ enum SettingsTab: Hashable {
     case advanced
     case customShortcuts
     case appSpecific
-    case domainRules // 🌟 [추가됨] 웹사이트별 키보드 탭
+    case domainRules
     case appLaunch
     case typoCorrection
     case excludedApps
@@ -56,7 +56,6 @@ struct SettingsView: View {
                     Label(String(localized: "App-Specific Keyboards"), systemImage: "macwindow")
                         .tag(SettingsTab.appSpecific)
                         
-                    // 🌟 [추가됨] 앱별 키보드 밑에 자연스럽게 배치
                     Label(String(localized: "Website Keyboards"), systemImage: "globe")
                         .tag(SettingsTab.domainRules)
                         
@@ -86,7 +85,7 @@ struct SettingsView: View {
                 case .advanced: AdvancedSettingsView()
                 case .customShortcuts: CustomShortcutsSettingsView()
                 case .appSpecific: AppSpecificSettingsView()
-                case .domainRules: DomainRuleSettingsView() // 🌟 [추가됨] 선택 시 렌더링할 뷰 연결
+                case .domainRules: DomainRuleSettingsView()
                 case .appLaunch: AppLaunchSettingsView()
                 case .typoCorrection:
                     if isKoreanUser { TypoCorrectionSettingsView() }
@@ -99,7 +98,8 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(NSColor.controlBackgroundColor))
         }
-        .frame(minWidth: 750, minHeight: 650)
+        // 🌟 [수정됨] 최소 높이를 750으로 늘리고, 이상적인 높이(idealHeight)를 850으로 지정하여 넉넉하게 엽니다.
+        .frame(minWidth: 750, idealWidth: 750, minHeight: 750, idealHeight: 850)
         .onAppear {
             accManager.checkPermission()
             

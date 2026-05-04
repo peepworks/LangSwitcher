@@ -457,4 +457,25 @@ class SettingsManager: ObservableObject {
             }
         }
     }
+    // MARK: - Cache & Memory Management
+    
+    @MainActor
+    func clearAllAppCaches() {
+        // 1. 브라우저 탭별 언어 기억 초기화
+        BrowserTabManager.shared.clearMemory()
+        
+        // 2. 일반 윈도우 창별 언어 기억 초기화
+        WindowMonitor.shared.clearMemory()
+        
+        // 3. 타이핑 오타 교정을 위해 쌓아둔 임시 버퍼 문자열 비우기
+        EventMonitor.shared.clearTypingBuffer()
+        
+        // 4. 사용자에게 시각적 피드백 제공 (HUD)
+        let statusMessage = String(localized: "✨ All Memories Cleared")
+        HUDManager.shared.showHUD(languageName: statusMessage)
+        
+        #if DEBUG
+        print("LangSwitcher: All caches and memory records have been manually cleared.")
+        #endif
+    }
 }
