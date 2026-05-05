@@ -31,34 +31,26 @@ class TypoConverter {
     private var savedClipboardString: String?
     
     // MARK: - 스마트 자동 오타 감지용 엔진
-    /// 영문 입력을 분석하여 완벽한 한국어 패턴(자음+모음 조합)이면 변환된 텍스트를 반환, 아니면 nil 반환
     func detectAndConvert(englishInput: String) -> String? {
-        // 1. 최소 2글자 이상일 때만 분석
         guard englishInput.count >= 2 else { return nil }
         
-        // 2. 일단 한글 오토마타 엔진을 돌려 변환 시도
         let converted = convertToKo(englishInput)
         
         var hasSyllable = false
         var hasIncomplete = false
         
-        // 3. 변환된 결과물 검증
         for char in converted {
             guard let scalar = char.unicodeScalars.first else { continue }
             
-            // 완성된 한글 음절 (가 ~ 힣 : 0xAC00 ~ 0xD7A3)
             if scalar.value >= 0xAC00 && scalar.value <= 0xD7A3 {
                 hasSyllable = true
             }
-            // 조합되지 못하고 남은 찌꺼기 자음/모음 (ㄱ~ㅎ, ㅏ~ㅣ : 0x3130 ~ 0x318F)
-            // 또는 변환되지 않은 영문 알파벳이 남아있는 경우
             else if (scalar.value >= 0x3130 && scalar.value <= 0x318F) || (char.isASCII && char.isLetter) {
                 hasIncomplete = true
-                break // 하나라도 불완전한 글자가 있으면 영단어로 간주하고 즉시 탈락
+                break
             }
         }
         
-        // 4. 완성된 글자가 존재하고, 불완전한 찌꺼기 글자가 '전혀' 없을 때만 완벽한 오타로 간주
         if hasSyllable && !hasIncomplete {
             return converted
         }
@@ -66,56 +58,75 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 기존 수동 단축키 오타 교정
+    // MARK: - 수동 단축키 오타 교정 (VSCode 빈 줄 복사 방어)
     func executeCorrection() {
-        // 1. 이미 작업 중이라면 사용자가 연타해도 무시하고 돌려보냅니다.
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
             
         DispatchQueue.main.async {
-            // 원본 클립보드 백업
             self.backupClipboard()
-                
-            let localPB = NSPasteboard.general
-            let initialCount = localPB.changeCount
             
-            // Cmd+C 이벤트 발생 (8은 'C' 키코드)
-            self.postKeyEvent(keyCode: 8, useCommand: true)
+            // 🌟 VSCode의 거짓 복사를 막기 위해, 무조건 커서 앞 한 단어를 블록 지정합니다.
+            // (Option + Shift + Left Arrow)
+            self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift])
+            
+            // 블록이 잡힐 시간(0.05초)을 줍니다.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                let localPB = NSPasteboard.general
+                let initialCount = localPB.changeCount
                 
-            // 0.1초 뒤에 클립보드 확인
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                // 2. 복사 실패 시 안전하게 복구하고 자물쇠를 풉니다.
-                guard localPB.changeCount != initialCount,
-                        let selectedText = localPB.string(forType: .string),
-                        !selectedText.isEmpty
-                else {
-                    self.safeRestoreAndUnlock()
-                    return
-                }
+                // 복사 (Cmd+C)
+                self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    // 복사가 정상적으로 완료되었다면
+                    if localPB.changeCount != initialCount,
+                       let selectedText = localPB.string(forType: .string), !selectedText.isEmpty {
+                        
+                        // 변환 진행
+                        let convertedText = self.convertString(selectedText)
+                        localPB.clearContents()
+                        localPB.setString(convertedText, forType: .string)
+                        
+                        // 붙여넣기 (Cmd+V)
+                        self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
+                        
+                    } else {
+                        // 🌟 복사 실패 (빈 줄 등): 잘못 잡힌 블록을 풀기 위해 우측 방향키 입력
+                        self.postKeyEvent(keyCode: 124, modifiers: [])
+                    }
                     
-                // 한영 변환 수행
-                let convertedText = self.convertString(selectedText)
-                    
-                // 변환된 텍스트를 클립보드에 넣고 Cmd+V (9는 'V' 키코드)
-                localPB.clearContents()
-                localPB.setString(convertedText, forType: .string)
-                self.postKeyEvent(keyCode: 9, useCommand: true)
-                    
-                // 3. 붙여넣기가 완료될 때까지 충분히(0.6초) 기다렸다가 클립보드를 복구하고 자물쇠를 풉니다.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    self.safeRestoreAndUnlock()
+                    // 충분한 대기 후 자물쇠 해제 및 클립보드 원상복구
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        self.safeRestoreAndUnlock()
+                    }
                 }
             }
         }
     }
+
+    // 🌟 코드 가독성을 위해 변환 및 붙여넣기 로직을 별도 함수로 분리했습니다.
+    private func performConversionAndPaste(text: String, pb: NSPasteboard) {
+        let convertedText = self.convertString(text)
         
-    // 클립보드 복구와 자물쇠 해제를 동시에 안전하게 처리하는 통합 함수
+        pb.clearContents()
+        pb.setString(convertedText, forType: .string)
+        
+        // Cmd+V 붙여넣기
+        self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            self.safeRestoreAndUnlock()
+        }
+    }
+
+    // MARK: - 클립보드 및 키보드 헬퍼 함수
+    
     private func safeRestoreAndUnlock() {
         restoreClipboard()
         self.isConvertingInProgress = false
     }
 
-    // MARK: - 클립보드 및 키보드 헬퍼 함수
     private func backupClipboard() {
         self.savedClipboardString = NSPasteboard.general.string(forType: .string)
     }
@@ -127,12 +138,22 @@ class TypoConverter {
         }
     }
     
-    private func postKeyEvent(keyCode: CGKeyCode, useCommand: Bool) {
-        let flags: CGEventFlags = useCommand ? .maskCommand : []
-        simulateKey(keyCode: keyCode, modifiers: flags)
+    private func postKeyEvent(keyCode: CGKeyCode, modifiers: CGEventFlags) {
+        simulateKey(keyCode: keyCode, modifiers: modifiers)
     }
     
-    // 텍스트 내 한글 포함 여부에 따라 변환 방향 결정
+    private func simulateKey(keyCode: CGKeyCode, modifiers: CGEventFlags) {
+        guard let src = eventSource else { return }
+        
+        let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)
+        down?.flags = modifiers
+        down?.post(tap: .cghidEventTap)
+        
+        let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
+        up?.flags = modifiers // 🌟 [버그 수정] 키를 뗄 때도 수식키(Modifiers) 상태를 유지해 줘야 꼬이지 않습니다.
+        up?.post(tap: .cghidEventTap)
+    }
+    
     private func convertString(_ text: String) -> String {
         let hasKorean = text.unicodeScalars.contains {
             ($0.value >= 0xAC00 && $0.value <= 0xD7A3) || ($0.value >= 0x3130 && $0.value <= 0x318F)
@@ -141,7 +162,6 @@ class TypoConverter {
     }
 
     // MARK: - 한/영 변환 오토마타 로직
-    // 영어를 두벌식 한글 조합으로 변환 (오토마타)
     private func convertToKo(_ englishText: String) -> String {
         let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
         let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
@@ -217,16 +237,5 @@ class TypoConverter {
             }
         }
         return result
-    }
-
-    private func simulateKey(keyCode: CGKeyCode, modifiers: CGEventFlags) {
-        guard let src = eventSource else { return }
-        
-        let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)
-        down?.flags = modifiers
-        down?.post(tap: .cghidEventTap)
-        
-        let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
-        up?.post(tap: .cghidEventTap)
     }
 }

@@ -438,8 +438,18 @@ class EventMonitor {
                         EventMonitor.shared.checkStaleAndResetBuffer()
                         let isEnterTrigger = snapshot.isAutoTypoCorrectionOnEnterEnabled && keyCode == 36
                         
-                        if keyCode == 49 || isEnterTrigger {
+                        // 🌟 [수정된 핵심 포인트] Cmd+Space 등 언어 전환 단축키와 충돌하지 않도록,
+                        // Command, Control, Option 키가 눌리지 않은 '순수한 Space(49)'만 허용합니다!
+                        let flags = event.flags
+                        let hasModifiers = flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate)
+                        
+                        // 🌟 [추가됨] 순수한 스페이스인지 확인하는 변수 생성
+                        let isPureSpace = (keyCode == 49) && !hasModifiers
+                        
+                        // 🌟 [수정됨] keyCode == 49 대신 isPureSpace를 사용합니다!
+                        if isPureSpace || isEnterTrigger {
                             let currentBuffer = EventMonitor.shared.typingBuffer
+
                             if currentBuffer.count >= 2 {
                                 if EventMonitor.shared.isCurrentLanguageEnglish() {
                                     if let convertedText = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
