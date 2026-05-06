@@ -58,7 +58,7 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 수동 단축키 오타 교정 (VSCode 빈 줄 복사 방어)
+    // MARK: - 수동 단축키 오타 교정 (VSCode 방어 및 데드락 완벽 해결)
     func executeCorrection() {
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
@@ -66,24 +66,22 @@ class TypoConverter {
         DispatchQueue.main.async {
             self.backupClipboard()
             
-            // 🌟 VSCode의 거짓 복사를 막기 위해, 무조건 커서 앞 한 단어를 블록 지정합니다.
-            // (Option + Shift + Left Arrow)
+            // 커서 앞 한 단어 자동 지정 (Option + Shift + Left Arrow)
             self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift])
             
-            // 블록이 잡힐 시간(0.05초)을 줍니다.
+            // 블록이 잡힐 시간 대기
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 let localPB = NSPasteboard.general
                 let initialCount = localPB.changeCount
                 
-                // 복사 (Cmd+C)
+                // 복사 (Cmd+C) 시도
                 self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    // 복사가 정상적으로 완료되었다면
+                    // 1. 복사가 정상적으로 완료되었을 때 (성공 경로)
                     if localPB.changeCount != initialCount,
                        let selectedText = localPB.string(forType: .string), !selectedText.isEmpty {
                         
-                        // 변환 진행
                         let convertedText = self.convertString(selectedText)
                         localPB.clearContents()
                         localPB.setString(convertedText, forType: .string)
@@ -91,14 +89,16 @@ class TypoConverter {
                         // 붙여넣기 (Cmd+V)
                         self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
                         
+                        // 붙여넣기 완료 후 자물쇠 해제
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                            self.safeRestoreAndUnlock()
+                        }
+                        
                     } else {
-                        // 🌟 복사 실패 (빈 줄 등): 잘못 잡힌 블록을 풀기 위해 우측 방향키 입력
+                        // 2. 복사 실패 시 (예외 경로: 빈 줄 등)
+                        // 잘못 잡힌 블록을 풀고 🌟즉시 자물쇠를 해제합니다!
                         self.postKeyEvent(keyCode: 124, modifiers: [])
-                    }
-                    
-                    // 충분한 대기 후 자물쇠 해제 및 클립보드 원상복구
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                        self.safeRestoreAndUnlock()
+                        self.safeRestoreAndUnlock() // ✅ 완벽한 데드락 방지
                     }
                 }
             }

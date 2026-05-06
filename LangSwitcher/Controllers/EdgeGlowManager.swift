@@ -20,23 +20,26 @@ import SwiftUI
 import AppKit
 import Combine
 
-// 🌟 [핵심 1] 뷰를 새로 만들지 않고 색상만 교체하기 위한 상태 통(ObservableObject)
+// 🌟 [핵심 1] 뷰를 새로 만들지 않고 색상만 교체하기 위한 상태 통
 class EdgeGlowState: ObservableObject {
     @Published var color: Color = .clear
 }
 
+// 🌟 [핵심 2] 클래스 전체를 메인 스레드에 격리하여 완벽한 UI 안전성 보장
+@MainActor
 class EdgeGlowManager {
     static let shared = EdgeGlowManager()
     
     private var glowWindow: NSWindow?
     private var currentGlowID = UUID()
     
-    // 상태를 관리할 객체 인스턴스
+    // 현재 빛이 켜져 있는 상태인지 추적하는 변수
+    private var isCurrentlyGlowing: Bool = false
+    
     private let glowState = EdgeGlowState()
     
     private init() {}
 
-    @MainActor
     private func getOrCreateWindow() -> NSWindow {
         if let existing = glowWindow {
             return existing
@@ -55,7 +58,6 @@ class EdgeGlowManager {
         window.isOpaque = false
         window.ignoresMouseEvents = true
         
-        // 🌟 [핵심 2] 윈도우 생성 시 최초 1번만 NSHostingView를 할당합니다.
         let contentView = NSHostingView(rootView: EdgeGlowView(state: glowState))
         window.contentView = contentView
         
@@ -63,10 +65,10 @@ class EdgeGlowManager {
         return window
     }
 
-    @MainActor
     func showGlow(forLanguage id: String) {
         guard SettingsManager.shared.snapshot.isEdgeGlowEnabled else { return }
         
+        // 새로운 타자 입력이 들어왔으므로 ID 갱신 (기존의 꺼짐 타이머 취소용)
         let myID = UUID()
         self.currentGlowID = myID
         
@@ -82,33 +84,35 @@ class EdgeGlowManager {
             window.setFrame(NSRect(x: 0, y: screenFrame.height - windowHeight, width: screenFrame.width, height: windowHeight), display: true)
         }
         
-        // 🌟 [핵심 수정] 언어 ID를 활용하면서도 다채로운 랜덤성을 부여합니다.
-        let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
-                
-        let randomHue: Double
-        if isKorean {
-            // 한글: 푸른색/보라색 계열 (Hue 0.5 ~ 0.8 사이 랜덤)
-            randomHue = Double.random(in: 0.5...0.8)
-        } else {
-            // 영어: 주황색/분홍색 계열 (Hue 0.0 ~ 0.1 또는 0.9 ~ 1.0 사이 랜덤)
-            let warmTones = [Double.random(in: 0.0...0.1), Double.random(in: 0.9...1.0)]
-            randomHue = warmTones.randomElement() ?? 0.1
+        // 🌟 [핵심 3] 빛이 꺼져 있을 때만 색상을 새로 정하고 페이드인을 시작합니다!
+        // (이미 켜져 있는 상태에서 타자를 칠 때는 이 블록을 건너뛰어 번쩍거림 방지)
+        if !isCurrentlyGlowing {
+            isCurrentlyGlowing = true
+            
+            let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
+            let randomHue: Double
+            
+            if isKorean {
+                randomHue = Double.random(in: 0.5...0.8) // 한글: 푸른색/보라색
+            } else {
+                let warmTones = [Double.random(in: 0.0...0.1), Double.random(in: 0.9...1.0)]
+                randomHue = warmTones.randomElement() ?? 0.1 // 영어: 주황색/분홍색
+            }
+                    
+            glowState.color = Color(hue: randomHue, saturation: 0.85, brightness: 1.0)
+            
+            window.alphaValue = 0.0
+            window.orderFrontRegardless()
+            
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                window.animator().alphaValue = 1.0
+            }
         }
-                
-        let glowColor = Color(hue: randomHue, saturation: 0.85, brightness: 1.0)
         
-        // 🌟 [핵심 3] 무거운 뷰를 다시 만들지 않고, 상태 객체의 색상만 업데이트합니다!
-        glowState.color = glowColor
-        
-        // 🌟 [최적화] SwiftUI의 onAppear를 대체하여, 창 자체가 서서히 나타나게 만듭니다. (깜빡임 방지)
-        window.alphaValue = 0.0
-        window.orderFrontRegardless()
-        
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            window.animator().alphaValue = 1.0
-        }
-        
+        // 🌟 [핵심 4] 타자를 칠 때마다 이 '꺼짐 예약'이 계속 새로 세팅됩니다.
+        // 0.8초 동안 아무 입력이 없어야 비로소 애니메이션이 실행되며 꺼집니다.
+        // 🌟 [핵심 4] 타자를 칠 때마다 이 '꺼짐 예약'이 계속 새로 세팅됩니다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             guard self.currentGlowID == myID else { return }
             
@@ -116,8 +120,11 @@ class EdgeGlowManager {
                 context.duration = 0.3
                 window.animator().alphaValue = 0
             } completionHandler: {
+                // 🌟 [수정됨] 컴파일러의 Strict Concurrency 에러를 해결하기 위해
+                // 메인 큐로 다시 한번 확실하게 감싸줍니다!
                 DispatchQueue.main.async {
                     guard self.currentGlowID == myID else { return }
+                    self.isCurrentlyGlowing = false
                     window.orderOut(nil)
                 }
             }
@@ -125,9 +132,9 @@ class EdgeGlowManager {
     }
 }
 
-// 🌟 [수정됨] opacity 애니메이션을 덜어내어 훨씬 가벼워진 SwiftUI 뷰
+// 뷰는 그대로 사용!
 struct EdgeGlowView: View {
-    @ObservedObject var state: EdgeGlowState // 전달받은 상태를 구독
+    @ObservedObject var state: EdgeGlowState
     
     var body: some View {
         ZStack(alignment: .top) {
@@ -147,6 +154,5 @@ struct EdgeGlowView: View {
                 .frame(height: 2)
                 .opacity(0.8)
         }
-        // SwiftUI의 .opacity()와 .onAppear()는 제거되었습니다. (AppKit이 담당)
     }
 }

@@ -44,11 +44,13 @@ class StatsManager: ObservableObject {
     private var saveTimer: Timer?
     private let defaultsKey = "LangSwitcher_DailyStats"
     
+    // 🌟 데이터가 변경되었는지 추적하는 포스트잇(플래그)
+    private var isDirty: Bool = false
+    
     private init() {
         loadStats()
         startBatchSaveTimer()
         
-        // 🌟 [수정됨] 앱 종료 시 디스크 기록 옵저버를 안전한 모던 블록 API로 교체
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -66,6 +68,10 @@ class StatsManager: ObservableObject {
             var stat = self._statsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
             stat.languageSwitches += 1
             self._statsDict[dateKey] = stat
+            
+            // 🌟 [추가됨] 데이터가 변경되었음을 표시합니다.
+            self.isDirty = true
+            
             self.publishUpdate()
         }
     }
@@ -76,6 +82,10 @@ class StatsManager: ObservableObject {
             var stat = self._statsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
             stat.typoCorrections += 1
             self._statsDict[dateKey] = stat
+            
+            // 🌟 [추가됨] 데이터가 변경되었음을 표시합니다.
+            self.isDirty = true
+            
             self.publishUpdate()
         }
     }
@@ -90,15 +100,31 @@ class StatsManager: ObservableObject {
         }
     }
     
-    // 🌟 [수정됨] @objc 키워드 삭제 (순수 Swift 함수로 사용)
+    // 🌟 [수정됨] 무의미한 복사를 막는 더티 플래그(Dirty Flag) 패턴 적용
     private func forceSave() {
+        var shouldSave = false
         var snapshot: [String: DailyStat] = [:]
-        stateQueue.sync { snapshot = self._statsDict }
+        
+        stateQueue.sync {
+            // 변경된 적이 있을 때만 복사 작업을 수행합니다.
+            if self.isDirty {
+                shouldSave = true
+                snapshot = self._statsDict
+                self.isDirty = false // 포스트잇을 뗍니다.
+            }
+        }
+        
+        // 변경된 것이 없으면 함수를 즉시 종료하여 자원 낭비를 막습니다.
+        guard shouldSave else { return }
         
         saveQueue.async {
             let statsArray = Array(snapshot.values).sorted { $0.dateString < $1.dateString }
             if let data = try? JSONEncoder().encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: self.defaultsKey)
+                
+                #if DEBUG
+                print("StatsManager: 변경된 통계 데이터가 백그라운드에서 저장되었습니다.")
+                #endif
             }
         }
     }
@@ -119,10 +145,12 @@ class StatsManager: ObservableObject {
             self.dailyStats = snapshot
         }
     }
-    
-    private static let todayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+
+    // 🌟 [수정됨] 멀티스레드에서 수천 번 동시에 접근해도 절대 뻗지 않는 안전한 포매터 도입!
+    private static let todayFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        // "yyyy-MM-dd" 형식으로만 뽑아내기 위한 옵션 설정
+        formatter.formatOptions = [.withYear, .withMonth, .withDay, .withDashSeparatorInDate]
         formatter.timeZone = .current
         return formatter
     }()
@@ -136,6 +164,8 @@ class StatsManager: ObservableObject {
     func resetStats() {
         stateQueue.async(flags: .barrier) {
             self._statsDict.removeAll()
+            // 🌟 [추가됨] 리셋 후에는 타이머가 빈 딕셔너리를 무의미하게 저장하지 않도록 플래그를 꺼줍니다.
+            self.isDirty = false
             self.publishUpdate()
             
             UserDefaults.standard.removeObject(forKey: self.defaultsKey)

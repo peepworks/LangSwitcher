@@ -148,21 +148,8 @@ class SettingsManager: ObservableObject {
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
 
-    private let batchUpdateLock = NSLock()
-    private var _isBatchUpdating: Bool = false
-
-    var isBatchUpdating: Bool {
-        get {
-            batchUpdateLock.lock()
-            defer { batchUpdateLock.unlock() }
-            return _isBatchUpdating
-        }
-        set {
-            batchUpdateLock.lock()
-            defer { batchUpdateLock.unlock() }
-            _isBatchUpdating = newValue
-        }
-    }
+    // 🌟 [수정됨] NSLock을 제거하고 @MainActor를 사용하여 메인 스레드 격리를 보장합니다.
+    @MainActor var isBatchUpdating: Bool = false
     
     @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); updateSnapshot(); syncToCloud() } }
     @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); updateSnapshot(); syncToCloud() } }
@@ -274,13 +261,21 @@ class SettingsManager: ObservableObject {
     @objc private func icloudUpdateReceived(_ notification: Notification) {
         guard isCloudSyncEnabled else { return }
         
-        DispatchQueue.main.async {
+        // 🌟 [추가됨] [weak self]를 통해 메모리 누수를 완벽히 방지합니다.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // 깃발을 올려 iCloud 역류를 방지합니다.
             self.isBatchUpdating = true
             
             defer {
-                self.isBatchUpdating = false
+                // 🌟 [핵심 수정] 순서를 바꿨습니다!
+                // 깃발이 아직 올라가 있는 상태에서 안전하게 로컬 저장 및 스냅샷을 갱신합니다.
                 self.saveAll()
                 self.updateSnapshot()
+                
+                // 모든 작업이 완전히 끝난 후, 가장 마지막 순간에 깃발을 내립니다.
+                self.isBatchUpdating = false
             }
             
             let dict = self.icloudStore.dictionaryRepresentation
@@ -298,7 +293,7 @@ class SettingsManager: ObservableObject {
             if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.excludedApps = dec }
             if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.customShortcuts = dec }
             
-            // 🌟 [추가] iCloud에서 도메인 규칙 수신 및 엔진 동기화
+            // 🌟 iCloud에서 도메인 규칙 수신 및 엔진 동기화
             if let data = dict["domainRules"] as? Data, let dec = try? JSONDecoder().decode([DomainRule].self, from: data) {
                 self.domainRules = dec
                 DomainRuleManager.shared.rules = dec

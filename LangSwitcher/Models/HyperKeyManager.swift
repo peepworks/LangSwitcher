@@ -119,49 +119,49 @@ class HyperKeyManager {
         var shouldToggleCapsLock = false
         var modifiedFlags: CGEventFlags? = nil
 
-        // 1단계: 자물쇠를 잠그고 내부 상태(State)만 안전하게 평가 및 수정합니다.
-        stateLock.lock()
-        
-        if keyCode == f19KeyCode {
-            if type == .keyDown {
-                if !isHyperDown {
-                    isHyperDown = true
-                    tapStartTime = Date()
-                    isUsedAsModifier = false
-                    shouldPostDown = true
-                }
-                shouldBlock = true
-            } else if type == .keyUp {
-                isHyperDown = false
-                shouldPostUp = true
-                
-                if let startTime = tapStartTime, !isUsedAsModifier {
-                    let duration = Date().timeIntervalSince(startTime)
-                    if duration < 0.3 {
-                        shouldHandleTap = true
-                    } else {
-                        shouldToggleCapsLock = true // 0.3초 이상: 대/소문자 전환(Caps Lock)
+        // 🌟 [수정됨] 1단계를 do { } 블록으로 묶어 락의 범위를 완벽하게 제한합니다.
+        do {
+            stateLock.lock()
+            defer { stateLock.unlock() } // do 블록이 끝날 때 무조건 자물쇠를 해제합니다.
+            
+            if keyCode == f19KeyCode {
+                if type == .keyDown {
+                    if !isHyperDown {
+                        isHyperDown = true
+                        tapStartTime = Date()
+                        isUsedAsModifier = false
+                        shouldPostDown = true
                     }
+                    shouldBlock = true
+                } else if type == .keyUp {
+                    isHyperDown = false
+                    shouldPostUp = true
+                    
+                    if let startTime = tapStartTime, !isUsedAsModifier {
+                        let duration = Date().timeIntervalSince(startTime)
+                        if duration < 0.3 {
+                            shouldHandleTap = true
+                        } else {
+                            shouldToggleCapsLock = true
+                        }
+                    }
+                    shouldBlock = true
                 }
-                shouldBlock = true
             }
-        }
 
-        if !shouldBlock && isHyperDown && (type == .keyDown || type == .keyUp || type == .flagsChanged) {
-            if type == .keyDown { isUsedAsModifier = true }
-            var flags = event.flags
-            flags.insert([.maskCommand, .maskAlternate, .maskControl, .maskShift])
-            modifiedFlags = flags
-        }
-        
-        stateLock.unlock()
-        // 🔓 자물쇠 해제 완료
+            if !shouldBlock && isHyperDown && (type == .keyDown || type == .keyUp || type == .flagsChanged) {
+                if type == .keyDown { isUsedAsModifier = true }
+                var flags = event.flags
+                flags.insert([.maskCommand, .maskAlternate, .maskControl, .maskShift])
+                modifiedFlags = flags
+            }
+        } // 🔓 <-- 여기서 defer가 발동하여 알아서 자물쇠가 풀립니다! (수동 unlock 삭제됨)
 
         // 2단계: 자물쇠가 풀린 안전한 상태에서 시스템 관련 동작을 실행합니다.
         if shouldPostDown { postHyperModifiers(isDown: true) }
         if shouldPostUp { postHyperModifiers(isDown: false) }
         if shouldHandleTap { handleTap() }
-        if shouldToggleCapsLock { toggleNativeCapsLock() } // 대/소문자 전환 실행
+        if shouldToggleCapsLock { toggleNativeCapsLock() }
         if let newFlags = modifiedFlags { event.flags = newFlags }
 
         return shouldBlock

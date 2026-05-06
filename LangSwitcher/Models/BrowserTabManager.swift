@@ -60,7 +60,17 @@ class ChromiumAdapter: BrowserAdapter {
             return null;
         }
         """
-        executeJXA(script: script, completion: completion)
+        
+        // 🌟 [수정됨] executeJXA에서 넘어온 String을 JSON 파싱하여 TabContext로 변환 후 completion 호출
+        executeJXA(script: script) { resultString in
+            guard let resultString = resultString,
+                  let data = resultString.data(using: .utf8),
+                  let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
+                completion(nil)
+                return
+            }
+            completion(context)
+        }
     }
 }
 
@@ -82,39 +92,54 @@ class SafariAdapter: BrowserAdapter {
             return null;
         }
         """
-        executeJXA(script: script, completion: completion)
+        
+        // 🌟 [수정됨] 동일하게 String 결과값을 TabContext로 변환
+        executeJXA(script: script) { resultString in
+            guard let resultString = resultString,
+                  let data = resultString.data(using: .utf8),
+                  let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
+                completion(nil)
+                return
+            }
+            completion(context)
+        }
     }
 }
 
-// MARK: - JXA Helper
-
-private func executeJXA(script: String, completion: @escaping (TabContext?) -> Void) {
-    DispatchQueue.global(qos: .userInitiated).async {
-        let process = Process()
-        process.launchPath = "/usr/bin/osascript"
-        process.arguments = ["-l", "JavaScript", "-e", script]
+// MARK: - JXA 스크립트 비동기 실행 (Thread Explosion 방지 적용)
+// 🌟 completion 클로저를 통해 결과를 비동기적으로 전달받도록 수정
+private func executeJXA(script: String, completion: @escaping (String?) -> Void) {
+    let process = Process()
+    let pipe = Pipe()
+    
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    process.arguments = ["-l", "JavaScript", "-e", script]
+    process.standardOutput = pipe
+    process.standardError = Pipe() // 에러 로그가 표준 출력에 섞이는 것 방지
+    
+    // 🌟 [핵심 변경 포인트] waitUntilExit() 대신 terminationHandler 사용
+    process.terminationHandler = { proc in
+        // 프로세스가 종료되면 이 블록이 실행됩니다. (대기 스레드 없음!)
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         
-        let pipe = Pipe()
-        process.standardOutput = pipe
+        // 결과를 문자열로 변환하고 공백/줄바꿈 제거
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               let jsonData = output.data(using: .utf8) {
-                
-                DispatchQueue.main.async {
-                    let context = try? JSONDecoder().decode(TabContext.self, from: jsonData)
-                    completion(context)
-                }
-            } else {
-                DispatchQueue.main.async { completion(nil) }
-            }
-        } catch {
-            DispatchQueue.main.async { completion(nil) }
-        }
+        // 결과가 빈 문자열이면 nil로 처리, 아니면 결과 전달
+        let finalResult = (output?.isEmpty == true) ? nil : output
+        
+        // 결과를 메인 스레드나 호출한 쪽에 전달
+        completion(finalResult)
+    }
+    
+    do {
+        try process.run()
+        // ⚠️ 주의: 여기에 process.waitUntilExit()을 절대 쓰면 안 됩니다!
+    } catch {
+        #if DEBUG
+        print("JXA 프로세스 실행 실패: \(error)")
+        #endif
+        completion(nil)
     }
 }
 
@@ -233,12 +258,16 @@ class BrowserTabManager {
     
     // 🌟 [추가됨] LRU 캐시 업데이트 로직 (가장 최근에 본 탭을 위로 올리고, 100개가 넘으면 오래된 탭을 삭제)
     // 🌟 [수정됨] O(n) 선형 탐색을 제거한 초고속 LRU 캐시 갱신
+    // 🌟 [수정됨] 이론적인 Int.max 오버플로우 방어 로직 추가
     private func touchTabMemory(key: String) {
-        // 1. 배열을 뒤질 필요 없이, O(1) 속도로 해당 탭에 최신 번호표(Tick)를 부여합니다.
+        // 1. 번호표 발급기가 한계에 도달했는지 확인 (약 922경 번 접근 시)
+        if currentTick == Int.max {
+            rebuildTicksFromScratch()
+        }
+        
         currentTick += 1
         tabAccessTicks[key] = currentTick
         
-        // 2. 100개가 넘었을 때만 가장 오래된(번호표가 가장 작은) 탭을 찾아 삭제합니다.
         if tabAccessTicks.count > maxTabMemoryLimit {
             if let oldest = tabAccessTicks.min(by: { $0.value < $1.value }) {
                 let oldestKey = oldest.key
@@ -247,6 +276,28 @@ class BrowserTabManager {
                 tabAccessTicks.removeValue(forKey: oldestKey)
             }
         }
+    }
+    
+    // 🌟 [추가됨] 번호표가 꽉 찼을 때, 현재 살아있는 100개의 탭에게만 1번부터 100번까지 새 번호를 부여하는 함수
+    private func rebuildTicksFromScratch() {
+        // 1. 현재 살아있는 탭들을 번호표가 작은 순서(오래된 순)로 줄을 세웁니다.
+        let sortedKeys = tabAccessTicks.sorted { $0.value < $1.value }.map { $0.key }
+        
+        // 2. 기존 번호표 장부를 싹 비웁니다.
+        tabAccessTicks.removeAll(keepingCapacity: true)
+        
+        // 3. 줄 서 있는 순서대로 1번부터 새로운 번호표를 발급합니다.
+        for (index, key) in sortedKeys.enumerated() {
+            tabAccessTicks[key] = index + 1 // 1번부터 최대 100번까지 부여됨
+        }
+        
+        // 4. 발급기(currentTick)의 현재 숫자를 살아있는 탭의 개수(예: 100)로 초기화합니다.
+        // 다음 탭이 들어오면 101번을 받게 됩니다!
+        currentTick = sortedKeys.count
+        
+        #if DEBUG
+        print("BrowserTabManager: LRU Tick 오버플로우 방지를 위해 번호표를 성공적으로 재설정했습니다.")
+        #endif
     }
     
     private func isNewTab(context: TabContext) -> Bool {

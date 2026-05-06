@@ -576,8 +576,12 @@ class EventMonitor {
     
     private func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
         // 시간에 의존하지 않고, 삭제가 완벽히 끝났다는 콜백을 받으면 다음 단계를 실행합니다.
-        self.recursiveDelete(count: originalLength) { [weak self] in
+        // 🌟 [수정됨] 기존 recursiveDelete 대신 batchDelete 호출
+        self.batchDelete(count: originalLength) { [weak self] in // 🌟 여기에 [weak self] in 을 반드시 추가해야 합니다!
             guard let self = self else { return }
+            
+            // 지우기가 다 끝나면 실행될 붙여넣기(변환) 로직
+            let localPB = NSPasteboard.general
             
             // 1. [바통 터치] 삭제가 완전히 끝남! 이제 안전하게 새 텍스트를 붙여넣습니다.
             self.postUnicodeString(correctedText)
@@ -587,27 +591,37 @@ class EventMonitor {
                 self.safeSwitchToKorean()
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-                    // 🌟 [수정됨] 누락되었던 파라미터를 정상적으로 전달합니다.
+                    // 누락되었던 파라미터를 정상적으로 전달합니다.
                     self.postTriggerKey(keyCode: triggerKeyCode)
                 }
             }
         }
     }
 
-    // 🌟 [재귀 헬퍼] 스레드를 점유하지 않고 백스페이스를 하나씩 예약 전송합니다.
-    private func recursiveDelete(count: Int, completion: @escaping () -> Void) {
+    // ⚠️ 기존의 recursiveDelete 함수는 완전히 삭제하세요!
+
+    // 🌟 [수정됨] 재귀를 없애고 for 루프로 미래의 이벤트를 일괄 예약하는 안전한 방식
+    private func batchDelete(count: Int, completion: @escaping () -> Void) {
+        // 지워야 할 글자 수가 0개 이하라면 예약할 필요 없이 즉시 완료 처리
         guard count > 0 else {
-            DispatchQueue.main.async {
-                completion()
-            }
+            completion()
             return
         }
-
-        self.postKeyEvent(keyCode: 51, keyDown: true)
-        self.postKeyEvent(keyCode: 51, keyDown: false)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-            self.recursiveDelete(count: count - 1, completion: completion)
+        
+        // 1. for 루프를 돌며 0.01초 간격으로 백스페이스 이벤트를 예약합니다.
+        for i in 0..<count {
+            let delay = Double(i) * 0.01
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                // 51은 Backspace(Delete) 키코드입니다.
+                self.postKeyEvent(keyCode: 51, keyDown: true)
+                self.postKeyEvent(keyCode: 51, keyDown: false)
+            }
+        }
+        
+        // 2. 모든 지우기 동작이 끝난 직후(마지막 지우기 + 0.005초 여유)에 완료 블록 실행
+        let totalDelay = Double(count) * 0.01 + 0.005
+        DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) {
+            completion()
         }
     }
 
