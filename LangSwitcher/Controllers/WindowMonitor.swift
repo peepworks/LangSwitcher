@@ -73,7 +73,11 @@ class WindowMonitor {
         guard SettingsManager.shared.snapshot.isWindowMemoryCleanupEnabled else { return }
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         let terminatedPID = app.processIdentifier
-        stateQueue.async(flags: .barrier) {
+        
+        // 🌟 [최적화] 여기도 안전하게 [weak self]를 걸어줍니다.
+        stateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            
             let keysToRemove = self.windowLanguageMemory.filter { $0.value.pid == terminatedPID }.map { $0.key }
             for key in keysToRemove { self.windowLanguageMemory.removeValue(forKey: key) }
         }
@@ -148,30 +152,23 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
         
-        // 🌟 1. 시스템 값은 메인 스레드에서 미리 안전하게 캡처합니다.
         let latestAppID = AppMonitor.shared.activeAppBundleID
         let latestInputSource = self.getCurrentInputSourceID() ?? ""
         let pid = self.currentPID
         
-        // 🌟 2. 락이 풀린 후 실행할 "부수 효과(행동)"를 담아둘 빈 바구니(변수)를 준비합니다.
-        var langToSwitch: String? = nil
-        var needsToRegisterObserver = false
+        // 🌟 [1단계: 읽기] 어떤 언어로 바꿀지 안전하게 계산 (단순 동기화)
+        var targetLang: String? = nil
+        var isNewMemory = false
         
-        // 🌟 3. async 대신 sync + barrier를 사용하여 장부 쓰기가 완전히 끝날 때까지 대기합니다.
-        stateQueue.sync(flags: .barrier) { [weak self] in
-            guard let self = self else { return }
-            
-            var targetLang: String? = nil
+        stateQueue.sync { // barrier 없이 다중 읽기 허용(빠름)
             let savedData = self.windowLanguageMemory[windowID]
             
-            // 윈도우 메모리 확인
             if snapshot.isWindowMemoryEnabled {
                 if let saved = savedData {
                     targetLang = saved.lang
                 }
             }
             
-            // 앱별 키보드 확인
             if targetLang == nil && snapshot.isAppSpecificEnabled {
                 if let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID }),
                    !customApp.targetLanguage.isEmpty {
@@ -179,12 +176,17 @@ class WindowMonitor {
                 }
             }
             
-            // ⚠️ 여기서 언어를 바로 바꾸지 않고, 밖으로 전달할 바구니에 담기만 합니다.
-            langToSwitch = targetLang
-            
-            // 장부 쓰기 (Dictionary 업데이트)
-            let langToSave = targetLang ?? latestInputSource
-            if !langToSave.isEmpty {
+            if savedData == nil {
+                isNewMemory = true
+            }
+        }
+        
+        // 🌟 [2단계: 쓰기] 계산된 결과를 바탕으로 장부에 비동기로 기록 (중첩 큐 없음)
+        let langToSave = targetLang ?? latestInputSource
+        if !langToSave.isEmpty {
+            stateQueue.async(flags: .barrier) { [weak self] in
+                guard let self = self else { return }
+                
                 // 500개 초과 시 오래된 기억(첫 번째 요소) 삭제
                 if self.windowLanguageMemory[windowID] == nil && self.windowLanguageMemory.count >= 500 {
                     if let firstKey = self.windowLanguageMemory.keys.first {
@@ -192,28 +194,21 @@ class WindowMonitor {
                     }
                 }
                 
-                // 새로운 상태 저장
                 self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
-                
-                // ⚠️ 여기서 AX API를 바로 부르지 않고, 바구니에 플래그만 세팅합니다.
-                if savedData == nil && self.axObserver != nil {
-                    needsToRegisterObserver = true
-                }
             }
-        } // 🔒 여기서 장부가 완벽하게 덮이고 락이 해제됩니다.
+        }
         
-        
-        // 🌟 4. 장부가 안전해진 후, 꺼내둔 값으로 메인 스레드에서 시스템 동작을 한꺼번에 실행합니다.
+        // 🌟 [3단계: 부수 효과 실행] 장부 쓰기 블록과 완전히 분리되어 메인 큐에 스케줄링됨
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
             // 1) 실제 언어 전환
-            if let targetLang = langToSwitch {
-                InputSourceManager.shared.switchLanguage(to: targetLang)
+            if let lang = targetLang {
+                InputSourceManager.shared.switchLanguage(to: lang)
             }
             
-            // 2) 윈도우 파괴 감지 옵저버 등록 (AX API는 메인 스레드에서 실행해야 안전합니다!)
-            if needsToRegisterObserver, let observer = self.axObserver {
+            // 2) 윈도우 파괴 감지 옵저버 등록 (AX API는 메인 큐에서 안전하게 실행)
+            if isNewMemory, let observer = self.axObserver {
                 let refcon = Unmanaged.passUnretained(self).toOpaque()
                 AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)
             }
@@ -222,7 +217,8 @@ class WindowMonitor {
     
     func handleWindowDestroyed(element: AXUIElement) {
         guard let windowID = getWindowID(from: element) else { return }
-        stateQueue.async(flags: .barrier) {
+        stateQueue.async(flags: .barrier) { [weak self] in // 👈 1. 여기에 추가
+            guard let self = self else { return }
             self.windowLanguageMemory.removeValue(forKey: windowID)
         }
     }

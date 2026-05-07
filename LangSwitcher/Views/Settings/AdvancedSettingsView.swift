@@ -146,8 +146,10 @@ struct AdvancedSettingsView: View {
                         Picker("", selection: $settings.newTabDefaultLanguage) {
                             Text(String(localized: "Keep Previous")).tag("None")
                             Divider()
-                            ForEach(InputSourceManager.shared.allInputSources, id: \.id) { source in
-                                Text(source.localizedName).tag(source.id)
+                            // 🌟 [수정됨] 무거운 연산 프로퍼티 대신, 이미 캐시된 availableKeyboards를 사용합니다.
+                            ForEach(InputSourceManager.shared.availableKeyboards, id: \.id) { keyboard in
+                                Text(keyboard.name).tag(keyboard.id)
+                                // 주의: source.localizedName -> keyboard.name 으로 변경되었습니다.
                             }
                         }
                         .pickerStyle(.menu)
@@ -275,45 +277,5 @@ struct AdvancedSettingsView: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Input Source List Extension
-
-struct InputSourceInfo: Identifiable, Hashable {
-    let id: String
-    let localizedName: String
-}
-
-extension InputSourceManager {
-    /// 현재 Mac에 설치되고 선택 가능한 모든 키보드 입력 소스 목록을 반환합니다.
-    var allInputSources: [InputSourceInfo] {
-        var sources: [InputSourceInfo] = []
-        
-        // 키보드 입력 소스만 필터링
-        let filter = [kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as String] as CFDictionary
-        guard let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource] else {
-            return []
-        }
-        
-        for source in list {
-            guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID),
-                  let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else {
-                continue
-            }
-            
-            let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
-            let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
-            
-            // 사용자가 실제로 선택할 수 있는(Select Capable) 소스인지 확인
-            guard let selectablePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable),
-                  CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(selectablePtr).takeUnretainedValue()) else {
-                continue
-            }
-            
-            sources.append(InputSourceInfo(id: id, localizedName: name))
-        }
-        
-        return sources
     }
 }

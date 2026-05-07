@@ -134,7 +134,6 @@ private func executeJXA(script: String, completion: @escaping (String?) -> Void)
     
     do {
         try process.run()
-        // ⚠️ 주의: 여기에 process.waitUntilExit()을 절대 쓰면 안 됩니다!
     } catch {
         #if DEBUG
         print("JXA 프로세스 실행 실패: \(error)")

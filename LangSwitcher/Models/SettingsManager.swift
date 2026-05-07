@@ -76,7 +76,6 @@ struct SettingsSnapshot {
     var showVisualFeedback = true; var isTestMode = false
     var toggleKeyCode: UInt16 = 0; var toggleModifierFlags: UInt64 = 0; var toggleDisplayString = ""
     var isSentenceMode = false
-    var customShortcuts: [CustomShortcut] = []
     var customApps: [CustomApp] = []
     var appLaunchShortcuts: [AppLaunchShortcut] = []
     var excludedApps: [ExcludedApp] = []
@@ -99,7 +98,8 @@ struct SettingsSnapshot {
     var isBrowserDomainModeEnabled = false
     var newTabDefaultLanguage = "None"
     
-    // 🌟 [추가] 스냅샷에 도메인 규칙 배열 포함
+    // 🌟 기존 배열 변수들의 didSet을 아주 가볍게 수정
+    var customShortcuts: [CustomShortcut] = []
     var domainRules: [DomainRule] = []
 }
 
@@ -111,6 +111,9 @@ class SettingsManager: ObservableObject {
     
     private let snapshotQueue = DispatchQueue(label: "com.peepworks.settings.snapshot", attributes: .concurrent)
     private var _snapshot = SettingsSnapshot()
+    
+    // 🌟 [추가됨] 저장을 예약해둘 타이머 역할을 하는 변수
+    private var saveWorkItem: DispatchWorkItem?
         
     var snapshot: SettingsSnapshot {
         snapshotQueue.sync { _snapshot }
@@ -123,8 +126,12 @@ class SettingsManager: ObservableObject {
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
             toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
             isSentenceMode: isSentenceMode,
-            customShortcuts: customShortcuts, customApps: customApps, appLaunchShortcuts: appLaunchShortcuts,
+            
+            // 🌟 [수정됨] customShortcuts가 빠지고 customApps가 먼저 오도록 순서 조정
+            customApps: customApps,
+            appLaunchShortcuts: appLaunchShortcuts,
             excludedApps: excludedApps,
+            
             isTypoCorrectionEnabled: isTypoCorrectionEnabled,
             typoKeyCode: typoKeyCode, typoModifierFlags: typoModifierFlags, typoDisplayString: typoDisplayString,
             isHyperKeyEnabled: isHyperKeyEnabled,
@@ -143,8 +150,12 @@ class SettingsManager: ObservableObject {
             isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
             isBrowserDomainModeEnabled: isBrowserDomainModeEnabled,
             newTabDefaultLanguage: newTabDefaultLanguage,
-            domainRules: domainRules // 🌟 [추가]
+            
+            // 🌟 [수정됨] 구조체 정의의 맨 마지막에 있으므로, 여기서도 맨 마지막에 값을 넣어줍니다!
+            customShortcuts: customShortcuts,
+            domainRules: domainRules
         )
+        
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
 
@@ -165,20 +176,17 @@ class SettingsManager: ObservableObject {
     @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags); updateSnapshot() } }
     @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString); updateSnapshot() } }
     
-    @Published var customShortcuts: [CustomShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(customShortcuts) { save("customShortcuts", e); updateSnapshot(); syncToCloud() } } }
-    @Published var customApps: [CustomApp] = [] { didSet { if let e = try? JSONEncoder().encode(customApps) { save("customApps", e); updateSnapshot(); syncToCloud() } } }
-    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { if let e = try? JSONEncoder().encode(appLaunchShortcuts) { save("appLaunchShortcuts", e); updateSnapshot(); syncToCloud() } } }
-    @Published var excludedApps: [ExcludedApp] = [] { didSet { if let e = try? JSONEncoder().encode(excludedApps) { save("excludedApps", e); updateSnapshot(); syncToCloud() } } }
+    // 🌟 [수정됨] 기존에 덕지덕지 붙어있던 호출들을 모두 지우고 아주 가볍게 만듭니다.
+    @Published var customShortcuts: [CustomShortcut] = [] { didSet { scheduleSave() } }
+    @Published var customApps: [CustomApp] = [] { didSet { scheduleSave() } }
+    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { scheduleSave() } }
+    @Published var excludedApps: [ExcludedApp] = [] { didSet { scheduleSave() } }
     
-    // 🌟 [추가] 도메인 규칙 저장 및 DomainRuleManager 즉시 동기화
     @Published var domainRules: [DomainRule] = [] {
         didSet {
-            if let e = try? JSONEncoder().encode(domainRules) {
-                save("domainRules", e)
-                updateSnapshot()
-                syncToCloud()
-                DomainRuleManager.shared.rules = domainRules
-            }
+            scheduleSave()
+            // DomainRuleManager 동기화는 즉시 반영이 필요하므로 예외적으로 남겨둡니다.
+            DomainRuleManager.shared.rules = domainRules
         }
     }
     
@@ -261,20 +269,16 @@ class SettingsManager: ObservableObject {
     @objc private func icloudUpdateReceived(_ notification: Notification) {
         guard isCloudSyncEnabled else { return }
         
-        // 🌟 [추가됨] [weak self]를 통해 메모리 누수를 완벽히 방지합니다.
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // 깃발을 올려 iCloud 역류를 방지합니다.
             self.isBatchUpdating = true
             
+            // 🌟 [핵심 수정 1] defer 내부에서 로컬 저장과 스냅샷 갱신을 먼저 보장하고,
+            // 가장 마지막 순간에 깃발을 내립니다.
             defer {
-                // 🌟 [핵심 수정] 순서를 바꿨습니다!
-                // 깃발이 아직 올라가 있는 상태에서 안전하게 로컬 저장 및 스냅샷을 갱신합니다.
                 self.saveAll()
                 self.updateSnapshot()
-                
-                // 모든 작업이 완전히 끝난 후, 가장 마지막 순간에 깃발을 내립니다.
                 self.isBatchUpdating = false
             }
             
@@ -293,7 +297,6 @@ class SettingsManager: ObservableObject {
             if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.excludedApps = dec }
             if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.customShortcuts = dec }
             
-            // 🌟 iCloud에서 도메인 규칙 수신 및 엔진 동기화
             if let data = dict["domainRules"] as? Data, let dec = try? JSONDecoder().decode([DomainRule].self, from: data) {
                 self.domainRules = dec
                 DomainRuleManager.shared.rules = dec
@@ -301,7 +304,12 @@ class SettingsManager: ObservableObject {
             
             if let val = dict["isBrowserTabMemoryEnabled"] as? Bool { self.isBrowserTabMemoryEnabled = val }
             if let val = dict["isBrowserDomainModeEnabled"] as? Bool { self.isBrowserDomainModeEnabled = val }
-        }
+            
+            // 🌟 4. 변수 세팅이 다 끝났으니, 로컬(UserDefaults)에 한 번에 예쁘게 저장합니다.
+            self.saveAll()
+            self.updateSnapshot()
+            
+        } // 🚪 🌟 5. 함수(블록)가 끝나는 이 지점에서 아까 예약해둔 defer가 발동하여 깃발이 false로 내려갑니다!
     }
     
     func syncToCloud() {
@@ -331,7 +339,6 @@ class SettingsManager: ObservableObject {
     }
     
     private func save(_ key: String, _ value: Any) {
-        guard !isBatchUpdating else { return }
         UserDefaults.standard.set(value, forKey: key)
     }
     
@@ -451,6 +458,40 @@ class SettingsManager: ObservableObject {
                 }
             }
         }
+    }
+    // 🌟 [추가됨] 연속 호출을 방지하고 마지막 1번만 디스크에 저장하는 디바운스 함수
+    private func scheduleSave() {
+        saveWorkItem?.cancel()
+        
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            
+            // 1. 디스크에 데이터 일괄 저장 (백그라운드 스레드에서 실행)
+            self.performActualSave()
+            
+            // 🌟 [핵심 수정] 2. 저장 완료 후, 메인 스레드에서 스냅샷 갱신과 iCloud 동기화를 '딱 1번만' 실행합니다.
+            DispatchQueue.main.async {
+                self.updateSnapshot()
+                
+                if !self.isBatchUpdating {
+                    self.syncToCloud()
+                }
+            }
+        }
+        
+        saveWorkItem = workItem
+        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 0.5, execute: workItem)
+    }
+    
+    // 실제 저장을 수행하는 함수 (기존 코드 재활용)
+    // 🌟 [수정됨] 디바운스 타이머가 끝난 후 실제로 실행될 내용
+    private func performActualSave() {
+        // 이미 밑에 만들어두신 일괄 저장 함수(saveAll)를 호출하기만 하면 완벽합니다!
+        self.saveAll()
+        
+        #if DEBUG
+        print("SettingsManager: 배열 데이터들이 디바운스 처리되어 한 번에 디스크에 저장되었습니다.")
+        #endif
     }
     // MARK: - Cache & Memory Management
     

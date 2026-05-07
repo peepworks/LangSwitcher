@@ -89,8 +89,12 @@ class TypoConverter {
                         // 붙여넣기 (Cmd+V)
                         self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
                         
-                        // 붙여넣기 완료 후 자물쇠 해제
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        // 🌟 [수정됨] 현재 활성화된 앱을 확인하고 동적 딜레이를 적용합니다.
+                        let activeAppID = AppMonitor.shared.activeAppBundleID
+                        let delay = self.getClipboardRestoreDelay(for: activeAppID)
+                        
+                        // 계산된 delay만큼 대기 후 자물쇠 해제
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                             self.safeRestoreAndUnlock()
                         }
                         
@@ -115,7 +119,11 @@ class TypoConverter {
         // Cmd+V 붙여넣기
         self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        // 🌟 [수정됨] 여기에도 동일하게 동적 딜레이를 적용합니다.
+        let activeAppID = AppMonitor.shared.activeAppBundleID
+        let delay = self.getClipboardRestoreDelay(for: activeAppID)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             self.safeRestoreAndUnlock()
         }
     }
@@ -237,5 +245,23 @@ class TypoConverter {
             }
         }
         return result
+    }
+    
+    // 🌟 [추가] 타겟 앱의 특성에 따라 클립보드 복구 대기 시간을 다르게 반환합니다.
+    private func getClipboardRestoreDelay(for bundleID: String?) -> TimeInterval {
+        guard let bundleID = bundleID else { return 0.3 }
+        
+        // 대표적으로 클립보드 읽기 속도가 느린 Electron / 웹 렌더링 기반 앱들
+        let slowApps: Set<String> = [
+            "com.microsoft.VSCode",
+            "com.tinyspeck.slackmacgap", // Slack
+            "com.hnc.Discord",
+            "md.obsidian",
+            "com.google.Chrome",
+            "notion.id"
+        ]
+        
+        // 느린 앱은 0.7초, 일반 네이티브 앱은 0.15초 (필요에 따라 조절 가능)
+        return slowApps.contains(bundleID) ? 0.7 : 0.15
     }
 }

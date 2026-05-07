@@ -27,13 +27,14 @@ class AccessibilityManager: ObservableObject {
     @Published var isChromeAutomationTrusted: Bool = false
     @Published var isSafariAutomationTrusted: Bool = false
 
+    // 🌟 [수정 1] 변수 중복을 없애고 단일 타이머(timer)만 사용합니다.
     private var timer: Timer?
 
     init() {
         self.isTrusted = AXIsProcessTrusted()
         self.checkAutomationPermissions(prompt: false)
         
-        // 🌟 [핵심 추가 1] 앱이 화면의 포커스를 다시 받을 때마다 상태를 새로고침하도록 옵저버를 등록합니다.
+        // 앱이 화면의 포커스를 다시 받을 때마다 상태를 새로고침합니다.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(refreshPermissions),
@@ -42,7 +43,6 @@ class AccessibilityManager: ObservableObject {
         )
     }
 
-    // 🌟 [핵심 추가 2] 새로고침 실행 함수
     @objc private func refreshPermissions() {
         self.checkPermission(prompt: false)
         self.checkAutomationPermissions(prompt: false)
@@ -63,17 +63,27 @@ class AccessibilityManager: ObservableObject {
                 AppMonitor.shared.start()
                 self.stopMonitoring()
             } else {
-                self.startMonitoring()
+                // 🌟 [수정 2] 타이머가 이미 돌고 있다면 다시 부르지 않도록 방어막(guard) 추가
+                if self.timer == nil {
+                    self.startMonitoring()
+                }
             }
         }
         return trusted
     }
 
-    func checkAutomationPermissions(prompt: Bool = false) {
+    // 🌟 [수정 3] 컴파일 에러 해결: 자동화 권한 결과를 종합해서 Bool로 반환(return)하게 바꿉니다.
+    @discardableResult
+    func checkAutomationPermissions(prompt: Bool = false) -> Bool {
+        let chromeGranted = self.checkAppAutomation(for: "com.google.Chrome", prompt: prompt)
+        let safariGranted = self.checkAppAutomation(for: "com.apple.Safari", prompt: prompt)
+        
         DispatchQueue.main.async {
-            self.isChromeAutomationTrusted = self.checkAppAutomation(for: "com.google.Chrome", prompt: prompt)
-            self.isSafariAutomationTrusted = self.checkAppAutomation(for: "com.apple.Safari", prompt: prompt)
+            self.isChromeAutomationTrusted = chromeGranted
+            self.isSafariAutomationTrusted = safariGranted
         }
+        
+        return chromeGranted && safariGranted
     }
 
     private func checkAppAutomation(for bundleID: String, prompt: Bool) -> Bool {
@@ -87,16 +97,29 @@ class AccessibilityManager: ObservableObject {
         return status == noErr
     }
 
-    private func startMonitoring() {
+    func startMonitoring() {
+        // 이미 타이머가 존재하면 중복 생성하지 않고 무시합니다.
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.checkPermission(prompt: false)
-            self?.checkAutomationPermissions(prompt: false)
+        
+        // 🌟 3초 간격으로 우아하게 상태를 확인합니다.
+        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // 1. 접근성 권한 확인 (이 안에서 권한 획득 시 알아서 stopMonitoring이 불립니다)
+            self.checkPermission(prompt: false)
+            
+            // 2. 자동화 권한 확인
+            self.checkAutomationPermissions(prompt: false)
+            
+            // 접근성(필수) 권한이 획득되면 타이머는 checkPermission 내부의 stopMonitoring()에 의해 파괴됩니다.
         }
     }
 
     private func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+        #if DEBUG
+        print("AccessibilityManager: 권한 모니터링 타이머가 안전하게 종료되었습니다.")
+        #endif
     }
 }

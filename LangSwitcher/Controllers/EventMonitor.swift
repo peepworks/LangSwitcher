@@ -579,10 +579,7 @@ class EventMonitor {
         // 🌟 [수정됨] 기존 recursiveDelete 대신 batchDelete 호출
         self.batchDelete(count: originalLength) { [weak self] in // 🌟 여기에 [weak self] in 을 반드시 추가해야 합니다!
             guard let self = self else { return }
-            
-            // 지우기가 다 끝나면 실행될 붙여넣기(변환) 로직
-            let localPB = NSPasteboard.general
-            
+           
             // 1. [바통 터치] 삭제가 완전히 끝남! 이제 안전하게 새 텍스트를 붙여넣습니다.
             self.postUnicodeString(correctedText)
             

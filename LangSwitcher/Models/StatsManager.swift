@@ -64,29 +64,43 @@ class StatsManager: ObservableObject {
     
     func incrementLanguageSwitch() {
         let dateKey = todayKey()
-        stateQueue.async(flags: .barrier) {
+        
+        // 🌟 [1단계: 쓰기] barrier 안에서는 오직 데이터 변경만 하고 잽싸게 빠져나옵니다.
+        stateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            
+            // 🌟 [수정됨] self._statsDict 사용 및 DailyStat 초기화 파라미터 이름 매칭
             var stat = self._statsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
+            
+            // 🌟 [수정됨] switchCount 대신 languageSwitches 사용
             stat.languageSwitches += 1
+            
             self._statsDict[dateKey] = stat
-            
-            // 🌟 [추가됨] 데이터가 변경되었음을 표시합니다.
             self.isDirty = true
-            
-            self.publishUpdate()
+        } // 🚪 여기서 독방 문이 열립니다!
+        
+        // 🌟 [2단계: 부수 효과] 문을 열고 나온 뒤에, 독립적으로 UI 갱신을 요청합니다.
+        DispatchQueue.main.async { [weak self] in
+            self?.publishUpdate()
         }
     }
     
     func incrementTypoCorrection() {
         let dateKey = todayKey()
-        stateQueue.async(flags: .barrier) {
+        
+        // 🌟 [1단계: 쓰기] 여기도 동일하게 barrier 안에서 쓰기만 처리합니다.
+        stateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            
             var stat = self._statsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
             stat.typoCorrections += 1
             self._statsDict[dateKey] = stat
-            
-            // 🌟 [추가됨] 데이터가 변경되었음을 표시합니다.
             self.isDirty = true
-            
-            self.publishUpdate()
+        } // 🚪 독방 문 개방
+        
+        // 🌟 [2단계: 부수 효과] 중첩 제거 및 독립적 스케줄링
+        DispatchQueue.main.async { [weak self] in
+            self?.publishUpdate()
         }
     }
     
@@ -105,16 +119,16 @@ class StatsManager: ObservableObject {
         var shouldSave = false
         var snapshot: [String: DailyStat] = [:]
         
-        stateQueue.sync {
-            // 변경된 적이 있을 때만 복사 작업을 수행합니다.
+        // 🌟 [핵심 수정] isDirty = false 라는 '쓰기' 작업이 포함되어 있으므로,
+        // 반드시 flags: .barrier를 추가하여 다른 스레드의 접근을 완벽히 차단해야 합니다.
+        stateQueue.sync(flags: .barrier) {
             if self.isDirty {
                 shouldSave = true
                 snapshot = self._statsDict
-                self.isDirty = false // 포스트잇을 뗍니다.
+                self.isDirty = false // 쓰기 작업이 이제 완벽하게 안전해졌습니다.
             }
         }
         
-        // 변경된 것이 없으면 함수를 즉시 종료하여 자원 낭비를 막습니다.
         guard shouldSave else { return }
         
         saveQueue.async {

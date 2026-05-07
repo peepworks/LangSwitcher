@@ -47,22 +47,21 @@ class HyperKeyManager {
 
     // 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
     private func setupHardwareMapping(enable: Bool) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let task = Process()
-            task.launchPath = "/usr/bin/hidutil"
+        let task = Process()
+        task.launchPath = "/usr/bin/hidutil"
 
-            let mappingString = enable
-                ? "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x70000006E}]}"
-                : "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x700000039}]}"
+        let mappingString = enable
+            ? "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x70000006E}]}"
+            : "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x700000039}]}"
 
-            task.arguments = ["property", "--set", mappingString]
+        task.arguments = ["property", "--set", mappingString]
 
-            do {
-                try task.run()
-                task.waitUntilExit()
-                    
-                if task.terminationStatus != 0 {
-                    let errorMessage = "hidutil exited with code: \(task.terminationStatus)"
+        // 🌟 [최적화] GCD async 블록 안에서 묶여 기다리지 않고, terminationHandler를 사용해 비동기 콜백으로 처리합니다.
+        task.terminationHandler = { proc in
+            if proc.terminationStatus != 0 {
+                let errorMessage = "hidutil exited with code: \(proc.terminationStatus)"
+                // 로그 추가 같은 작업은 메인 스레드로 넘겨 UI나 다른 매니저와의 충돌을 방지하는 것이 좋습니다.
+                DispatchQueue.main.async {
                     SettingsManager.shared.addLog(ActionLog(
                         timestamp: Date(),
                         targetApp: "System",
@@ -71,10 +70,16 @@ class HyperKeyManager {
                         result: .failure,
                         failureReason: .unknown
                     ))
-                    print("hidutil 실행 실패: \(errorMessage)")
                 }
-                    
-            } catch {
+                print("hidutil 실행 실패: \(errorMessage)")
+            }
+        }
+
+        do {
+            try task.run()
+            // 🌟 여기서 바로 빠져나가므로 스레드 블로킹이 전혀 발생하지 않습니다.
+        } catch {
+            DispatchQueue.main.async {
                 SettingsManager.shared.addLog(ActionLog(
                     timestamp: Date(),
                     targetApp: "System",
@@ -83,8 +88,8 @@ class HyperKeyManager {
                     result: .failure,
                     failureReason: .unknown
                 ))
-                print("hidutil 실행 실패: \(error)")
             }
+            print("hidutil 실행 실패: \(error)")
         }
     }
 
@@ -184,7 +189,7 @@ class HyperKeyManager {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05, execute: item)
     }
 
-    // 🌟 [추가됨] 실제 JXA 스크립트를 실행하는 로직 분리
+    // 🌟 [추가/수정됨] 실제 JXA 스크립트를 실행하는 로직
     private func executeCapsLockToggle() {
         let currentFlags = CGEventSource.flagsState(.hidSystemState)
         let currentState = currentFlags.contains(.maskAlphaShift)
@@ -206,11 +211,31 @@ class HyperKeyManager {
         let task = Process()
         task.launchPath = "/usr/bin/osascript"
         task.arguments = ["-l", "JavaScript", "-e", script]
+        
+        // 🌟 [핵심 추가] 비동기로 스크립트 실행 결과를 확인하여 실패 시에만 로그를 남깁니다.
+        task.terminationHandler = { proc in
+            if proc.terminationStatus != 0 {
+                // UI나 공유 상태를 건드릴 수 있으므로 메인 스레드로 보냅니다.
+                DispatchQueue.main.async {
+                    print("Caps Lock 토글 스크립트 실패 (종료 코드: \(proc.terminationStatus))")
+                    
+                    // (선택 사항) 시스템 설정 로깅에 실패 기록 추가
+                    SettingsManager.shared.addLog(ActionLog(
+                        timestamp: Date(),
+                        targetApp: "System",
+                        appliedRule: "Caps Lock Toggle",
+                        finalInputSource: "Failed",
+                        result: .failure,
+                        failureReason: .unknown
+                    ))
+                }
+            }
+        }
+
         do {
-            try task.run()
-            task.waitUntilExit()
+            try task.run() // 🌟 이제 스레드를 막지 않고 실행만 한 뒤 바로 빠져나갑니다.
         } catch {
-            print("Caps Lock toggle failed: \(error)")
+            print("Caps Lock toggle 실행 자체를 실패함: \(error)")
         }
     }
 }
