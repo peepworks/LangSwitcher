@@ -207,6 +207,10 @@ struct AboutSettingsView: View {
         // 🌟 [핵심 수정] 무겁게 새로 만들던 let formatter = DateFormatter() 부분을 완전히 지우고,
         // 파일 맨 위에 만들어둔 Self.debugLogFormatter를 재사용합니다!
         savePanel.nameFieldStringValue = "LangSwitcher_DebugLog_\(Self.debugLogFormatter.string(from: Date())).txt"
+        
+        // 🌟 [추가됨] NSSavePanel은 아이콘을 넣을 수 없지만,
+        // 다른 앱 화면 뒤로 숨는 것을 막기 위해 반드시 최상단으로 끌어올려야 합니다!
+        NSApp.activate(ignoringOtherApps: true)
 
         if savePanel.runModal() == .OK, let url = savePanel.url {
             let logHeader = "LangSwitcher Debug Log\nGenerated: \(Date().description)\nApp Version: \(appVersion)\n----------------------------------\n\n"

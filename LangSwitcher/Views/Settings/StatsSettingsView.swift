@@ -341,6 +341,14 @@ struct StatsSettingsView: View {
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.alertStyle = .warning
         
+        // 🌟 핵심: 알림창에 앱 아이콘을 강제로 지정합니다.
+        if let appIcon = NSImage(named: NSImage.applicationIconName) {
+            alert.icon = appIcon
+        }
+        
+        // 🌟 [추가됨] 알림창이 다른 앱 화면 뒤로 숨지 않도록 강제로 최상단으로 끌어올립니다.
+        NSApp.activate(ignoringOtherApps: true)
+        
         if alert.runModal() == .alertFirstButtonReturn {
             statsManager.resetStats()
         }
