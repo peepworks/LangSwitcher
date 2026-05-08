@@ -62,16 +62,21 @@ class ChromiumAdapter: BrowserAdapter {
         }
         """
         
-        // 🌟 [수정됨] 클로저 방식이 아닌, 즉시 값을 변수(resultString)로 받아옵니다.
-        let resultString = executeJXA(script: script)
-        
-        guard let resultString = resultString,
-              let data = resultString.data(using: .utf8),
-              let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
-            completion(nil)
-            return
+        DispatchQueue.global(qos: .userInitiated).async {
+            // 🌟 1. 무거운 JXA 스크립트 실행은 백그라운드에서 진행 (앱 멈춤 방지)
+            let resultString = executeJXA(script: script)
+            
+            // 🌟 2. 가벼운 JSON 디코딩은 다시 메인 스레드로 돌아와서 실행 (Swift 6 컴파일 에러 해결)
+            DispatchQueue.main.async {
+                guard let resultString = resultString,
+                      let data = resultString.data(using: .utf8),
+                      let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
+                    completion(nil)
+                    return
+                }
+                completion(context)
+            }
         }
-        completion(context)
     }
 }
 
@@ -94,42 +99,48 @@ class SafariAdapter: BrowserAdapter {
         }
         """
         
-        // 🌟 [수정됨] 사파리 역시 동일하게 클로저 대신 변수로 결과값을 즉시 받습니다.
-        let resultString = executeJXA(script: script)
-        
-        guard let resultString = resultString,
-              let data = resultString.data(using: .utf8),
-              let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
-            completion(nil)
-            return
+        DispatchQueue.global(qos: .userInitiated).async {
+            // 🌟 1. 무거운 JXA 실행 (백그라운드)
+            let resultString = executeJXA(script: script)
+            
+            // 🌟 2. 가벼운 JSON 디코딩 (메인 스레드)
+            DispatchQueue.main.async {
+                guard let resultString = resultString,
+                      let data = resultString.data(using: .utf8),
+                      let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
+                    completion(nil)
+                    return
+                }
+                completion(context)
+            }
         }
-        completion(context)
     }
 }
 
-// MARK: - JXA 스크립트 비동기 실행 (Thread Explosion 방지 적용)
-// 🌟 [수정됨] 무거운 Process() 대신 앱 내부 메모리에서 즉시 실행되는 OSAKit 사용
+// 🌟 [추가됨] JavaScript 엔진을 매번 생성하지 않고 딱 한 번만 만들어 재사용 (크래시 방지)
+private let sharedJSLanguage = OSALanguage(forName: "JavaScript")
+
+// MARK: - JXA 스크립트 비동기 실행
 private func executeJXA(script: String) -> String? {
-    // JXA(JavaScript) 언어 엔진을 불러옵니다.
-    guard let language = OSALanguage(forName: "JavaScript") else {
+    guard let language = sharedJSLanguage else {
         print("JavaScript for Automation 언어 엔진을 찾을 수 없습니다.")
         return nil
     }
     
-    // 스크립트 객체를 생성합니다.
-    let osaScript = OSAScript(source: script, language: language)
-    var errorInfo: NSDictionary?
-    
-    // 🌟 [수정됨] osaScript는 Optional이 아니므로 물음표(?)를 제거합니다.
-    let result = osaScript.executeAndReturnError(&errorInfo)
-    
-    if let error = errorInfo {
-        print("JXA 실행 에러: \(error)")
-        return nil
+    // 🌟 [추가됨] autoreleasepool 블록을 씌워 JavaScriptCore 메모리 누수와 충돌을 완벽 차단
+    return autoreleasepool {
+        let osaScript = OSAScript(source: script, language: language)
+        var errorInfo: NSDictionary?
+        
+        let result = osaScript.executeAndReturnError(&errorInfo)
+        
+        if let error = errorInfo {
+            print("JXA 실행 에러: \(error)")
+            return nil
+        }
+        
+        return result?.stringValue
     }
-    
-    // 실행 결과를 문자열로 반환합니다.
-    return result?.stringValue
 }
 
 // MARK: - Core Manager
