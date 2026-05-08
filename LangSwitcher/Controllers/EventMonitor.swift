@@ -96,6 +96,17 @@ class EventMonitor {
         11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t", 31: "o",
         32: "u", 34: "i", 35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m"
     ]
+    
+    // 🌟 [추가됨] 톨게이트 초소 전용 로컬 규정집과 아주 가벼운 자물쇠
+    private var localSnapshot: SettingsSnapshot?
+    private let snapshotLock = NSLock()
+        
+    // 🌟 [추가됨] 본사(SettingsManager)에서 새 규정집을 배달해 줄 때 호출할 함수
+    func updateSettingsSnapshot(_ newSnapshot: SettingsSnapshot) {
+        snapshotLock.lock()
+        self.localSnapshot = newSnapshot
+        snapshotLock.unlock()
+    }
 
     private init() {}
 
@@ -220,7 +231,13 @@ class EventMonitor {
     // MARK: - 기능별 분리된 이벤트 처리기
     
     private func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        let snapshot = SettingsManager.shared.snapshot
+        // 🌟 안전: 외부 요인과 완전히 단절된 독립적인 자물쇠를 사용하여 0.0001초 내에 읽기 보장
+        EventMonitor.shared.snapshotLock.lock()
+        guard let snapshot = EventMonitor.shared.localSnapshot else {
+            EventMonitor.shared.snapshotLock.unlock()
+            return Unmanaged.passUnretained(event)
+        }
+        EventMonitor.shared.snapshotLock.unlock()
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
         let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)

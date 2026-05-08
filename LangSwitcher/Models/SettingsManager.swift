@@ -156,6 +156,9 @@ class SettingsManager: ObservableObject {
             domainRules: domainRules
         )
         
+        // 🌟 [추가됨] 새로운 스냅샷이 만들어지면 즉시 EventMonitor 초소로 배달(Push)합니다.
+        EventMonitor.shared.updateSettingsSnapshot(newSnapshot)
+        
         snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
     }
 

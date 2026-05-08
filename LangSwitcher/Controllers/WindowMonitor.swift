@@ -26,6 +26,12 @@ class WindowMonitor {
     static let shared = WindowMonitor()
     
     private var windowLanguageMemory: [CGWindowID: (lang: String, pid: pid_t)] = [:]
+    
+    // 🌟 [추가됨] LRU 메모리 관리를 위한 번호표 변수들
+    private var windowAccessTicks: [CGWindowID: Int] = [:]
+    private var currentTick: Int = 0
+    private let maxWindowMemoryLimit = 200 // 최대 기억할 창의 개수
+    
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
     
@@ -185,11 +191,15 @@ class WindowMonitor {
         let langToSave = targetLang ?? latestInputSource
         
         if !langToSave.isEmpty {
-            // 🌟 [1단계: 쓰기] barrier 안에서는 '오직' 데이터를 저장하는 일만 하고 깔끔하게 문을 닫습니다.
             stateQueue.async(flags: .barrier) { [weak self] in
                 guard let self = self else { return }
+                
+                // 1. 장부에 언어를 기록합니다.
                 self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
-            } // 🚪 여기서 barrier 블록이 완전히 끝납니다!
+                
+                // 🌟 2. [추가됨] 방금 접근했으므로 번호표를 갱신(LRU 최신화)합니다.
+                self.touchWindowMemory(windowID: windowID)
+            }
         }
         
         // 🌟 [2단계: 부수 효과]
@@ -263,11 +273,47 @@ class WindowMonitor {
     
     // WindowMonitor 클래스 내부에 추가
     func clearMemory() {
-        stateQueue.async(flags: .barrier) {
+        stateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
             self.windowLanguageMemory.removeAll()
-            // 필요한 경우 현재 활성화된 PID 추적 정보도 초기화
-            self._currentPID = 0
-            self._activeWindowElement = nil
+            
+            // 🌟 [추가됨] 번호표 초기화
+            self.windowAccessTicks.removeAll()
+            self.currentTick = 0
         }
+    }
+    
+    // 🌟 [추가됨] 창 메모리를 최신으로 끌어올리고, 200개가 넘으면 가장 오래된 것을 삭제
+    private func touchWindowMemory(windowID: CGWindowID) {
+        if currentTick == Int.max {
+            rebuildTicksFromScratch()
+        }
+        
+        currentTick += 1
+        windowAccessTicks[windowID] = currentTick
+        
+        if windowAccessTicks.count > maxWindowMemoryLimit {
+            // 가장 번호표가 작은(오래된) 창을 찾아서 삭제
+            if let oldest = windowAccessTicks.min(by: { $0.value < $1.value }) {
+                let oldestKey = oldest.key
+                windowLanguageMemory.removeValue(forKey: oldestKey)
+                windowAccessTicks.removeValue(forKey: oldestKey)
+                
+                #if DEBUG
+                print("WindowMonitor: 메모리 한계 도달로 오래된 창(\(oldestKey)) 기록을 삭제했습니다.")
+                #endif
+            }
+        }
+    }
+
+    // 🌟 [추가됨] Int.max 오버플로우 방어
+    private func rebuildTicksFromScratch() {
+        let sortedKeys = windowAccessTicks.sorted { $0.value < $1.value }.map { $0.key }
+        windowAccessTicks.removeAll(keepingCapacity: true)
+        
+        for (index, key) in sortedKeys.enumerated() {
+            windowAccessTicks[key] = index + 1
+        }
+        currentTick = sortedKeys.count
     }
 }

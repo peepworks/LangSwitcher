@@ -18,6 +18,7 @@
 
 import Cocoa
 import Foundation
+import OSAKit // 🌟 [추가] 인프로세스 JXA 실행을 위한 Apple 공식 프레임워크
 
 // MARK: - Data Models
 
@@ -61,16 +62,16 @@ class ChromiumAdapter: BrowserAdapter {
         }
         """
         
-        // 🌟 [수정됨] executeJXA에서 넘어온 String을 JSON 파싱하여 TabContext로 변환 후 completion 호출
-        executeJXA(script: script) { resultString in
-            guard let resultString = resultString,
-                  let data = resultString.data(using: .utf8),
-                  let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
-                completion(nil)
-                return
-            }
-            completion(context)
+        // 🌟 [수정됨] 클로저 방식이 아닌, 즉시 값을 변수(resultString)로 받아옵니다.
+        let resultString = executeJXA(script: script)
+        
+        guard let resultString = resultString,
+              let data = resultString.data(using: .utf8),
+              let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
+            completion(nil)
+            return
         }
+        completion(context)
     }
 }
 
@@ -93,53 +94,42 @@ class SafariAdapter: BrowserAdapter {
         }
         """
         
-        // 🌟 [수정됨] 동일하게 String 결과값을 TabContext로 변환
-        executeJXA(script: script) { resultString in
-            guard let resultString = resultString,
-                  let data = resultString.data(using: .utf8),
-                  let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
-                completion(nil)
-                return
-            }
-            completion(context)
+        // 🌟 [수정됨] 사파리 역시 동일하게 클로저 대신 변수로 결과값을 즉시 받습니다.
+        let resultString = executeJXA(script: script)
+        
+        guard let resultString = resultString,
+              let data = resultString.data(using: .utf8),
+              let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
+            completion(nil)
+            return
         }
+        completion(context)
     }
 }
 
 // MARK: - JXA 스크립트 비동기 실행 (Thread Explosion 방지 적용)
-// 🌟 completion 클로저를 통해 결과를 비동기적으로 전달받도록 수정
-private func executeJXA(script: String, completion: @escaping (String?) -> Void) {
-    let process = Process()
-    let pipe = Pipe()
-    
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-    process.arguments = ["-l", "JavaScript", "-e", script]
-    process.standardOutput = pipe
-    process.standardError = Pipe() // 에러 로그가 표준 출력에 섞이는 것 방지
-    
-    // 🌟 [핵심 변경 포인트] waitUntilExit() 대신 terminationHandler 사용
-    process.terminationHandler = { proc in
-        // 프로세스가 종료되면 이 블록이 실행됩니다. (대기 스레드 없음!)
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        
-        // 결과를 문자열로 변환하고 공백/줄바꿈 제거
-        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // 결과가 빈 문자열이면 nil로 처리, 아니면 결과 전달
-        let finalResult = (output?.isEmpty == true) ? nil : output
-        
-        // 결과를 메인 스레드나 호출한 쪽에 전달
-        completion(finalResult)
+// 🌟 [수정됨] 무거운 Process() 대신 앱 내부 메모리에서 즉시 실행되는 OSAKit 사용
+private func executeJXA(script: String) -> String? {
+    // JXA(JavaScript) 언어 엔진을 불러옵니다.
+    guard let language = OSALanguage(forName: "JavaScript") else {
+        print("JavaScript for Automation 언어 엔진을 찾을 수 없습니다.")
+        return nil
     }
     
-    do {
-        try process.run()
-    } catch {
-        #if DEBUG
-        print("JXA 프로세스 실행 실패: \(error)")
-        #endif
-        completion(nil)
+    // 스크립트 객체를 생성합니다.
+    let osaScript = OSAScript(source: script, language: language)
+    var errorInfo: NSDictionary?
+    
+    // 🌟 [수정됨] osaScript는 Optional이 아니므로 물음표(?)를 제거합니다.
+    let result = osaScript.executeAndReturnError(&errorInfo)
+    
+    if let error = errorInfo {
+        print("JXA 실행 에러: \(error)")
+        return nil
     }
+    
+    // 실행 결과를 문자열로 반환합니다.
+    return result?.stringValue
 }
 
 // MARK: - Core Manager
@@ -200,7 +190,8 @@ class BrowserTabManager {
         }
 
         jxaWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: item)
+        // 🌟 [수정됨] 0.3초로 늘려, 탭 이동이 완전히 끝난 후 한 번만 스크립트가 돌도록(Debounce) 안정화합니다.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
         
     private func executeTabFetchAndRestore(bundleID: String, appName: String, adapter: BrowserAdapter, generation: Int) {
