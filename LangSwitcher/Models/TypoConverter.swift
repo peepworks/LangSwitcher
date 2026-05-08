@@ -247,21 +247,23 @@ class TypoConverter {
         return result
     }
     
-    // 🌟 [추가] 타겟 앱의 특성에 따라 클립보드 복구 대기 시간을 다르게 반환합니다.
+    // 🌟 [수정됨] 앱별로 가장 최적화된 복구 딜레이를 개별적으로 관리하는 사전(Dictionary) 추가
+    // 이 사전을 함수 바깥(클래스 내부 변수)으로 빼서 관리가 쉽도록 만듭니다.
+    private let clipboardDelayMap: [String: TimeInterval] = [
+        "com.microsoft.VSCode": 0.7,
+        "com.tinyspeck.slackmacgap": 0.6,
+        "com.hnc.Discord": 0.6,
+        "notion.id": 0.6,
+        "md.obsidian": 0.5,
+        "com.google.Chrome": 0.4 // 브라우저는 에디터보다는 조금 더 빠르므로 0.4초
+    ]
+
+    // 🌟 [수정됨] Set 방식 대신 Dictionary를 조회하도록 함수 변경
     private func getClipboardRestoreDelay(for bundleID: String?) -> TimeInterval {
-        guard let bundleID = bundleID else { return 0.3 }
+        guard let bundleID = bundleID else { return 0.15 } // 번들 ID가 없으면 기본값 반환
         
-        // 대표적으로 클립보드 읽기 속도가 느린 Electron / 웹 렌더링 기반 앱들
-        let slowApps: Set<String> = [
-            "com.microsoft.VSCode",
-            "com.tinyspeck.slackmacgap", // Slack
-            "com.hnc.Discord",
-            "md.obsidian",
-            "com.google.Chrome",
-            "notion.id"
-        ]
-        
-        // 느린 앱은 0.7초, 일반 네이티브 앱은 0.15초 (필요에 따라 조절 가능)
-        return slowApps.contains(bundleID) ? 0.7 : 0.15
+        // 🌟 사전에 번들 ID가 존재하면 그 맞춤형 시간을 반환하고,
+        // 사전에 없는 일반 네이티브 앱이라면 기본값인 0.15초를 반환합니다.
+        return clipboardDelayMap[bundleID] ?? 0.15
     }
 }

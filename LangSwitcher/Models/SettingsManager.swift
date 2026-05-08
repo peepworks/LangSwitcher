@@ -274,8 +274,7 @@ class SettingsManager: ObservableObject {
             
             self.isBatchUpdating = true
             
-            // 🌟 [핵심 수정 1] defer 내부에서 로컬 저장과 스냅샷 갱신을 먼저 보장하고,
-            // 가장 마지막 순간에 깃발을 내립니다.
+            // 🌟 [완벽한 defer 구조] 여기서 저장과 스냅샷 갱신을 보장하고 깃발을 내립니다.
             defer {
                 self.saveAll()
                 self.updateSnapshot()
@@ -305,11 +304,9 @@ class SettingsManager: ObservableObject {
             if let val = dict["isBrowserTabMemoryEnabled"] as? Bool { self.isBrowserTabMemoryEnabled = val }
             if let val = dict["isBrowserDomainModeEnabled"] as? Bool { self.isBrowserDomainModeEnabled = val }
             
-            // 🌟 4. 변수 세팅이 다 끝났으니, 로컬(UserDefaults)에 한 번에 예쁘게 저장합니다.
-            self.saveAll()
-            self.updateSnapshot()
+            // 🌟 참고: defer에서 이미 호출하므로 여기에 있던 self.saveAll() 등은 깔끔하게 삭제되었습니다!
             
-        } // 🚪 🌟 5. 함수(블록)가 끝나는 이 지점에서 아까 예약해둔 defer가 발동하여 깃발이 false로 내려갑니다!
+        } // 🚪 블록이 끝나면 defer가 발동합니다.
     }
     
     func syncToCloud() {
@@ -413,10 +410,11 @@ class SettingsManager: ObservableObject {
                         
                         self.isBatchUpdating = true
                         
+                        // 🌟 [완벽한 defer 구조]
                         defer {
-                            self.isBatchUpdating = false
                             self.saveAll()
                             self.updateSnapshot()
+                            self.isBatchUpdating = false
                         }
                         
                         self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive

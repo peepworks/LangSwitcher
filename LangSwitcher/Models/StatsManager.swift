@@ -176,13 +176,18 @@ class StatsManager: ObservableObject {
     // MARK: - 운영 및 관리 기능 (초기화 및 내보내기)
     
     func resetStats() {
-        stateQueue.async(flags: .barrier) {
-            self._statsDict.removeAll()
-            // 🌟 [추가됨] 리셋 후에는 타이머가 빈 딕셔너리를 무의미하게 저장하지 않도록 플래그를 꺼줍니다.
-            self.isDirty = false
-            self.publishUpdate()
+        // 🌟 [1단계: 쓰기] barrier 안에서는 오직 데이터 삭제만 하고 잽싸게 빠져나옵니다.
+        stateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
             
+            self._statsDict.removeAll()
+            self.isDirty = false
             UserDefaults.standard.removeObject(forKey: self.defaultsKey)
+        } // 🚪 여기서 독방 문이 열립니다!
+        
+        // 🌟 [2단계: 부수 효과] 문을 열고 나온 뒤에, 독립적으로 UI 갱신을 요청합니다.
+        DispatchQueue.main.async { [weak self] in
+            self?.publishUpdate()
         }
     }
     

@@ -20,6 +20,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AboutSettingsView: View {
+    // 🌟 [추가됨] DateFormatter를 딱 한 번만 생성하여 메모리에 재사용할 수 있게 만듭니다.
+    private static let debugLogFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmm" // 파일명에 쓰기 좋게 언더바(_) 추가를 권장합니다.
+        formatter.locale = Locale(identifier: "en_US_POSIX") // 12/24시간제 사용자 설정에 영향받지 않게 고정
+        return formatter
+    }()
+    
     @ObservedObject private var accManager = AccessibilityManager.shared
     @ObservedObject private var updateManager = UpdateManager.shared
     @ObservedObject private var settings = SettingsManager.shared
@@ -194,17 +202,18 @@ struct AboutSettingsView: View {
     private func downloadDebugLogs() {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.plainText]
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd_HHmm"
-        savePanel.nameFieldStringValue = "LangSwitcher_DebugLog_\(formatter.string(from: Date())).txt"
         savePanel.prompt = String(localized: "Save")
+
+        // 🌟 [핵심 수정] 무겁게 새로 만들던 let formatter = DateFormatter() 부분을 완전히 지우고,
+        // 파일 맨 위에 만들어둔 Self.debugLogFormatter를 재사용합니다!
+        savePanel.nameFieldStringValue = "LangSwitcher_DebugLog_\(Self.debugLogFormatter.string(from: Date())).txt"
 
         if savePanel.runModal() == .OK, let url = savePanel.url {
             let logHeader = "LangSwitcher Debug Log\nGenerated: \(Date().description)\nApp Version: \(appVersion)\n----------------------------------\n\n"
 
             let logEntries = settings.recentLogs.map { log in
-                let timeStr = formatter.string(from: log.timestamp)
+                // 🌟 [핵심 수정] 로그 기록을 문자열로 바꿀 때도 static 포매터를 재사용합니다.
+                let timeStr = Self.debugLogFormatter.string(from: log.timestamp)
                 let resultMark = log.result == .success ? "✅" : "❌"
                 return "[\(timeStr)] \(resultMark) Rule: \(log.appliedRule) | Target: \(log.targetApp) | Output: \(log.finalInputSource) | Reason: \(log.failureReason.rawValue)"
             }.joined(separator: "\n")

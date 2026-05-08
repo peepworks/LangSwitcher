@@ -183,18 +183,20 @@ class WindowMonitor {
         
         // 🌟 [2단계: 쓰기] 계산된 결과를 바탕으로 장부에 비동기로 기록 (중첩 큐 없음)
         let langToSave = targetLang ?? latestInputSource
+        
         if !langToSave.isEmpty {
+            // 🌟 [1단계: 쓰기] barrier 안에서는 '오직' 데이터를 저장하는 일만 하고 깔끔하게 문을 닫습니다.
             stateQueue.async(flags: .barrier) { [weak self] in
                 guard let self = self else { return }
-                
-                // 500개 초과 시 오래된 기억(첫 번째 요소) 삭제
-                if self.windowLanguageMemory[windowID] == nil && self.windowLanguageMemory.count >= 500 {
-                    if let firstKey = self.windowLanguageMemory.keys.first {
-                        self.windowLanguageMemory.removeValue(forKey: firstKey)
-                    }
-                }
-                
                 self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
+            } // 🚪 여기서 barrier 블록이 완전히 끝납니다!
+        }
+        
+        // 🌟 [2단계: 부수 효과]
+        // self를 전혀 사용하지 않으므로 [weak self]와 guard문을 완전히 지웠습니다.
+        DispatchQueue.main.async {
+            if let lang = targetLang {
+                InputSourceManager.shared.switchLanguage(to: lang)
             }
         }
         
