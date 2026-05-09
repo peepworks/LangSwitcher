@@ -11,6 +11,10 @@
 		122AA3F12F9DA544006297F4 /* ClickHigh.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */; };
 		122AA3F22F9DA544006297F4 /* ClickLow.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 122AA3F02F9DA544006297F4 /* ClickLow.mp3 */; };
 		122AA3F42F9DA713006297F4 /* SensoryFeedbackManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */; };
+		1241A8C02FAEEC1E0078CD5F /* SettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1241A8BF2FAEEC1C0078CD5F /* SettingsModels.swift */; };
+		1241A8C22FAEECA10078CD5F /* iCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1241A8C12FAEEC9E0078CD5F /* iCloud.swift */; };
+		1241A8C42FAEED310078CD5F /* Backup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1241A8C32FAEED2F0078CD5F /* Backup.swift */; };
+		1241A8C62FAEED780078CD5F /* Cache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1241A8C52FAEED760078CD5F /* Cache.swift */; };
 		1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */; };
 		125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */; };
 		125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF4D32F658001005DAB0C /* EventMonitor.swift */; };
@@ -41,6 +45,10 @@
 		122AA3F02F9DA544006297F4 /* ClickLow.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ClickLow.mp3; sourceTree = "<group>"; };
 		122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensoryFeedbackManager.swift; sourceTree = "<group>"; };
 		1239486B2F9C990D00980FAF /* LangSwitcher.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LangSwitcher.entitlements; sourceTree = "<group>"; };
+		1241A8BF2FAEEC1C0078CD5F /* SettingsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModels.swift; sourceTree = "<group>"; };
+		1241A8C12FAEEC9E0078CD5F /* iCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iCloud.swift; sourceTree = "<group>"; };
+		1241A8C32FAEED2F0078CD5F /* Backup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backup.swift; sourceTree = "<group>"; };
+		1241A8C52FAEED760078CD5F /* Cache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cache.swift; sourceTree = "<group>"; };
 		1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMonitor.swift; sourceTree = "<group>"; };
 		125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputSourceManager.swift; sourceTree = "<group>"; };
 		125FF4D32F658001005DAB0C /* EventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventMonitor.swift; sourceTree = "<group>"; };
@@ -88,6 +96,17 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1241A8BE2FAEEC0F0078CD5F /* SettingsManager */ = {
+			isa = PBXGroup;
+			children = (
+				1241A8C52FAEED760078CD5F /* Cache.swift */,
+				1241A8C32FAEED2F0078CD5F /* Backup.swift */,
+				1241A8C12FAEEC9E0078CD5F /* iCloud.swift */,
+				1241A8BF2FAEEC1C0078CD5F /* SettingsModels.swift */,
+			);
+			path = SettingsManager;
+			sourceTree = "<group>";
+		};
 		125FF4C92F657EFF005DAB0C /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -100,6 +119,7 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				1241A8BE2FAEEC0F0078CD5F /* SettingsManager */,
 				12B699582FA71ED000F6B79D /* DomainRuleManager.swift */,
 				12B699562FA71E9D00F6B79D /* DomainRule.swift */,
 				12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */,
@@ -289,18 +309,22 @@
 				125FF4D82F658041005DAB0C /* AppDelegate.swift in Sources */,
 				12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */,
 				129D74D42FA4329400227AD9 /* StatsManager.swift in Sources */,
+				1241A8C62FAEED780078CD5F /* Cache.swift in Sources */,
 				12B699592FA71ED300F6B79D /* DomainRuleManager.swift in Sources */,
 				126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */,
 				125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */,
+				1241A8C22FAEECA10078CD5F /* iCloud.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
 				12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */,
 				1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */,
 				12C6E7F02FA579AA004C7A0A /* BrowserTabManager.swift in Sources */,
+				1241A8C42FAEED310078CD5F /* Backup.swift in Sources */,
 				1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */,
 				125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */,
 				125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */,
 				125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */,
 				126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */,
+				1241A8C02FAEEC1E0078CD5F /* SettingsModels.swift in Sources */,
 				12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */,
 				12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */,
 				12B699572FA71EA800F6B79D /* DomainRule.swift in Sources */,
@@ -465,7 +489,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.7.0;
+				MARKETING_VERSION = 0.8.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;
@@ -506,7 +530,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.7.0;
+				MARKETING_VERSION = 0.8.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;

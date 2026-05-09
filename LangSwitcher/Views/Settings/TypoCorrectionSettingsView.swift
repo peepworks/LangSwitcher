@@ -18,6 +18,7 @@
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers // 🌟 이 줄을 추가해 주세요.
 
 struct TypoCorrectionSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
@@ -122,6 +123,51 @@ struct TypoCorrectionSettingsView: View {
                     Text(String(localized: "Note: This feature simulates selecting the text and replacing it. It may not work perfectly in all applications depending on their text selection behavior."))
                         .font(.caption).foregroundColor(.secondary).padding(.leading, 5)
                 }
+                // 3. 앱별 적응형 딜레이 설정 (고급)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(String(localized: "App-Specific Delays (Advanced)")).font(.headline)
+                        Spacer()
+                        Button(action: addDelayApp) {
+                            Image(systemName: "plus.circle.fill").foregroundColor(.blue)
+                            Text(String(localized: "Add App"))
+                        }.buttonStyle(.plain)
+                    }
+                    Text(String(localized: "Increase the delay if typo correction fails or overlaps in heavy applications like IDEs or Electron apps."))
+                        .font(.caption).foregroundColor(.secondary)
+                    
+                    VStack(spacing: 0) {
+                        if settings.appDelays.isEmpty {
+                            Text(String(localized: "No app-specific delays configured."))
+                                .font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        } else {
+                            ForEach($settings.appDelays) { $appDelay in
+                                AppDelayRow(appDelay: $appDelay)
+                                if appDelay.id != settings.appDelays.last?.id {
+                                    Divider().padding(.horizontal, 15)
+                                }
+                            }
+                        }
+                    }
+                    .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    
+                    // 🌟 [새로 추가된 부분] 리스트 하단 우측 정렬된 기본값 복원 버튼
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            settings.restoreDefaultAppDelays()
+                        }) {
+                            Image(systemName: "arrow.counterclockwise")
+                            Text(String(localized: "Restore Defaults"))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                    }
+                    .padding(.top, 2)
+                }
             }
             .padding(.horizontal, 25).padding(.vertical, 15)
             .onDisappear { stopRecording() }
@@ -168,6 +214,25 @@ struct TypoCorrectionSettingsView: View {
         if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifierFlags }) { return String(localized: "This shortcut is already used for an App Launch Shortcut.") }
         return nil
     }
+    
+    // TypoCorrectionSettingsView 내부에 함수 추가
+    private func addDelayApp() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            guard let bundle = Bundle(url: url), let bundleId = bundle.bundleIdentifier else { return }
+            let appName = url.deletingPathExtension().lastPathComponent
+            
+            // 중복 방지 후 0.5초를 기본값으로 앱 추가
+            if !settings.appDelays.contains(where: { $0.bundleIdentifier == bundleId }) {
+                settings.appDelays.append(AppDelay(bundleIdentifier: bundleId, appName: appName, delay: 0.5))
+            }
+        }
+    }
 }
 
 struct ToggleRow: View {
@@ -183,5 +248,51 @@ struct ToggleRow: View {
             Spacer(minLength: 20)
             Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden().controlSize(.small)
         }.padding(15)
+    }
+}
+
+struct AppDelayRow: View {
+    @Binding var appDelay: AppDelay
+    @ObservedObject private var settings = SettingsManager.shared
+    @State private var appIcon: NSImage? = nil
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // 앱 아이콘 및 이름
+            if let icon = appIcon {
+                Image(nsImage: icon).resizable().frame(width: 20, height: 20)
+            } else {
+                Image(systemName: "app.dashed").resizable().frame(width: 20, height: 20).foregroundColor(.secondary)
+            }
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(appDelay.appName).lineLimit(1)
+                Text(String(format: "%.2f sec", appDelay.delay)).font(.caption).foregroundColor(.secondary)
+            }
+            .frame(width: 120, alignment: .leading)
+            
+            // 🌟 딜레이 조절 슬라이더 (0.1초 ~ 1.5초 범위, 0.05초 단위)
+            Slider(value: $appDelay.delay, in: 0.1...1.5, step: 0.05)
+                .labelsHidden()
+            
+            // 삭제 버튼
+            Button(action: {
+                settings.appDelays.removeAll { $0.id == appDelay.id }
+            }) {
+                Image(systemName: "trash").foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 5)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .onAppear { loadIcon() }
+    }
+    
+    private func loadIcon() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appDelay.bundleIdentifier) else { return }
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            DispatchQueue.main.async { self.appIcon = icon }
+        }
     }
 }
