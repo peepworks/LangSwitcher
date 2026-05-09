@@ -22,9 +22,7 @@ import Carbon
 
 struct AdvancedSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
-    
-    @State private var showBackupSuccess = false
-    @State private var showRestoreSuccess = false
+
     @State private var showAutomationAlert = false
     
     private let showICloudFeature = false
@@ -56,12 +54,6 @@ struct AdvancedSettingsView: View {
             .padding(.top, 15)
             .padding(.bottom, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-        .alert(String(localized: "Backup Successful"), isPresented: $showBackupSuccess) {
-            Button(String(localized: "OK"), role: .cancel) { }
-        }
-        .alert(String(localized: "Restore Successful"), isPresented: $showRestoreSuccess) {
-            Button(String(localized: "OK"), role: .cancel) { }
         }
         .alert(String(localized: "Automation Permission Required"), isPresented: $showAutomationAlert) {
             Button(String(localized: "Open Settings")) {
@@ -250,28 +242,57 @@ struct AdvancedSettingsView: View {
     private func exportSettings() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
+        
+        // 문서(Documents) 폴더를 기본값으로 지정
+        if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            panel.directoryURL = docsURL
+        }
+        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmm"
         panel.nameFieldStringValue = "LangSwitcher_Backup_\(formatter.string(from: Date())).json"
-        
+
+        NSApp.activate(ignoringOtherApps: true)
+
         if panel.runModal() == .OK, let url = panel.url {
             settings.exportBackup(to: url) { success, error in
                 if success {
-                    self.showBackupSuccess = true
+                    DispatchQueue.main.async {
+                        let alert = NSAlert()
+                        alert.messageText = String(localized: "Backup Successful")
+                        alert.informativeText = String(localized: "Your settings have been exported successfully.")
+                        if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                            alert.icon = appIcon
+                        }
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
+                    }
                 } else if let error = error {
                     print("Export failed: \(error.localizedDescription)")
                 }
             }
         }
     }
-    
+
     private func importSettings() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
+        
+        NSApp.activate(ignoringOtherApps: true)
+
         if panel.runModal() == .OK, let url = panel.url {
             settings.importBackup(from: url) { success, error in
                 if success {
-                    self.showRestoreSuccess = true
+                    DispatchQueue.main.async {
+                        let alert = NSAlert()
+                        alert.messageText = String(localized: "Restore Successful")
+                        alert.informativeText = String(localized: "Your settings have been imported successfully.")
+                        if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                            alert.icon = appIcon
+                        }
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
+                    }
                 } else if let error = error {
                     print("Import failed: \(error.localizedDescription)")
                 }

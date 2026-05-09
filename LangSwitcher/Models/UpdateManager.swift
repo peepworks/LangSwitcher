@@ -22,11 +22,12 @@ import Combine
 import SwiftUI
 
 // 🌟 SwiftUI 알럿 충돌을 방지하기 위한 단일 상태 정의
-enum UpdateAlertItem: Identifiable {
+// 🌟 [수정됨] onChange에서 상태 변화를 감지할 수 있도록 Equatable 프로토콜 추가
+enum UpdateAlertItem: Identifiable, Equatable { // 🌟 Equatable 추가
     case updateAvailable(version: String, url: URL)
     case upToDate
     case error(String)
-    
+
     var id: String {
         switch self {
         case .updateAvailable(let v, _): return "available_\(v)"

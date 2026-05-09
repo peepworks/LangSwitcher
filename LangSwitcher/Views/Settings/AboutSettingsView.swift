@@ -174,28 +174,84 @@ struct AboutSettingsView: View {
             .padding(.top, 10)        // 상단 여백을 30 -> 10으로 줄임
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .alert(item: $updateManager.activeAlert) { item in
+
+        // 🌟 [새로운 방식] 상태 변화를 감지하여 네이티브 NSAlert를 직접 호출합니다.
+        .onChange(of: updateManager.activeAlert) { item in
+            guard let item = item else { return }
+            
+            let alert = NSAlert()
+            
+            alert.messageText = ""
+            alert.informativeText = ""
+            
+            // 시스템 기본 좌측 아이콘 완벽하게 숨김
+            alert.icon = NSImage(size: NSSize(width: 1, height: 1))
+            
+            let title: String
+            let message: String
+            var downloadURL: URL? = nil
+            
             switch item {
             case .updateAvailable(let version, let url):
-                return Alert(
-                    title: Text(String(localized: "Update Available")),
-                    message: Text("A new version (\(version)) of LangSwitcher is available!"),
-                    primaryButton: .default(Text(String(localized: "Download"))) { NSWorkspace.shared.open(url) },
-                    secondaryButton: .cancel(Text(String(localized: "Later")))
-                )
+                title = String(localized: "Update Available")
+                message = String(localized: "A new version (\(version)) of LangSwitcher is available!")
+                downloadURL = url
+                alert.addButton(withTitle: String(localized: "Download"))
+                alert.addButton(withTitle: String(localized: "Later"))
+                
             case .upToDate:
-                return Alert(
-                    title: Text(String(localized: "Up to Date")),
-                    message: Text(String(localized: "You are running the latest version of LangSwitcher.")),
-                    dismissButton: .default(Text("OK"))
-                )
-            case .error(let message):
-                return Alert(
-                    title: Text(String(localized: "Update Check Failed")),
-                    message: Text(message),
-                    dismissButton: .default(Text("OK"))
-                )
+                title = String(localized: "Up to Date")
+                message = String(localized: "You are running the latest version of LangSwitcher.")
+                alert.addButton(withTitle: String(localized: "OK"))
+                
+            case .error(let msg):
+                title = String(localized: "Update Check Failed")
+                message = msg
+                alert.addButton(withTitle: String(localized: "OK"))
             }
+
+            // 🌟 [유지] 버튼의 파란색 포커스 테두리 완벽 제거
+            for button in alert.buttons {
+                button.focusRingType = .none
+            }
+
+            let rootView = VStack(spacing: 12) {
+                if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .frame(width: 64, height: 64)
+                }
+                
+                Text(title)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // 🌟 [핵심 해결] NSAlert가 강제로 잡아먹는 상단의 빈 공간 안으로
+            // 뷰를 과감하게 쑥 밀어 올려버립니다 (-20 -> -80로 변경)
+            .padding(.top, -80)
+            .padding(.bottom, 10)
+            .frame(width: 280)
+            
+            let hostingController = NSHostingController(rootView: rootView)
+            let targetSize = hostingController.sizeThatFits(in: NSSize(width: 280, height: 1000))
+            hostingController.view.frame = NSRect(origin: .zero, size: targetSize)
+            
+            alert.accessoryView = hostingController.view
+            
+            NSApp.activate(ignoringOtherApps: true)
+            
+            if alert.runModal() == .alertFirstButtonReturn, let url = downloadURL {
+                NSWorkspace.shared.open(url)
+            }
+            
+            updateManager.activeAlert = nil
         }
     }
 
