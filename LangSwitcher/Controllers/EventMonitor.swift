@@ -393,9 +393,33 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
+                // 🌟 [추가됨] 시스템 타임아웃으로 인한 이벤트 탭 중지 감지 및 자동 복원 로직
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    if let tap = EventMonitor.shared.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-                    return nil
+                    // refcon(포인터)을 통해 클래스 인스턴스에 접근하여 tap을 다시 활성화합니다.
+                    if let refcon = refcon {
+                        let monitor = Unmanaged<EventMonitor>.fromOpaque(refcon).takeUnretainedValue()
+                        
+                        // 주의: monitor.eventTap 부분은 실제 개발자님의 변수명(예: machPort, tap 등)에 맞게 수정하세요.
+                        if let tap = monitor.eventTap {
+                            CGEvent.tapEnable(tap: tap, enable: true)
+                            
+                            // 텔레메트리: 탭이 끊어졌다가 복원되었음을 로그에 기록하여 추적 가능하게 만듭니다.
+                            let log = ActionLog(
+                                timestamp: Date(),
+                                targetApp: "macOS System",
+                                appliedRule: "CGEventTap Recovery",
+                                finalInputSource: "Re-enabled successfully",
+                                result: .failure, // 시스템에 의해 강제 종료되었으므로 failure로 기록
+                                failureReason: .unknown
+                            )
+                            SettingsManager.shared.addLog(log)
+                            
+                            #if DEBUG
+                            print("⚠️ LangSwitcher: CGEventTap disabled by system timeout. Auto-recovered!")
+                            #endif
+                        }
+                    }
+                    return Unmanaged.passUnretained(event)
                 }
 
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))

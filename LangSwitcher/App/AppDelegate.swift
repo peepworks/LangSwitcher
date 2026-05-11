@@ -19,6 +19,7 @@
 import Cocoa
 import SwiftUI
 import Carbon
+import AppIntents // 🌟 여기에 추가되어야 합니다!
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
@@ -32,6 +33,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             EventMonitor.shared.start()
         } else {
             AccessibilityManager.shared.checkPermission(prompt: true)
+        }
+        
+        Task {
+            LangSwitcherShortcuts.updateAppShortcutParameters()
+            #if DEBUG
+            print("단축어(App Intents) 강제 업데이트 완료!")
+            #endif
         }
 
         AppMonitor.shared.start()

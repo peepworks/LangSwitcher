@@ -49,64 +49,62 @@ protocol BrowserAdapter: Sendable {
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError>
 }
 
-// 🌟 JavaScript 엔진을 매번 생성하지 않고 딱 한 번만 만들어 재사용 (메모리 누수 방지)
-private let sharedJSLanguage = OSALanguage(forName: "JavaScript")
+// 🌟 [추가] JXA 실행이 절대 겹치지 않도록 교통정리를 해주는 전용 직렬(Serial) 큐
+private let jxaExecutionQueue = DispatchQueue(label: "com.peepboy.LangSwitcher.JXAQueue", qos: .userInitiated)
 
-// 🌟 [핵심 개선] Timeout과 Error 분기가 적용된 안전한 JXA 실행 엔진
+// 🌟 [수정된 함수] 충돌 방지와 타임아웃이 완벽하게 결합된 JXA 실행 엔진
 private func executeJXAWithTimeout(script: String) async -> Result<String, BrowserFetchError> {
     return await withCheckedContinuation { continuation in
+        // 타임아웃(1초)을 재기 위한 글로벌 백그라운드 큐
         DispatchQueue.global(qos: .userInitiated).async {
-            
-            // 🌟 [에러 해결] Swift에서는 앞에 @를 붙이지 않습니다!
-            autoreleasepool {
-                guard let language = sharedJSLanguage else {
-                    continuation.resume(returning: .failure(.executionFailed("OSALanguage Missing")))
-                    return
-                }
+            let dispatchGroup = DispatchGroup()
+            dispatchGroup.enter()
 
-                let osaScript = OSAScript(source: script, language: language)
-                var errorInfo: NSDictionary?
+            var scriptResult: NSAppleEventDescriptor?
+            var errorInfo: NSDictionary?
 
-                // JXA 타임아웃 방어를 위한 DispatchGroup
-                let dispatchGroup = DispatchGroup()
-                dispatchGroup.enter()
-
-                var scriptResult: NSAppleEventDescriptor?
-
-                DispatchQueue.global(qos: .userInitiated).async {
-                    scriptResult = osaScript.executeAndReturnError(&errorInfo)
+            // 🌟 [핵심 방어] JXA 엔진 접근은 반드시 직렬 큐(jxaExecutionQueue) 안에서만 순서대로 실행됩니다.
+            jxaExecutionQueue.async {
+                autoreleasepool {
+                    // 🌟 매번 독립적인 언어 인스턴스를 생성하여 스레드 충돌 완벽 차단!
+                    if let language = OSALanguage(forName: "JavaScript") {
+                        let osaScript = OSAScript(source: script, language: language)
+                        scriptResult = osaScript.executeAndReturnError(&errorInfo)
+                    } else {
+                        errorInfo = ["NSLocalizedDescription": "OSALanguage Init Failed"] as NSDictionary
+                    }
                     dispatchGroup.leave()
                 }
+            }
 
-                // 🌟 1.0초 타임아웃 설정 (무한 대기 방지)
-                let result = dispatchGroup.wait(timeout: .now() + 1.0)
+            // 🌟 1.0초 타임아웃 설정 (무한 대기 방지)
+            let result = dispatchGroup.wait(timeout: .now() + 1.0)
 
-                if result == .timedOut {
-                    continuation.resume(returning: .failure(.timeout))
-                    return
+            if result == .timedOut {
+                continuation.resume(returning: .failure(.timeout))
+                return
+            }
+
+            if let error = errorInfo {
+                continuation.resume(returning: .failure(.executionFailed(error.description)))
+                return
+            }
+
+            let output = scriptResult?.stringValue ?? ""
+
+            // 스크립트에서 반환한 커스텀 에러 파싱
+            if output.hasPrefix("ERROR:") {
+                let errType = output.replacingOccurrences(of: "ERROR:", with: "")
+                switch errType {
+                case "NO_WINDOW": continuation.resume(returning: .failure(.noWindow))
+                case "PERMISSION": continuation.resume(returning: .failure(.permissionDenied))
+                case "UNSUPPORTED": continuation.resume(returning: .failure(.unsupportedBrowser))
+                default: continuation.resume(returning: .failure(.executionFailed(errType)))
                 }
-
-                if let error = errorInfo {
-                    continuation.resume(returning: .failure(.executionFailed(error.description)))
-                    return
-                }
-
-                let output = scriptResult?.stringValue ?? ""
-
-                // 스크립트에서 반환한 커스텀 에러 파싱
-                if output.hasPrefix("ERROR:") {
-                    let errType = output.replacingOccurrences(of: "ERROR:", with: "")
-                    switch errType {
-                    case "NO_WINDOW": continuation.resume(returning: .failure(.noWindow))
-                    case "PERMISSION": continuation.resume(returning: .failure(.permissionDenied))
-                    case "UNSUPPORTED": continuation.resume(returning: .failure(.unsupportedBrowser))
-                    default: continuation.resume(returning: .failure(.executionFailed(errType)))
-                    }
-                } else if !output.isEmpty {
-                    continuation.resume(returning: .success(output))
-                } else {
-                    continuation.resume(returning: .failure(.executionFailed("Empty Result"))) // 오타 수정
-                }
+            } else if !output.isEmpty {
+                continuation.resume(returning: .success(output))
+            } else {
+                continuation.resume(returning: .failure(.executionFailed("Empty Result")))
             }
         }
     }
