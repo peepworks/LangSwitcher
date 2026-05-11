@@ -25,6 +25,7 @@ enum SettingsTab: Hashable {
     case appSpecific
     case domainRules
     case appLaunch
+    case textExpansion // 🌟 1. 텍스트 대치 탭 식별자 추가
     case typoCorrection
     case excludedApps
     case stats
@@ -62,6 +63,10 @@ struct SettingsView: View {
                     Label(String(localized: "App Launch Shortcuts"), systemImage: "square.grid.2x2")
                         .tag(SettingsTab.appLaunch)
                     
+                    // 🌟 2. 사이드바 메뉴에 텍스트 대치 버튼 추가
+                    Label(String(localized: "Text Expansion"), systemImage: "text.badge.plus")
+                        .tag(SettingsTab.textExpansion)
+                    
                     if isKoreanUser {
                         Label(String(localized: "Typo Correction"), systemImage: "text.cursor")
                             .tag(SettingsTab.typoCorrection)
@@ -87,6 +92,7 @@ struct SettingsView: View {
                 case .appSpecific: AppSpecificSettingsView()
                 case .domainRules: DomainRuleSettingsView()
                 case .appLaunch: AppLaunchSettingsView()
+                case .textExpansion: TextExpansionSettingsView() // 🌟 3. 화면 연결
                 case .typoCorrection:
                     if isKoreanUser { TypoCorrectionSettingsView() }
                 case .excludedApps: ExcludedAppsSettingsView()
@@ -98,7 +104,6 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(NSColor.controlBackgroundColor))
         }
-        // 🌟 [수정됨] 최소 높이를 750으로 늘리고, 이상적인 높이(idealHeight)를 850으로 지정하여 넉넉하게 엽니다.
         .frame(minWidth: 750, idealWidth: 750, minHeight: 750, idealHeight: 850)
         .onAppear {
             accManager.checkPermission()

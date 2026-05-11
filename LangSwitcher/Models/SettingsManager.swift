@@ -26,7 +26,7 @@ class SettingsManager: ObservableObject {
     
     let icloudStore = NSUbiquitousKeyValueStore.default
     private let snapshotQueue = DispatchQueue(label: "com.peepworks.settings.snapshot", attributes: .concurrent)
-    private var _snapshot = SettingsSnapshot()
+    private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
     private var saveWorkItem: DispatchWorkItem?
     
     @MainActor var isBatchUpdating: Bool = false
@@ -50,7 +50,7 @@ class SettingsManager: ObservableObject {
     @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { scheduleSave() } }
     @Published var excludedApps: [ExcludedApp] = [] { didSet { scheduleSave() } }
     
-    // 🌟 앱 딜레이 배열 (추가 완료)
+    // 🌟 앱 딜레이 배열
     @Published var appDelays: [AppDelay] = [] { didSet { scheduleSave() } }
     
     @Published var domainRules: [DomainRule] = [] {
@@ -67,6 +67,9 @@ class SettingsManager: ObservableObject {
     @Published var isSentenceMode: Bool { didSet { save("isSentenceMode", isSentenceMode); updateSnapshot() } }
     
     @Published private(set) var recentLogs: [ActionLog] = []
+    
+    // 🌟 [추가됨] 텍스트 대치 배열 저장소
+    @Published var textExpansionRules: [TextExpansionRule] = [] { didSet { scheduleSave() } }
     
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled); updateSnapshot(); syncToCloud() }
@@ -97,6 +100,9 @@ class SettingsManager: ObservableObject {
     @AppStorage("isBrowserDomainModeEnabled") var isBrowserDomainModeEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("newTabDefaultLanguage") var newTabDefaultLanguage: String = "None" { didSet { updateSnapshot(); syncToCloud() } }
     
+    // 🌟 [추가됨] 텍스트 대치 기능 전체 활성화/비활성화 토글
+    @AppStorage("isTextExpansionEnabled") var isTextExpansionEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    
     private init() {
         let d = UserDefaults.standard
         isCtrlActive = d.bool(forKey: "isCtrlActive"); isCmdActive = d.bool(forKey: "isCmdActive"); isOptActive = d.bool(forKey: "isOptActive")
@@ -111,12 +117,15 @@ class SettingsManager: ObservableObject {
         if let data = d.data(forKey: "appLaunchShortcuts"), let dec = try? JSONDecoder().decode([AppLaunchShortcut].self, from: data) { appLaunchShortcuts = dec }
         if let data = d.data(forKey: "excludedApps"), let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { excludedApps = dec }
         
+        // 🌟 [추가됨] 텍스트 대치 규칙 불러오기
+        if let data = d.data(forKey: "textExpansionRules"), let dec = try? JSONDecoder().decode([TextExpansionRule].self, from: data) { textExpansionRules = dec }
+        
         if let data = d.data(forKey: "domainRules"), let dec = try? JSONDecoder().decode([DomainRule].self, from: data) {
             domainRules = dec
             DomainRuleManager.shared.rules = dec
         }
         
-        // 🌟 앱 딜레이 기본값 할당 (추가 완료)
+        // 앱 딜레이 기본값 할당
         if let data = d.data(forKey: "appDelays"), let dec = try? JSONDecoder().decode([AppDelay].self, from: data) {
             appDelays = dec
         } else {
@@ -136,19 +145,19 @@ class SettingsManager: ObservableObject {
         typoDisplayString = d.string(forKey: "typoDisplayString") ?? ""
         isSentenceMode = d.object(forKey: "isSentenceMode") as? Bool ?? false
         
+        // SettingsSnapshot은 클래스가 아니므로 내부 변수만 초기화한 더미가 할당되었을 것입니다.
+        // updateSnapshot을 통해 최신 변수들로 구조체를 찍어냅니다.
         updateSnapshot()
         
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(icloudUpdateReceived(_:)),
+            selector: #selector(icloudUpdateReceived(_:)), // iCloud 연동 함수가 있다면
             name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
             object: icloudStore
         )
         icloudStore.synchronize()
     }
-    
-    
-    
+
     private func save(_ key: String, _ value: Any) {
         UserDefaults.standard.set(value, forKey: key)
     }
@@ -160,7 +169,9 @@ class SettingsManager: ObservableObject {
         if let e = try? JSONEncoder().encode(appLaunchShortcuts) { d.set(e, forKey: "appLaunchShortcuts") }
         if let e = try? JSONEncoder().encode(excludedApps) { d.set(e, forKey: "excludedApps") }
         if let e = try? JSONEncoder().encode(domainRules) { d.set(e, forKey: "domainRules") }
-        if let e = try? JSONEncoder().encode(appDelays) { d.set(e, forKey: "appDelays") } // 🌟 추가
+        if let e = try? JSONEncoder().encode(appDelays) { d.set(e, forKey: "appDelays") }
+        // 🌟 [추가됨] 텍스트 대치 규칙 저장
+        if let e = try? JSONEncoder().encode(textExpansionRules) { d.set(e, forKey: "textExpansionRules") }
     }
     
     var snapshot: SettingsSnapshot {
@@ -197,11 +208,18 @@ class SettingsManager: ObservableObject {
             excludedApps: excludedApps,
             customShortcuts: customShortcuts,
             domainRules: domainRules,
-            appDelays: appDelays // 🌟 추가 완료
+            appDelays: appDelays,
+            
+            // 🌟 [추가됨] 텍스트 대치 변수를 Snapshot 생성자에 주입
+            isTextExpansionEnabled: isTextExpansionEnabled,
+            textExpansionRules: textExpansionRules
         )
         
         EventMonitor.shared.updateSettingsSnapshot(newSnapshot)
-        snapshotQueue.async(flags: .barrier) { self._snapshot = newSnapshot }
+        snapshotQueue.async(flags: .barrier) {
+            // 이 클로저 내부에서는 Thread-safe하게 접근합니다.
+            self._snapshot = newSnapshot
+        }
     }
     
     func addLog(_ log: ActionLog) {
@@ -218,9 +236,13 @@ class SettingsManager: ObservableObject {
         
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
+            
+            // 1. 실제 저장은 백그라운드에서 수행 (무거운 작업)
             self.performActualSave()
+            
+            // 2. UI와 밀접한 스냅샷 업데이트 및 클라우드 동기화는 메인 스레드에서 수행
             DispatchQueue.main.async {
-                self.updateSnapshot()
+                self.updateSnapshot() // 🌟 이제 메인 액터에서 실행되므로 에러가 사라집니다.
                 if !self.isBatchUpdating { self.syncToCloud() }
             }
         }
@@ -236,9 +258,7 @@ class SettingsManager: ObservableObject {
         #endif
     }
     
-    // MARK: - Cache & Memory Management    
-    // SettingsManager.swift 클래스 내부에 추가
-    
+    // MARK: - Cache & Memory Management
     // 🌟 [추가됨] 앱별 딜레이 기본값 복원 함수
     @MainActor
     func restoreDefaultAppDelays() {

@@ -145,4 +145,69 @@ extension EventMonitor {
     func getCharacter(from keyCode: UInt16) -> Character? {
         return EventMonitor.charKeyMap[keyCode]
     }
+    
+    // 텍스트 대치 실행 함수
+    func performTextExpansion(triggerLength: Int, replacementText: String, triggerKeyCode: UInt16) {
+        
+        // 1. 입력된 트리거 글자 수만큼 백스페이스로 지웁니다.
+        self.batchDelete(count: triggerLength) { [weak self] in
+            guard let self = self else { return }
+            
+            // 2. 동적으로 파싱된 긴 텍스트를 청크 단위로 안전하게 삽입합니다.
+            self.insertLongUnicodeText(replacementText) {
+                // 3. 🌟 삽입이 완전히 다 끝났다는 콜백을 받은 후, 트리거 키(스페이스/엔터)를 쏴줍니다.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                    self.postTriggerKey(keyCode: triggerKeyCode)
+                }
+            }
+        }
+    }
+    
+    // 🌟 [심층 리서치 반영] CGEventKeyboardSetUnicodeString 앱 호환성 완벽 해결
+    // 완료 시점을 알기 위해 completion 클로저를 추가했습니다.
+    func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
+        let chars = Array(text.utf16)
+        if chars.isEmpty {
+            completion()
+            return
+        }
+        
+        // 청크를 20자씩 안전하게 쪼개서 배열로 미리 만들어 둡니다.
+        let chunkSize = 20
+        var chunks: [[UTF16.CodeUnit]] = []
+        for i in stride(from: 0, to: chars.count, by: chunkSize) {
+            let end = min(i + chunkSize, chars.count)
+            chunks.append(Array(chars[i..<end]))
+        }
+        
+        // 🌟 글자 씹힘 방지: for 루프가 아니라, 0.01초 간격으로 시간을 두고 이벤트를 예약합니다.
+        for (index, chunk) in chunks.enumerated() {
+            let delay = Double(index) * 0.01
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                // 비동기 블록 안에서 포인터(&)를 쓰기 위해 복사본을 만듭니다.
+                var localChunk = chunk
+                
+                // 1. Key Down 이벤트
+                if let eventDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
+                    eventDown.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
+                    eventDown.setIntegerValueField(.eventSourceUserData, value: 9999)
+                    eventDown.post(tap: .cghidEventTap)
+                }
+                
+                // 2. Key Up 이벤트 (필수: 앱이 키가 떼어졌음을 인식하게 함)
+                if let eventUp = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) {
+                    eventUp.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
+                    eventUp.setIntegerValueField(.eventSourceUserData, value: 9999)
+                    eventUp.post(tap: .cghidEventTap)
+                }
+            }
+        }
+        
+        // 모든 청크의 비동기 전송이 끝나는 시간을 계산하여 완료 콜백을 실행합니다.
+        let totalDelay = Double(chunks.count) * 0.01 + 0.01
+        DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) {
+            completion()
+        }
+    }
 }

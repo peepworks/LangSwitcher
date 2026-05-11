@@ -35,6 +35,8 @@
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
 		129D74D42FA4329400227AD9 /* StatsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129D74D32FA4329100227AD9 /* StatsManager.swift */; };
+		12A6DB392FB190F50000A927 /* TextExpansionRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A6DB382FB190ED0000A927 /* TextExpansionRule.swift */; };
+		12A6DB3B2FB191230000A927 /* TextExpander.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A6DB3A2FB191030000A927 /* TextExpander.swift */; };
 		12B699572FA71EA800F6B79D /* DomainRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B699562FA71E9D00F6B79D /* DomainRule.swift */; };
 		12B699592FA71ED300F6B79D /* DomainRuleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B699582FA71ED000F6B79D /* DomainRuleManager.swift */; };
 		12C6E7F02FA579AA004C7A0A /* BrowserTabManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */; };
@@ -78,6 +80,8 @@
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		129E052E2F657B6A00F34ABE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		129E05322F657E1600F34ABE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		12A6DB382FB190ED0000A927 /* TextExpansionRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextExpansionRule.swift; sourceTree = "<group>"; };
+		12A6DB3A2FB191030000A927 /* TextExpander.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextExpander.swift; sourceTree = "<group>"; };
 		12B699562FA71E9D00F6B79D /* DomainRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainRule.swift; sourceTree = "<group>"; };
 		12B699582FA71ED000F6B79D /* DomainRuleManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainRuleManager.swift; sourceTree = "<group>"; };
 		12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTabManager.swift; sourceTree = "<group>"; };
@@ -153,6 +157,8 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				12A6DB3A2FB191030000A927 /* TextExpander.swift */,
+				12A6DB382FB190ED0000A927 /* TextExpansionRule.swift */,
 				1241A8BE2FAEEC0F0078CD5F /* SettingsManager */,
 				12B699582FA71ED000F6B79D /* DomainRuleManager.swift */,
 				12B699562FA71E9D00F6B79D /* DomainRule.swift */,
@@ -172,13 +178,13 @@
 		125FF4CB2F657F1A005DAB0C /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
-				121445442FB1868900BAD265 /* ShortcutRecorder.swift */,
 				1214453D2FB1855F00BAD265 /* EventMonitor */,
 				126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */,
 				122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */,
 				12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */,
 				1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */,
 				125FF4D32F658001005DAB0C /* EventMonitor.swift */,
+				121445442FB1868900BAD265 /* ShortcutRecorder.swift */,
 			);
 			path = Controllers;
 			sourceTree = "<group>";
@@ -354,6 +360,7 @@
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
 				12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */,
 				1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */,
+				12A6DB392FB190F50000A927 /* TextExpansionRule.swift in Sources */,
 				12C6E7F02FA579AA004C7A0A /* BrowserTabManager.swift in Sources */,
 				1241A8C42FAEED310078CD5F /* Backup.swift in Sources */,
 				1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */,
@@ -371,6 +378,7 @@
 				121445472FB1879F00BAD265 /* ShortcutRecorder.swift in Sources */,
 				121445482FB1879F00BAD265 /* State.swift in Sources */,
 				121445492FB1879F00BAD265 /* Handlers.swift in Sources */,
+				12A6DB3B2FB191230000A927 /* TextExpander.swift in Sources */,
 				1220DB552FB15E8C00D8CEAD /* LangSwitcherEnums.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

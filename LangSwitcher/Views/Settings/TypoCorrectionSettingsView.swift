@@ -20,6 +20,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers // 🌟 이 줄을 추가해 주세요.
 
+@MainActor
 struct TypoCorrectionSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
     @State private var isRecording = false

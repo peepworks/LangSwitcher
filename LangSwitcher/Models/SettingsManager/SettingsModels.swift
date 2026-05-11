@@ -107,4 +107,7 @@ struct SettingsSnapshot {
     var customShortcuts: [CustomShortcut] = []
     var domainRules: [DomainRule] = []
     var appDelays: [AppDelay] = [] // 🌟 스냅샷용 앱 딜레이
+    
+    var isTextExpansionEnabled: Bool
+    var textExpansionRules: [TextExpansionRule] = []
 }

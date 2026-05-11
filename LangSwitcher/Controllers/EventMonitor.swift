@@ -46,7 +46,10 @@ class EventMonitor {
     static let charKeyMap: [UInt16: Character] = [
         0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",
         11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t", 31: "o",
-        32: "u", 34: "i", 35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m"
+        32: "u", 34: "i", 35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m",
+        41: ";", // 🌟 세미콜론 추가
+        // 필요하다면 다른 특수문자도 추가 가능
+        44: "/", 47: ".", 43: ",", 39: "'", 33: "["
     ]
     
     var localSnapshot: SettingsSnapshot?
@@ -134,8 +137,10 @@ class EventMonitor {
 
                 if isSimulated { return Unmanaged.passUnretained(event) }
                 
+                // 🔽 여기서부터 🔽
                 if type == .keyDown {
-                    if snapshot.isAutoTypoCorrectionEnabled {
+                    // 🌟 [수정 포인트 1] 오타 교정 또는 텍스트 대치 중 하나라도 켜져 있으면 버퍼를 기록합니다.
+                    if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                         EventMonitor.shared.checkStaleAndResetBuffer()
                         let isEnterTrigger = snapshot.isAutoTypoCorrectionOnEnterEnabled && keyCode == 36
                         
@@ -143,31 +148,67 @@ class EventMonitor {
                         let hasModifiers = flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate)
                         let isPureSpace = (keyCode == 49) && !hasModifiers
                         
+                        // 스페이스바 또는 엔터(설정 시)를 눌렀을 때 트리거 검사
                         if isPureSpace || isEnterTrigger {
                             let currentBuffer = EventMonitor.shared.typingBuffer
-                            if currentBuffer.count >= 2 {
-                                if EventMonitor.shared.isCurrentLanguageEnglish() {
-                                    if let convertedText = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
-                                        EventMonitor.shared.performAutoCorrection(
-                                            originalLength: currentBuffer.count,
-                                            correctedText: convertedText,
-                                            triggerKeyCode: UInt16(keyCode)
-                                        )
-                                        EventMonitor.shared.clearTypingBuffer()
-                                        return nil
+                            let currentAppID = AppMonitor.shared.activeAppBundleID
+                            
+                            print("Checking expansion for: \(currentBuffer)")
+                            
+                            // 🌟 [수정 포인트 2] 1순위: Text Expansion (텍스트 대치) 우선 검사
+                            if snapshot.isTextExpansionEnabled,
+                                // 🌟 위에서 선언한 currentBuffer를 그대로 전달합니다.
+                                let matchedRule = TextExpander.shared.findMatch(in: currentBuffer, activeAppID: currentAppID, rules: snapshot.textExpansionRules) {
+                                    
+                                let parsedText = TextExpander.shared.parseDynamicVariables(text: matchedRule.replacement)
+                                    
+                                EventMonitor.shared.performTextExpansion(
+                                    triggerLength: matchedRule.trigger.count,
+                                    replacementText: parsedText,
+                                    triggerKeyCode: UInt16(keyCode)
+                                )
+                                    
+                                EventMonitor.shared.clearTypingBuffer()
+                                return nil
+                            }
+                            
+                            // 🌟 [수정 포인트 3] 2순위: 기존 오타 교정 로직 (텍스트 대치가 없을 때만 실행)
+                            if snapshot.isAutoTypoCorrectionEnabled {
+                                if currentBuffer.count >= 2 {
+                                    if EventMonitor.shared.isCurrentLanguageEnglish() {
+                                        if let convertedText = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
+                                            EventMonitor.shared.performAutoCorrection(
+                                                originalLength: currentBuffer.count,
+                                                correctedText: convertedText,
+                                                triggerKeyCode: UInt16(keyCode)
+                                            )
+                                            EventMonitor.shared.clearTypingBuffer()
+                                            return nil
+                                        }
                                     }
                                 }
                             }
+                            
+                            // 아무것도 매칭되지 않았으면 일반 입력이므로 버퍼만 비움
                             EventMonitor.shared.clearTypingBuffer()
                         }
                         else if keyCode == 36 || keyCode == 51 || (123...126).contains(keyCode) {
                             EventMonitor.shared.clearTypingBuffer()
                         }
-                        else if let char = EventMonitor.shared.getCharacter(from: UInt16(keyCode)) {
-                            if EventMonitor.shared.isCurrentLanguageEnglish() {
-                                EventMonitor.shared.appendToTypingBuffer(char)
-                            } else {
-                                EventMonitor.shared.clearTypingBuffer()
+                        else {
+                            // 🌟 수정된 부분: charKeyMap 대신 실제 입력된 문자를 직접 추출
+                            if let nsEvent = NSEvent(cgEvent: event),
+                               let chars = nsEvent.characters, !chars.isEmpty {
+                                let char = chars.first!
+                                
+                                // 출력 가능한 일반 문자(특수문자 포함)만 버퍼에 추가
+                                if char.isLetter || char.isNumber || char.isPunctuation || char == ";" {
+                                    if EventMonitor.shared.isCurrentLanguageEnglish() {
+                                        EventMonitor.shared.appendToTypingBuffer(char)
+                                    } else {
+                                        EventMonitor.shared.clearTypingBuffer()
+                                    }
+                                }
                             }
                         }
                     }
