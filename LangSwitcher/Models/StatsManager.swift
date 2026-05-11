@@ -153,10 +153,18 @@ class StatsManager: ObservableObject {
         }
     }
     
+    // 🌟 [수정됨] 메인 스레드 대기를 방지하고, 안전하게 딕셔너리를 읽어 UI로 전달합니다.
     private func publishUpdate() {
-        let snapshot = Array(self._statsDict.values).sorted { $0.dateString < $1.dateString }
-        DispatchQueue.main.async {
-            self.dailyStats = snapshot
+        // 1. stateQueue에서 안전하게 복사본(Snapshot)을 생성합니다.
+        stateQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            let snapshot = Array(self._statsDict.values).sorted { $0.dateString < $1.dateString }
+            
+            // 2. 완성된 배열만 메인 스레드로 던져 UI를 업데이트합니다.
+            DispatchQueue.main.async {
+                self.dailyStats = snapshot
+            }
         }
     }
 

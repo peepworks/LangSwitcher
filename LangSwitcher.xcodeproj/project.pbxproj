@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		121445462FB1879F00BAD265 /* Simulation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121445422FB1866000BAD265 /* Simulation.swift */; };
+		121445472FB1879F00BAD265 /* ShortcutRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121445442FB1868900BAD265 /* ShortcutRecorder.swift */; };
+		121445482FB1879F00BAD265 /* State.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1214453E2FB1863300BAD265 /* State.swift */; };
+		121445492FB1879F00BAD265 /* Handlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121445402FB1864900BAD265 /* Handlers.swift */; };
 		1220DB552FB15E8C00D8CEAD /* LangSwitcherEnums.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1220DB542FB15E8600D8CEAD /* LangSwitcherEnums.swift */; };
 		1220DB572FB15EB600D8CEAD /* LangSwitcherIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1220DB562FB15EB400D8CEAD /* LangSwitcherIntents.swift */; };
 		1220DB592FB15EF100D8CEAD /* LangSwitcherShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1220DB582FB15EEE00D8CEAD /* LangSwitcherShortcuts.swift */; };
@@ -43,6 +47,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1214453E2FB1863300BAD265 /* State.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = State.swift; sourceTree = "<group>"; };
+		121445402FB1864900BAD265 /* Handlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Handlers.swift; sourceTree = "<group>"; };
+		121445422FB1866000BAD265 /* Simulation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Simulation.swift; sourceTree = "<group>"; };
+		121445442FB1868900BAD265 /* ShortcutRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutRecorder.swift; sourceTree = "<group>"; };
 		1220DB542FB15E8600D8CEAD /* LangSwitcherEnums.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherEnums.swift; sourceTree = "<group>"; };
 		1220DB562FB15EB400D8CEAD /* LangSwitcherIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherIntents.swift; sourceTree = "<group>"; };
 		1220DB582FB15EEE00D8CEAD /* LangSwitcherShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherShortcuts.swift; sourceTree = "<group>"; };
@@ -102,6 +110,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1214453D2FB1855F00BAD265 /* EventMonitor */ = {
+			isa = PBXGroup;
+			children = (
+				121445422FB1866000BAD265 /* Simulation.swift */,
+				121445402FB1864900BAD265 /* Handlers.swift */,
+				1214453E2FB1863300BAD265 /* State.swift */,
+			);
+			path = EventMonitor;
+			sourceTree = "<group>";
+		};
 		1220DB532FB15E6F00D8CEAD /* Intents */ = {
 			isa = PBXGroup;
 			children = (
@@ -154,6 +172,8 @@
 		125FF4CB2F657F1A005DAB0C /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
+				121445442FB1868900BAD265 /* ShortcutRecorder.swift */,
+				1214453D2FB1855F00BAD265 /* EventMonitor */,
 				126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */,
 				122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */,
 				12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */,
@@ -347,6 +367,10 @@
 				12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */,
 				12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */,
 				12B699572FA71EA800F6B79D /* DomainRule.swift in Sources */,
+				121445462FB1879F00BAD265 /* Simulation.swift in Sources */,
+				121445472FB1879F00BAD265 /* ShortcutRecorder.swift in Sources */,
+				121445482FB1879F00BAD265 /* State.swift in Sources */,
+				121445492FB1879F00BAD265 /* Handlers.swift in Sources */,
 				1220DB552FB15E8C00D8CEAD /* LangSwitcherEnums.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
