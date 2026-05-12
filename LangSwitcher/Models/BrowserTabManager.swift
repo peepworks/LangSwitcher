@@ -318,7 +318,7 @@ class BrowserTabManager {
             failureReason = .unknown
             logMessage = "JSON Decoding Failed"
         }
-
+     
         let log = ActionLog(
             timestamp: Date(),
             targetApp: appName,

@@ -41,6 +41,14 @@ struct AppDelay: Identifiable, Codable {
     var delay: Double
 }
 
+enum ActionType: String, Codable {
+    case textExpansion = "Text Expansion"
+    case typoCorrection = "Typo Correction"
+    case systemRecovery = "System Recovery"
+    case windowMemory = "Window Memory"
+    case tabMemory = "Tab Memory"
+}
+
 struct ActionLog: Identifiable, Codable {
     var id = UUID()
     let timestamp: Date
@@ -49,6 +57,7 @@ struct ActionLog: Identifiable, Codable {
     let finalInputSource: String
     let result: LogResult
     let failureReason: FailureReason
+    var actionType: ActionType? = nil
 }
 
 struct BackupData: Codable {

@@ -196,6 +196,18 @@ struct TextExpansionSettingsView: View {
     // MARK: - Import / Export File Panel Actions
     
     private func exportRules() {
+        // 🌟 [보안 추가] 내보내기 전 사용자에게 평문 저장에 대한 경고 표시
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Security Warning")
+        alert.informativeText = String(localized: "Exported backup files contain your text expansion rules in plain text. Please keep this file safe and do not share it if it contains sensitive information like passwords or API keys.")
+        alert.addButton(withTitle: String(localized: "Continue Export"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        
+        // 사용자가 'Continue Export'를 누르지 않으면 취소
+        if alert.runModal() != .alertFirstButtonReturn {
+            return
+        }
+        
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType.json]
         panel.nameFieldStringValue = "LangSwitcher_Snippets.json"
@@ -244,6 +256,7 @@ struct TextExpansionEditView: View {
     @State var rule: TextExpansionRule
     var onComplete: (TextExpansionRule?, EditAction) -> Void
     @FocusState private var isTriggerFocused: Bool
+    @ObservedObject var settings = SettingsManager.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -274,12 +287,28 @@ struct TextExpansionEditView: View {
                     onComplete(nil, .cancel)
                     dismiss()
                 }
+                // TextExpansionEditView 구조체 내부의 Save 버튼 부분 수정
+
                 Button(String(localized: "Save")) {
-                    onComplete(rule, .save)
-                    dismiss()
+                    // 🌟 [안정성] 중복 트리거 검사
+                    let isDuplicate = settings.textExpansionRules.contains {
+                        $0.trigger == rule.trigger && $0.id != rule.id
+                    }
+                    
+                    if isDuplicate {
+                        let alert = NSAlert()
+                        alert.messageText = String(localized: "Duplicate Trigger")
+                        alert.informativeText = String(localized: "This trigger is already in use. Please use a unique trigger.")
+                        alert.addButton(withTitle: String(localized: "OK"))
+                        alert.runModal()
+                    } else {
+                        onComplete(rule, .save)
+                        dismiss()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                // 기존 비활성화 조건에 중복 검사 추가 가능
                 .disabled(rule.trigger.isEmpty || rule.trigger == ";" || rule.replacement.isEmpty)
             }
         }

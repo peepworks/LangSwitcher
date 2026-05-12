@@ -23,7 +23,6 @@ class EventMonitor {
     static let shared = EventMonitor()
     
     // MARK: - Stored Properties
-    // 🌟 분리된 파일에서 접근할 수 있도록 private 키워드를 제거했습니다 (internal로 작동)
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
     var healthCheckTimer: Timer?
@@ -47,8 +46,7 @@ class EventMonitor {
         0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",
         11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t", 31: "o",
         32: "u", 34: "i", 35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m",
-        41: ";", // 🌟 세미콜론 추가
-        // 필요하다면 다른 특수문자도 추가 가능
+        41: ";",
         44: "/", 47: ".", 43: ",", 39: "'", 33: "["
     ]
     
@@ -75,13 +73,15 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
+                // 1. 타임아웃 복구 구간
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     if let refcon = refcon {
                         let monitor = Unmanaged<EventMonitor>.fromOpaque(refcon).takeUnretainedValue()
                         if let tap = monitor.eventTap {
                             CGEvent.tapEnable(tap: tap, enable: true)
                             
-                            let log = ActionLog(timestamp: Date(), targetApp: "macOS System", appliedRule: "CGEventTap Recovery", finalInputSource: "Re-enabled successfully", result: .failure, failureReason: .unknown)
+                            var log = ActionLog(timestamp: Date(), targetApp: "macOS System", appliedRule: "CGEventTap Recovery", finalInputSource: "Re-enabled successfully", result: .failure, failureReason: .unknown)
+                            log.actionType = .systemRecovery
                             SettingsManager.shared.addLog(log)
                             
                             #if DEBUG
@@ -91,9 +91,22 @@ class EventMonitor {
                     }
                     return Unmanaged.passUnretained(event)
                 }
+                
+                // 🌟 [보안 1] 비밀번호 필드(Secure Input) 개입 차단
+                if IsSecureEventInputEnabled() {
+                    return Unmanaged.passUnretained(event)
+                }
 
                 let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                 let snapshot = SettingsManager.shared.snapshot
+                let currentAppID = AppMonitor.shared.activeAppBundleID
+                
+                // 🌟 [보안 2] 예외 앱 정책 강화: 타이핑 버퍼를 기록하기 "전"에 차단하여 원천 봉쇄
+                if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
+                    if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
+                        return Unmanaged.passUnretained(event)
+                    }
+                }
                 
                 if type == .keyDown {
                     let flags = event.flags
@@ -137,9 +150,8 @@ class EventMonitor {
 
                 if isSimulated { return Unmanaged.passUnretained(event) }
                 
-                // 🔽 여기서부터 🔽
+                // 🔽 텍스트 대치 및 오타 교정 처리 🔽
                 if type == .keyDown {
-                    // 🌟 [수정 포인트 1] 오타 교정 또는 텍스트 대치 중 하나라도 켜져 있으면 버퍼를 기록합니다.
                     if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                         EventMonitor.shared.checkStaleAndResetBuffer()
                         let isEnterTrigger = snapshot.isAutoTypoCorrectionOnEnterEnabled && keyCode == 36
@@ -151,13 +163,13 @@ class EventMonitor {
                         // 스페이스바 또는 엔터(설정 시)를 눌렀을 때 트리거 검사
                         if isPureSpace || isEnterTrigger {
                             let currentBuffer = EventMonitor.shared.typingBuffer
-                            let currentAppID = AppMonitor.shared.activeAppBundleID
                             
+                            #if DEBUG
                             print("Checking expansion for: \(currentBuffer)")
+                            #endif
                             
-                            // 🌟 [수정 포인트 2] 1순위: Text Expansion (텍스트 대치) 우선 검사
+                            // 1순위: Text Expansion (텍스트 대치)
                             if snapshot.isTextExpansionEnabled,
-                                // 🌟 위에서 선언한 currentBuffer를 그대로 전달합니다.
                                 let matchedRule = TextExpander.shared.findMatch(in: currentBuffer, activeAppID: currentAppID, rules: snapshot.textExpansionRules) {
                                     
                                 let parsedText = TextExpander.shared.parseDynamicVariables(text: matchedRule.replacement)
@@ -167,12 +179,25 @@ class EventMonitor {
                                     replacementText: parsedText,
                                     triggerKeyCode: UInt16(keyCode)
                                 )
+                                
+                                // 🌟 [보안 3 & 안정성] 마스킹 및 actionType 분리 적용
+                                let maskedText = String(repeating: "*", count: parsedText.count)
+                                var log = ActionLog(
+                                    timestamp: Date(),
+                                    targetApp: currentAppID,
+                                    appliedRule: "Text Expansion (\(matchedRule.trigger))",
+                                    finalInputSource: "Expanded: \(maskedText) (\(parsedText.count) chars)",
+                                    result: .success,
+                                    failureReason: .none
+                                )
+                                log.actionType = .textExpansion // 신규 필드 안전하게 주입
+                                SettingsManager.shared.addLog(log)
                                     
                                 EventMonitor.shared.clearTypingBuffer()
                                 return nil
                             }
                             
-                            // 🌟 [수정 포인트 3] 2순위: 기존 오타 교정 로직 (텍스트 대치가 없을 때만 실행)
+                            // 2순위: 기존 오타 교정 로직
                             if snapshot.isAutoTypoCorrectionEnabled {
                                 if currentBuffer.count >= 2 {
                                     if EventMonitor.shared.isCurrentLanguageEnglish() {
@@ -189,35 +214,28 @@ class EventMonitor {
                                 }
                             }
                             
-                            // 아무것도 매칭되지 않았으면 일반 입력이므로 버퍼만 비움
                             EventMonitor.shared.clearTypingBuffer()
                         }
                         else if keyCode == 36 || keyCode == 51 || (123...126).contains(keyCode) {
                             EventMonitor.shared.clearTypingBuffer()
                         }
                         else {
-                            // 🌟 수정된 부분: charKeyMap 대신 실제 입력된 문자를 직접 추출
-                            if let nsEvent = NSEvent(cgEvent: event),
-                               let chars = nsEvent.characters, !chars.isEmpty {
-                                let char = chars.first!
-                                
-                                // 출력 가능한 일반 문자(특수문자 포함)만 버퍼에 추가
-                                if char.isLetter || char.isNumber || char.isPunctuation || char == ";" {
-                                    if EventMonitor.shared.isCurrentLanguageEnglish() {
+                            // 🌟 [치명적 버그 수정] 한글 조합 깨짐 방지 로직 적용
+                            if !EventMonitor.shared.isCurrentLanguageEnglish() {
+                                // 현재 한글 모드라면, OS 조합기를 건드리지 않기 위해 글자 추출을 생략하고 버퍼만 비움
+                                EventMonitor.shared.clearTypingBuffer()
+                            } else {
+                                // 영어 모드일 때만 안전하게 글자를 추출하여 버퍼에 담음
+                                if let nsEvent = NSEvent(cgEvent: event),
+                                   let chars = nsEvent.characters, !chars.isEmpty {
+                                    let char = chars.first!
+                                    
+                                    if char.isLetter || char.isNumber || char.isPunctuation || char == ";" {
                                         EventMonitor.shared.appendToTypingBuffer(char)
-                                    } else {
-                                        EventMonitor.shared.clearTypingBuffer()
                                     }
                                 }
                             }
                         }
-                    }
-                }
-
-                let currentAppID = AppMonitor.shared.activeAppBundleID
-                if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
-                    if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
-                        return Unmanaged.passUnretained(event)
                     }
                 }
 
