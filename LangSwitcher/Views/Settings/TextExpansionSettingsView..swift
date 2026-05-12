@@ -17,6 +17,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TextExpansionSettingsView: View {
     @ObservedObject var settings = SettingsManager.shared
@@ -24,7 +25,7 @@ struct TextExpansionSettingsView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 🌟 1. 마스터 스위치 영역 (기존 스타일 준수)
+            // 마스터 스위치 영역
             HStack {
                 Text(String(localized: "Text Expansion")).font(.title2.bold())
                 Spacer()
@@ -35,15 +36,15 @@ struct TextExpansionSettingsView: View {
             }
             .padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 10)
             
-            // 🌟 2. 설정 내용 영역
+            // 설정 내용 영역
             VStack(alignment: .leading, spacing: 15) {
                 HStack {
-                    Text(String(localized: "Type short triggers to quickly insert long phrases or dynamic values.\nExample: Type ';em' and press Space → 'my.email@gmail.com'"))
+                    Text(String(localized: "Type short triggers to quickly insert long phrases or dynamic values.\nExample 1: ;em → my.email@gmail.com\nExample 2: ;date → {{date:yyyy-MM-dd}}"))
                         .font(.subheadline).foregroundColor(.secondary)
                     
                     Spacer()
                     
-                    // 추가 버튼
+                    // 상단에는 "추가" 버튼만 남김
                     Button(action: {
                         selectedRuleForEdit = TextExpansionRule(trigger: ";", replacement: "")
                     }) {
@@ -53,7 +54,7 @@ struct TextExpansionSettingsView: View {
                     .buttonStyle(.plain)
                 }
                 
-                // 🌟 3. 둥근 테두리 리스트 상자
+                // 둥근 테두리 리스트 상자
                 ScrollView {
                     VStack(spacing: 0) {
                         // 헤더 영역
@@ -88,7 +89,6 @@ struct TextExpansionSettingsView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .foregroundColor(.secondary)
                                     
-                                    // 🌟 4. 관리 영역: 편집 버튼 + 휴지통 아이콘 (일관된 디자인)
                                     HStack(spacing: 12) {
                                         Button(String(localized: "Edit")) {
                                             selectedRuleForEdit = rule
@@ -121,6 +121,49 @@ struct TextExpansionSettingsView: View {
                 .background(Color(NSColor.textBackgroundColor))
                 .cornerRadius(8)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                
+                // 🌟 리스트 상자 우측 하단 백업/복원 버튼 영역
+                HStack(spacing: 10) {
+                    Spacer()
+                    
+                    // 🌟 기본값 복원 버튼 추가
+                    Button(action: {
+                        let defaultRules = [
+                            TextExpansionRule(trigger: ";date", replacement: "{{date:yyyy-MM-dd}}", isEnabled: true),
+                            TextExpansionRule(trigger: ";time", replacement: "{{date:HH:mm}}", isEnabled: true),
+                            TextExpansionRule(trigger: ";now", replacement: "{{date:yyyy-MM-dd HH:mm}}", isEnabled: true),
+                            TextExpansionRule(trigger: ";day", replacement: "{{date:EEEE}}", isEnabled: true)
+                        ]
+                        
+                        // 기존 목록에 없는 트리거만 안전하게 추가 (병합)
+                        for rule in defaultRules {
+                            if !settings.textExpansionRules.contains(where: { $0.trigger == rule.trigger }) {
+                                settings.textExpansionRules.append(rule)
+                            }
+                        }
+                    }) {
+                        Image(systemName: "arrow.counterclockwise")
+                        Text(String(localized: "Restore Defaults"))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.secondary)
+
+                    Button(action: importRules) {
+                        Image(systemName: "square.and.arrow.down")
+                        Text(String(localized: "Import..."))
+                    }
+                    .buttonStyle(.borderless) // 테두리 없이 깔끔하게 텍스트+아이콘만 표시
+                    .foregroundColor(.secondary)
+                    
+                    Button(action: exportRules) {
+                        Image(systemName: "square.and.arrow.up")
+                        Text(String(localized: "Export..."))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.secondary)
+                }
+                .padding(.top, 4) // 리스트 상자와의 약간의 간격
+                
             }
             .padding(.horizontal, 30).padding(.bottom, 30)
             .opacity(settings.isTextExpansionEnabled ? 1.0 : 0.5)
@@ -147,9 +190,53 @@ struct TextExpansionSettingsView: View {
         }
         return $settings.textExpansionRules[index]
     }
+    
+    // MARK: - Import / Export File Panel Actions
+    
+    private func exportRules() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType.json]
+        panel.nameFieldStringValue = "LangSwitcher_Snippets.json"
+        panel.title = String(localized: "Export Text Expansion Rules")
+        
+        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            panel.directoryURL = documentsURL
+        }
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.exportTextExpansionRules(to: url) { success, error in
+                if success {
+                    print("Export successful!")
+                } else if let error = error {
+                    print("Export failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    private func importRules() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = String(localized: "Import Text Expansion Rules")
+        
+        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            panel.directoryURL = documentsURL
+        }
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.importTextExpansionRules(from: url) { success, error in
+                if success {
+                    print("Import successful!")
+                } else if let error = error {
+                    print("Import failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
 }
 
-// 🌟 편집 뷰 (하단 삭제 버튼 제거 버전)
 struct TextExpansionEditView: View {
     @Environment(\.dismiss) var dismiss
     @State var rule: TextExpansionRule

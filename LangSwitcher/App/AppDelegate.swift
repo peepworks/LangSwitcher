@@ -92,19 +92,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         menu.addItem(NSMenuItem.separator())
 
-        // 2. 앱 일시 정지 (🌟 요청하신 대로 아이콘을 제거하고 '체크 표시' 방식으로 복구)
+        // 2. 앱 일시 정지
         let isPaused = EventMonitor.shared.isPaused
         let pauseItem = NSMenuItem(title: String(localized: "Pause LangSwitcher"), action: #selector(togglePause), keyEquivalent: "s")
         pauseItem.keyEquivalentModifierMask = [.control, .option, .command]
-        pauseItem.state = isPaused ? .on : .off // 일시 정지 상태일 때 체크 표시가 나타납니다.
+        pauseItem.state = isPaused ? .on : .off
         menu.addItem(pauseItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        // 3. 핵심 기능 빠른 토글
-        let typoItem = NSMenuItem(title: String(localized: "Typo Correction"), action: #selector(toggleTypo), keyEquivalent: "")
-        typoItem.state = snapshot.isTypoCorrectionEnabled ? .on : .off
-        menu.addItem(typoItem)
+        // 🌟 3. 핵심 기능 빠른 토글 (수정된 영역)
+        
+        // 3-1. 스마트 자동 오타 교정
+        let autoTypoItem = NSMenuItem(title: String(localized: "Smart Auto Typo Correction"), action: #selector(toggleAutoTypo), keyEquivalent: "")
+        autoTypoItem.state = snapshot.isAutoTypoCorrectionEnabled ? .on : .off
+        menu.addItem(autoTypoItem)
+        
+        // 3-2. 수동 오타 교정
+        let manualTypoItem = NSMenuItem(title: String(localized: "Manual Typo Correction"), action: #selector(toggleManualTypo), keyEquivalent: "")
+        manualTypoItem.state = snapshot.isTypoCorrectionEnabled ? .on : .off
+        menu.addItem(manualTypoItem)
+        
+        // 3-3. 텍스트 대치
+        let textExpansionItem = NSMenuItem(title: String(localized: "Text Expansion"), action: #selector(toggleTextExpansion), keyEquivalent: "")
+        textExpansionItem.state = snapshot.isTextExpansionEnabled ? .on : .off
+        menu.addItem(textExpansionItem)
 
         let hyperItem = NSMenuItem(title: String(localized: "Hyper Key (Caps Lock)"), action: #selector(toggleHyper), keyEquivalent: "")
         hyperItem.state = snapshot.isHyperKeyEnabled ? .on : .off
@@ -136,7 +148,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(NSMenuItem.separator())
         }
 
-        // 5. 시스템 메뉴 (🌟 요청하신 대로 '앱 기록 초기화'를 환경설정 바로 위로 이동)
+        // 5. 시스템 메뉴
         let clearCacheItem = NSMenuItem(title: String(localized: "Clear App Memory"), action: #selector(clearAppMemory), keyEquivalent: "c")
         clearCacheItem.keyEquivalentModifierMask = [.control, .option, .command]
         clearCacheItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
@@ -156,19 +168,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func toggleLanguage() { InputSourceManager.shared.switchToNextInputSource() }
     
-    // 🌟 [수정됨] 메인 스레드 강제 할당 및 상태 업데이트 동기화
     @objc func togglePause() {
         DispatchQueue.main.async {
             let currentState = EventMonitor.shared.isPaused
             let newState = !currentState
             EventMonitor.shared.isPaused = newState
-            
-            // 상태값 텍스트 생성
             let statusMessage = newState ? String(localized: "LangSwitcher Paused") : String(localized: "LangSwitcher Resumed")
-            
-            // HUD 호출
             HUDManager.shared.showHUD(languageName: statusMessage)
-            
             #if DEBUG
             print("메뉴바 클릭: LangSwitcher 일시 정지 상태 -> \(newState)")
             #endif
@@ -176,7 +182,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     
     @objc func clearAppMemory() { SettingsManager.shared.clearAllAppCaches() }
-    @objc func toggleTypo() { SettingsManager.shared.isTypoCorrectionEnabled.toggle() }
+    
+    // 🌟 [수정됨] 분리된 토글 액션들
+    @objc func toggleAutoTypo() { SettingsManager.shared.isAutoTypoCorrectionEnabled.toggle() }
+    @objc func toggleManualTypo() { SettingsManager.shared.isTypoCorrectionEnabled.toggle() }
+    @objc func toggleTextExpansion() { SettingsManager.shared.isTextExpansionEnabled.toggle() }
+    
     @objc func toggleHyper() { SettingsManager.shared.isHyperKeyEnabled.toggle() }
     @objc func toggleWindowMemory() { SettingsManager.shared.isWindowMemoryEnabled.toggle() }
 
@@ -233,12 +244,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if !acc.isChromeAutomationTrusted || !acc.isSafariAutomationTrusted {
                 NSApp.activate(ignoringOtherApps: true)
                 let alert = NSAlert()
-                // 🌟 핵심: 알림창에 앱 아이콘을 강제로 지정합니다.
                 if let appIcon = NSImage(named: NSImage.applicationIconName) {
                     alert.icon = appIcon
                 }
                 
-                // 🌟 [추가됨] 알림창이 다른 앱 화면 뒤로 숨지 않도록 강제로 최상단으로 끌어올립니다.
                 NSApp.activate(ignoringOtherApps: true)
                 
                 alert.messageText = String(localized: "Automation Permission Required")

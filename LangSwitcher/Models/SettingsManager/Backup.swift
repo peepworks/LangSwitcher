@@ -40,7 +40,11 @@ extension SettingsManager {
                 isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
                 isBrowserDomainModeEnabled: isBrowserDomainModeEnabled,
                 domainRules: domainRules,
-                appDelays: appDelays // 🌟 추가 완료
+                appDelays: appDelays,
+                
+                // 🌟 [수정됨] settings. 접두어 제거 (자신의 프로퍼티이므로 바로 접근)
+                isTextExpansionEnabled: isTextExpansionEnabled,
+                textExpansionRules: textExpansionRules
             )
             
             let encoder = JSONEncoder()
@@ -101,7 +105,12 @@ extension SettingsManager {
                         self.domainRules = backup.domainRules ?? []
                         DomainRuleManager.shared.rules = self.domainRules
                         
-                        self.appDelays = backup.appDelays ?? self.appDelays // 🌟 추가 완료
+                        self.appDelays = backup.appDelays ?? self.appDelays
+                        
+                        // 🌟 [추가됨] 백업 파일에 있는 텍스트 대치 데이터를 복원합니다.
+                        // 과거 버전의 백업 파일(이 데이터가 없는 파일)을 불러오더라도 앱이 터지지 않도록 ?? 기본값 처리를 해줍니다.
+                        self.isTextExpansionEnabled = backup.isTextExpansionEnabled ?? false
+                        self.textExpansionRules = backup.textExpansionRules ?? []
                         
                         self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
                         

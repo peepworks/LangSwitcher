@@ -102,7 +102,7 @@ class SettingsManager: ObservableObject {
     
     // 🌟 [추가됨] 텍스트 대치 기능 전체 활성화/비활성화 토글
     @AppStorage("isTextExpansionEnabled") var isTextExpansionEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
-    
+
     private init() {
         let d = UserDefaults.standard
         isCtrlActive = d.bool(forKey: "isCtrlActive"); isCmdActive = d.bool(forKey: "isCmdActive"); isOptActive = d.bool(forKey: "isOptActive")
@@ -117,8 +117,18 @@ class SettingsManager: ObservableObject {
         if let data = d.data(forKey: "appLaunchShortcuts"), let dec = try? JSONDecoder().decode([AppLaunchShortcut].self, from: data) { appLaunchShortcuts = dec }
         if let data = d.data(forKey: "excludedApps"), let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { excludedApps = dec }
         
-        // 🌟 [추가됨] 텍스트 대치 규칙 불러오기
-        if let data = d.data(forKey: "textExpansionRules"), let dec = try? JSONDecoder().decode([TextExpansionRule].self, from: data) { textExpansionRules = dec }
+        // 🌟 [수정됨] 텍스트 대치 규칙 불러오기 및 기본 프리셋 제공
+        if let data = d.data(forKey: "textExpansionRules"), let dec = try? JSONDecoder().decode([TextExpansionRule].self, from: data) {
+            textExpansionRules = dec
+        } else {
+            // 저장된 데이터가 없는 경우(최초 실행 등) 유용한 날짜/시간 프리셋을 기본 제공합니다.
+            textExpansionRules = [
+                TextExpansionRule(id: UUID(), trigger: ";date", replacement: "{{date:yyyy-MM-dd}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";time", replacement: "{{date:HH:mm}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";now", replacement: "{{date:yyyy-MM-dd HH:mm}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";day", replacement: "{{date:EEEE}}", isEnabled: true)
+            ]
+        }
         
         if let data = d.data(forKey: "domainRules"), let dec = try? JSONDecoder().decode([DomainRule].self, from: data) {
             domainRules = dec
@@ -274,5 +284,55 @@ class SettingsManager: ObservableObject {
         #if DEBUG
         print("SettingsManager: App delays restored to defaults.")
         #endif
+    }
+    
+    // MARK: - Text Expansion Only Backup/Restore
+    
+    // 🌟 1. 텍스트 대치 전용 내보내기
+    func exportTextExpansionRules(to url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(textExpansionRules) // 규칙 배열만 인코딩
+            
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try data.write(to: url)
+                    DispatchQueue.main.async { completion(true, nil) }
+                } catch {
+                    DispatchQueue.main.async { completion(false, error) }
+                }
+            }
+        } catch {
+            completion(false, error)
+        }
+    }
+
+    // 🌟 2. 텍스트 대치 전용 불러오기 (기존 목록에 병합)
+    func importTextExpansionRules(from url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let data = try Data(contentsOf: url)
+                DispatchQueue.main.async {
+                    do {
+                        let importedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
+                        
+                        // 기존 목록과 중복되는 트리거가 없다면 추가합니다. (병합)
+                        for rule in importedRules {
+                            if !self.textExpansionRules.contains(where: { $0.trigger == rule.trigger }) {
+                                self.textExpansionRules.append(rule)
+                            }
+                        }
+                        
+                        self.saveAll() // 변경사항 저장
+                        completion(true, nil)
+                    } catch {
+                        completion(false, error)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { completion(false, error) }
+            }
+        }
     }
 }

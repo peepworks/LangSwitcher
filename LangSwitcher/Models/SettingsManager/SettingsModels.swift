@@ -74,6 +74,9 @@ struct BackupData: Codable {
     
     let domainRules: [DomainRule]?
     let appDelays: [AppDelay]? // 🌟 백업용 앱 딜레이
+    
+    let isTextExpansionEnabled: Bool?
+    let textExpansionRules: [TextExpansionRule]?
 }
 
 struct SettingsSnapshot {
