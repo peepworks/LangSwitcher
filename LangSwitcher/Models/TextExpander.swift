@@ -72,9 +72,10 @@ class TextExpander {
         
         var parsedText = result as String
         
-        // --- B. 클립보드 파싱: {{clip}} 또는 {clip} ---
-        if parsedText.contains("{clip}") || parsedText.contains("{{clip}}") {
+        // 🌟 B. 클립보드 파싱: {{clipboard}}, {{clip}} 또는 {clip}
+        if parsedText.contains("{{clipboard}}") || parsedText.contains("{{clip}}") || parsedText.contains("{clip}") {
             let pasteboardString = NSPasteboard.general.string(forType: .string) ?? ""
+            parsedText = parsedText.replacingOccurrences(of: "{{clipboard}}", with: pasteboardString)
             parsedText = parsedText.replacingOccurrences(of: "{{clip}}", with: pasteboardString)
             parsedText = parsedText.replacingOccurrences(of: "{clip}", with: pasteboardString)
         }

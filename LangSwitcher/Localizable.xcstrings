@@ -2449,12 +2449,12 @@
         }
       }
     },
-    "Type short triggers to quickly insert long phrases or dynamic values.\nExample 1: ;em → my.email@gmail.com\nExample 2: ;date → {{date:yyyy-MM-dd}}" : {
+    "Type short triggers to quickly insert long phrases or dynamic values.\nExample 1: ;em → my.email@gmail.com\nExample 2: ;date → {{date:yyyy-MM-dd}}\nExample 3: ;clip → {{clipboard}}" : {
       "localizations" : {
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "자주 사용하는 긴 문장이나 동적 값을 짧은 트리거로 빠르게 입력하세요.\\n예시 1: ;em 입력 후 스페이스바 → my.email@gmail.com\\n예시 2: ;date 입력 후 스페이스바 → {{date:yyyy-MM-dd}}"
+            "value" : "자주 사용하는 긴 문장이나 동적 값을 짧은 트리거로 빠르게 입력하세요.\\n예시 1: ;em 입력 후 스페이스바 → my.email@gmail.com\\n예시 2: ;date 입력 후 스페이스바 → {{date:yyyy-MM-dd}}\\n예시 3: ;clip 입력 후 스페이스바 → {{clipboard}}"
           }
         }
       }

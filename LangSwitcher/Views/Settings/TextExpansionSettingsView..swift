@@ -39,7 +39,8 @@ struct TextExpansionSettingsView: View {
             // 설정 내용 영역
             VStack(alignment: .leading, spacing: 15) {
                 HStack {
-                    Text(String(localized: "Type short triggers to quickly insert long phrases or dynamic values.\nExample 1: ;em → my.email@gmail.com\nExample 2: ;date → {{date:yyyy-MM-dd}}"))
+                    Text(String(localized: "Type short triggers to quickly insert long phrases or dynamic values.\nExample 1: ;em → my.email@gmail.com\nExample 2: ;date → {{date:yyyy-MM-dd}}\nExample 3: ;clip → {{clipboard}}"))
+                        .font(.subheadline).foregroundColor(.secondary)
                         .font(.subheadline).foregroundColor(.secondary)
                     
                     Spacer()
@@ -132,7 +133,8 @@ struct TextExpansionSettingsView: View {
                             TextExpansionRule(trigger: ";date", replacement: "{{date:yyyy-MM-dd}}", isEnabled: true),
                             TextExpansionRule(trigger: ";time", replacement: "{{date:HH:mm}}", isEnabled: true),
                             TextExpansionRule(trigger: ";now", replacement: "{{date:yyyy-MM-dd HH:mm}}", isEnabled: true),
-                            TextExpansionRule(trigger: ";day", replacement: "{{date:EEEE}}", isEnabled: true)
+                            TextExpansionRule(trigger: ";day", replacement: "{{date:EEEE}}", isEnabled: true),
+                            TextExpansionRule(trigger: ";clip", replacement: "{{clipboard}}", isEnabled: true)
                         ]
                         
                         // 기존 목록에 없는 트리거만 안전하게 추가 (병합)

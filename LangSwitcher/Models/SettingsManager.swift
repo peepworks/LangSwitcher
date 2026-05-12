@@ -126,7 +126,8 @@ class SettingsManager: ObservableObject {
                 TextExpansionRule(id: UUID(), trigger: ";date", replacement: "{{date:yyyy-MM-dd}}", isEnabled: true),
                 TextExpansionRule(id: UUID(), trigger: ";time", replacement: "{{date:HH:mm}}", isEnabled: true),
                 TextExpansionRule(id: UUID(), trigger: ";now", replacement: "{{date:yyyy-MM-dd HH:mm}}", isEnabled: true),
-                TextExpansionRule(id: UUID(), trigger: ";day", replacement: "{{date:EEEE}}", isEnabled: true)
+                TextExpansionRule(id: UUID(), trigger: ";day", replacement: "{{date:EEEE}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";clip", replacement: "{{clipboard}}", isEnabled: true)
             ]
         }
         
