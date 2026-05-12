@@ -16,6 +16,7 @@
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
+
 import SwiftUI
 
 enum SettingsTab: Hashable {
@@ -25,10 +26,11 @@ enum SettingsTab: Hashable {
     case appSpecific
     case domainRules
     case appLaunch
-    case textExpansion // 🌟 1. 텍스트 대치 탭 식별자 추가
+    case textExpansion
     case typoCorrection
     case excludedApps
     case stats
+    case rulePriority // 🌟 1. 규칙 우선순위 탭 식별자 추가
     case about
 }
 
@@ -63,7 +65,6 @@ struct SettingsView: View {
                     Label(String(localized: "App Launch Shortcuts"), systemImage: "square.grid.2x2")
                         .tag(SettingsTab.appLaunch)
                     
-                    // 🌟 2. 사이드바 메뉴에 텍스트 대치 버튼 추가
                     Label(String(localized: "Text Expansion"), systemImage: "text.badge.plus")
                         .tag(SettingsTab.textExpansion)
                     
@@ -77,7 +78,12 @@ struct SettingsView: View {
                 }
                 Section(header: Text(String(localized: "System"))) {
                     Label(String(localized: "Statistics"), systemImage: "chart.bar.xaxis")
-                            .tag(SettingsTab.stats)
+                        .tag(SettingsTab.stats)
+                    
+                    // 🌟 2. 사이드바 메뉴에 규칙 우선순위 버튼 추가
+                    Label(String(localized: "Rule Priority"), systemImage: "list.number")
+                        .tag(SettingsTab.rulePriority)
+                    
                     Label(String(localized: "About & Support"), systemImage: "info.circle")
                         .tag(SettingsTab.about)
                 }
@@ -92,11 +98,12 @@ struct SettingsView: View {
                 case .appSpecific: AppSpecificSettingsView()
                 case .domainRules: DomainRuleSettingsView()
                 case .appLaunch: AppLaunchSettingsView()
-                case .textExpansion: TextExpansionSettingsView() // 🌟 3. 화면 연결
+                case .textExpansion: TextExpansionSettingsView()
                 case .typoCorrection:
                     if isKoreanUser { TypoCorrectionSettingsView() }
                 case .excludedApps: ExcludedAppsSettingsView()
                 case .stats: StatsSettingsView()
+                case .rulePriority: RulePrioritySettingsView() // 🌟 3. 화면 연결
                 case .about: AboutSettingsView()
                 case nil: Text(String(localized: "Select a menu item.")).foregroundColor(.secondary)
                 }

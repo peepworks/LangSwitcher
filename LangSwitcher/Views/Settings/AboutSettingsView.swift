@@ -20,11 +20,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AboutSettingsView: View {
-    // 🌟 [추가됨] DateFormatter를 딱 한 번만 생성하여 메모리에 재사용할 수 있게 만듭니다.
     private static let debugLogFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd_HHmm" // 파일명에 쓰기 좋게 언더바(_) 추가를 권장합니다.
-        formatter.locale = Locale(identifier: "en_US_POSIX") // 12/24시간제 사용자 설정에 영향받지 않게 고정
+        formatter.dateFormat = "yyyyMMdd_HHmm"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         return formatter
     }()
     
@@ -36,19 +35,17 @@ struct AboutSettingsView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            // 🌟 [핵심 수정 1] 전체 간격을 20 -> 15로 줄여 수직 공간을 확보합니다.
             VStack(alignment: .leading, spacing: 15) {
                 Text(String(localized: "About & Support"))
                     .font(.title2.bold())
-                    // 상하단 패딩 조정은 VStack 밖에서 일괄 처리하므로 -10 패딩은 제거했습니다.
 
                 // 1. 앱 정보 및 업데이트 확인 섹션
-                VStack(alignment: .center, spacing: 8) { // 간격 10 -> 8
+                VStack(alignment: .center, spacing: 8) {
                     if let appIcon = NSImage(named: NSImage.applicationIconName) {
                         Image(nsImage: appIcon)
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 70, height: 70) // 🌟 [핵심 수정 2] 아이콘 크기 80 -> 70
+                            .frame(width: 70, height: 70)
                             .padding(.bottom, 8)
                             .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 3)
                     } else {
@@ -73,7 +70,7 @@ struct AboutSettingsView: View {
                     .padding(.top, 5)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 15) // 내부 상하 여백 20 -> 15
+                .padding(.vertical, 15)
                 .background(Color.secondary.opacity(0.05))
                 .cornerRadius(12)
 
@@ -81,7 +78,6 @@ struct AboutSettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(String(localized: "Permissions")).font(.headline)
                     
-                    // --- 1. 접근성(Accessibility) 권한 ---
                     HStack {
                         if accManager.isTrusted {
                             Label(String(localized: "Accessibility Granted"), systemImage: "checkmark.shield.fill")
@@ -95,15 +91,12 @@ struct AboutSettingsView: View {
                             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                         }
                     }
-                    .padding(12) // 16(기본) -> 12
+                    .padding(12)
                     .background(Color.secondary.opacity(0.05))
                     .cornerRadius(8)
                     
-                    // --- 2. 브라우저 자동화(Automation) 권한 ---
                     if settings.isBrowserTabMemoryEnabled {
-                        VStack(spacing: 8) { // 12 -> 8
-                            
-                            // Chrome 자동화
+                        VStack(spacing: 8) {
                             HStack {
                                 if accManager.isChromeAutomationTrusted {
                                     Label(String(localized: "Chrome Automation Granted"), systemImage: "checkmark.shield.fill")
@@ -120,7 +113,6 @@ struct AboutSettingsView: View {
                             
                             Divider()
                             
-                            // Safari 자동화
                             HStack {
                                 if accManager.isSafariAutomationTrusted {
                                     Label(String(localized: "Safari Automation Granted"), systemImage: "checkmark.shield.fill")
@@ -136,19 +128,19 @@ struct AboutSettingsView: View {
                             }
                             
                             Text(String(localized: "In System Settings -> Automation, expand 'LangSwitcher' and turn on Chrome/Safari. If they are not visible, please try switching tabs in your browser first."))
-                                .font(.caption2) // 🌟 폰트 사이즈를 조금 줄임
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.top, 4)
                         }
-                        .padding(12) // 16(기본) -> 12
+                        .padding(12)
                         .background(Color.secondary.opacity(0.05))
                         .cornerRadius(8)
                     }
                 }
 
-                // 3. Debug Logs 섹션
-                VStack(alignment: .leading, spacing: 8) { // 10 -> 8
+                // 4. Debug Logs 섹션
+                VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "Debug")).font(.headline)
                     VStack(alignment: .leading, spacing: 10) {
                         Text(String(localized: "If you encounter issues, please download the debug logs and share them with the developer."))
@@ -163,19 +155,16 @@ struct AboutSettingsView: View {
                         .controlSize(.large)
                         .disabled(settings.recentLogs.isEmpty)
                     }
-                    .padding(12) // 16(기본) -> 12
+                    .padding(12)
                     .background(Color.secondary.opacity(0.05))
                     .cornerRadius(8)
                 }
             }
-            // 🌟 [핵심 수정 3] 기존 .padding(30)을 방향별로 나누어 상단 여백을 극적으로 줄였습니다.
-            .padding(.horizontal, 30) // 좌우 여백은 기존 유지
-            .padding(.bottom, 30)     // 하단 여백 유지
-            .padding(.top, 10)        // 상단 여백을 30 -> 10으로 줄임
+            .padding(.horizontal, 30)
+            .padding(.bottom, 30)
+            .padding(.top, 10)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-
-        // 🌟 [새로운 방식] 상태 변화를 감지하여 네이티브 NSAlert를 직접 호출합니다.
         .onChange(of: updateManager.activeAlert) { item in
             guard let item = item else { return }
             
@@ -183,8 +172,6 @@ struct AboutSettingsView: View {
             
             alert.messageText = ""
             alert.informativeText = ""
-            
-            // 시스템 기본 좌측 아이콘 완벽하게 숨김
             alert.icon = NSImage(size: NSSize(width: 1, height: 1))
             
             let title: String
@@ -210,7 +197,6 @@ struct AboutSettingsView: View {
                 alert.addButton(withTitle: String(localized: "OK"))
             }
 
-            // 🌟 [유지] 버튼의 파란색 포커스 테두리 완벽 제거
             for button in alert.buttons {
                 button.focusRingType = .none
             }
@@ -233,8 +219,6 @@ struct AboutSettingsView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            // 🌟 [핵심 해결] NSAlert가 강제로 잡아먹는 상단의 빈 공간 안으로
-            // 뷰를 과감하게 쑥 밀어 올려버립니다 (-20 -> -80로 변경)
             .padding(.top, -80)
             .padding(.bottom, 10)
             .frame(width: 280)
@@ -260,28 +244,26 @@ struct AboutSettingsView: View {
         savePanel.allowedContentTypes = [.plainText]
         savePanel.prompt = String(localized: "Save")
 
-        // 🌟 [핵심 수정] 무겁게 새로 만들던 let formatter = DateFormatter() 부분을 완전히 지우고,
-        // 파일 맨 위에 만들어둔 Self.debugLogFormatter를 재사용합니다!
         savePanel.nameFieldStringValue = "LangSwitcher_DebugLog_\(Self.debugLogFormatter.string(from: Date())).txt"
         
-        // 🌟 [추가됨] NSSavePanel은 아이콘을 넣을 수 없지만,
-        // 다른 앱 화면 뒤로 숨는 것을 막기 위해 반드시 최상단으로 끌어올려야 합니다!
         NSApp.activate(ignoringOtherApps: true)
 
         if savePanel.runModal() == .OK, let url = savePanel.url {
             let logHeader = "LangSwitcher Debug Log\nGenerated: \(Date().description)\nApp Version: \(appVersion)\n----------------------------------\n\n"
 
             let logEntries = settings.recentLogs.map { log in
-                // 🌟 [핵심 수정] 로그 기록을 문자열로 바꿀 때도 static 포매터를 재사용합니다.
                 let timeStr = Self.debugLogFormatter.string(from: log.timestamp)
                 let resultMark = log.result == .success ? "✅" : "❌"
+                
+                // 🌟 [수정됨] log.failureReason?.rawValue 에서 물음표(?)와 대체값(??)을 제거했습니다.
                 return "[\(timeStr)] \(resultMark) Rule: \(log.appliedRule) | Target: \(log.targetApp) | Output: \(log.finalInputSource) | Reason: \(log.failureReason.rawValue)"
             }.joined(separator: "\n")
 
             let fullLogContent = logHeader + logEntries
 
             do {
-                try fullLogContent.write(to: url, atomically: true, encoding: .utf8)
+                // 🌟 위에서 에러가 풀리면 .utf8 에러도 자연스럽게 사라집니다. (명시적으로 String.Encoding.utf8로 적어도 무방합니다)
+                try fullLogContent.write(to: url, atomically: true, encoding: String.Encoding.utf8)
             } catch {
                 print("Failed to save debug logs: \(error)")
             }
