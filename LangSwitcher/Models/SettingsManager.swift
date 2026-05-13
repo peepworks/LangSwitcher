@@ -31,14 +31,14 @@ class SettingsManager: ObservableObject {
     
     @MainActor var isBatchUpdating: Bool = false
     
-    @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); updateSnapshot(); syncToCloud() } }
-    @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); updateSnapshot(); syncToCloud() } }
-    @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive); updateSnapshot(); syncToCloud() } }
-    @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang); updateSnapshot(); syncToCloud() } }
-    @Published var cmdLang: String { didSet { save("cmdLang", cmdLang); updateSnapshot(); syncToCloud() } }
-    @Published var optLang: String { didSet { save("optLang", optLang); updateSnapshot(); syncToCloud() } }
-    
-    @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback); updateSnapshot(); syncToCloud() } }
+    @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); scheduleSave() } }
+    @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); scheduleSave() } }
+    @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive); scheduleSave() } }
+    @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang); scheduleSave() } }
+    @Published var cmdLang: String { didSet { save("cmdLang", cmdLang); scheduleSave() } }
+    @Published var optLang: String { didSet { save("optLang", optLang); scheduleSave() } }
+        
+    @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback); scheduleSave() } }
     @Published var isTestMode: Bool { didSet { save("isTestMode", isTestMode); updateSnapshot() } }
     
     @Published var toggleKeyCode: UInt16 { didSet { save("toggleKeyCode", toggleKeyCode); updateSnapshot() } }

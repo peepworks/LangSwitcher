@@ -20,12 +20,19 @@ import Cocoa
 
 extension EventMonitor {
     func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
+        
+        // 🌟 1. 잠금 (Lock) 추가
         EventMonitor.shared.snapshotLock.lock()
+        
+        // 🌟 2. 나갈 때 알아서 해제 (Defer)
+        defer { EventMonitor.shared.snapshotLock.unlock() }
+        
         guard let snapshot = EventMonitor.shared.localSnapshot else {
-            EventMonitor.shared.snapshotLock.unlock()
+            // 💡 수동 unlock() 제거됨 (defer가 알아서 해줍니다)
             return Unmanaged.passUnretained(event)
         }
-        EventMonitor.shared.snapshotLock.unlock()
+        // 💡 수동 unlock() 제거됨
+        
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
         let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -103,7 +110,15 @@ extension EventMonitor {
     }
 
     func handleKeyDown(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        let snapshot = SettingsManager.shared.snapshot
+        
+        // 🌟 handleKeyDown에도 동일한 잠금/스냅샷 로직 통일 적용
+        EventMonitor.shared.snapshotLock.lock()
+        defer { EventMonitor.shared.snapshotLock.unlock() }
+        
+        guard let snapshot = EventMonitor.shared.localSnapshot else {
+            return Unmanaged.passUnretained(event)
+        }
+        
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
 

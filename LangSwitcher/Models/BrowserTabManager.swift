@@ -266,7 +266,9 @@ class BrowserTabManager {
                         // 수동 탭 메모리에 양보
                     } else {
                         // 도메인 규칙 적용!
-                        InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
+                        DispatchQueue.main.async {
+                            InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
+                        }
                         self.currentKey = newKey
                         self.tabMemory[newKey] = matchedRule.targetInputSourceID
                         return
@@ -280,7 +282,9 @@ class BrowserTabManager {
         if self.isNewTab(context: context) {
             let defaultLang = SettingsManager.shared.snapshot.newTabDefaultLanguage
             if defaultLang != "None" && !defaultLang.isEmpty {
-                InputSourceManager.shared.switchLanguage(to: defaultLang)
+                DispatchQueue.main.async {
+                    InputSourceManager.shared.switchLanguage(to: defaultLang)
+                }
                 self.currentKey = newKey
                 self.tabMemory[newKey] = defaultLang
                 return
@@ -378,7 +382,9 @@ class BrowserTabManager {
 
     private func restoreContext(for key: String) {
         if let savedSourceID = tabMemory[key] {
-            InputSourceManager.shared.switchLanguage(to: savedSourceID)
+            DispatchQueue.main.async {
+                InputSourceManager.shared.switchLanguage(to: savedSourceID)
+            }
         }
     }
 

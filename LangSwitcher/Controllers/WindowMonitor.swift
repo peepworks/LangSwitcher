@@ -158,64 +158,41 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
         
-        let latestAppID = AppMonitor.shared.activeAppBundleID
+        // 🌟 안 쓰는 변수(latestAppID) 선언 삭제됨!
         let latestInputSource = self.getCurrentInputSourceID() ?? ""
         let pid = self.currentPID
         
-        // 🌟 [1단계: 읽기] 어떤 언어로 바꿀지 안전하게 계산 (단순 동기화)
-        var targetLang: String? = nil
+        // 🌟 메인 스레드에서 실행할 부수 효과(Side-effects)를 밖으로 빼내기 위한 변수들
+        var languageToSwitch: String? = nil
         var isNewMemory = false
-        
-        stateQueue.sync { // barrier 없이 다중 읽기 허용(빠름)
+
+        // 🌟 하나의 거대한 자물쇠(Barrier)로 TOCTOU 경쟁 조건 원천 차단
+        stateQueue.sync(flags: .barrier) {
             let savedData = self.windowLanguageMemory[windowID]
             
-            if snapshot.isWindowMemoryEnabled {
-                if let saved = savedData {
-                    targetLang = saved.lang
-                }
-            }
-            
-            if targetLang == nil && snapshot.isAppSpecificEnabled {
-                if let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID }),
-                   !customApp.targetLanguage.isEmpty {
-                    targetLang = customApp.targetLanguage
-                }
-            }
-            
-            if savedData == nil {
+            if let data = savedData {
+                // [기존에 기록된 창]
+                // 1. 전환할 언어를 예약
+                languageToSwitch = data.lang
+                // 2. 기록 최신화 및 LRU(최근 사용) 터치
+                self.windowLanguageMemory[windowID] = (lang: data.lang, pid: pid)
+                self.touchWindowMemory(windowID: windowID)
+            } else {
+                // [새로 인식된 창]
+                // 1. 현재 사용 중인 언어로 장부 신규 기록
+                self.windowLanguageMemory[windowID] = (lang: latestInputSource, pid: pid)
+                self.touchWindowMemory(windowID: windowID)
+                // 2. 옵저버 등록을 위해 새 메모리임을 표시
                 isNewMemory = true
             }
-        }
-        
-        // 🌟 [2단계: 쓰기] 계산된 결과를 바탕으로 장부에 비동기로 기록 (중첩 큐 없음)
-        let langToSave = targetLang ?? latestInputSource
-        
-        if !langToSave.isEmpty {
-            stateQueue.async(flags: .barrier) { [weak self] in
-                guard let self = self else { return }
-                
-                // 1. 장부에 언어를 기록합니다.
-                self.windowLanguageMemory[windowID] = (lang: langToSave, pid: pid)
-                
-                // 🌟 2. [추가됨] 방금 접근했으므로 번호표를 갱신(LRU 최신화)합니다.
-                self.touchWindowMemory(windowID: windowID)
-            }
-        }
-        
-        // 🌟 [2단계: 부수 효과]
-        // self를 전혀 사용하지 않으므로 [weak self]와 guard문을 완전히 지웠습니다.
-        DispatchQueue.main.async {
-            if let lang = targetLang {
-                InputSourceManager.shared.switchLanguage(to: lang)
-            }
-        }
-        
-        // 🌟 [3단계: 부수 효과 실행] 장부 쓰기 블록과 완전히 분리되어 메인 큐에 스케줄링됨
+        } // 자물쇠 해제!
+
+        // 🌟 장벽(Barrier)을 빠져나온 후, 안전하게 메인 큐에서 한 번만 UI/시스템 작업 수행
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // 1) 실제 언어 전환
-            if let lang = targetLang {
+            // 1) 실제 언어 전환 실행
+            if let lang = languageToSwitch {
                 InputSourceManager.shared.switchLanguage(to: lang)
             }
             

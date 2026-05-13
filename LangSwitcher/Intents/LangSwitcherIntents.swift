@@ -34,7 +34,9 @@ struct SetInputSourceIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
         // 기존에 잘 만들어두신 InputSourceManager를 그대로 재사용합니다!
-        InputSourceManager.shared.switchLanguage(to: inputSourceID)
+        await MainActor.run {
+            InputSourceManager.shared.switchLanguage(to: inputSourceID)
+        }
         return .result(value: "Language switched to \(inputSourceID)")
     }
 }

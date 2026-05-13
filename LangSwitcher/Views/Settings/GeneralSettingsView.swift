@@ -59,21 +59,22 @@ struct GeneralSettingsView: View {
                                 isOn: $settings.isCursorHUDEnabled
                             )
                             .padding(.leading, 20) // 하위 옵션 느낌을 주기 위한 들여쓰기
-                            Divider().padding(.leading, 20).padding(.trailing, 15)
-                                                        
-                            // 🌟 [추가] 노치 엣지 글로우 옵션
-                            SettingToggleRow(
-                                title: String(localized: "Enable Notch Edge Glow"),
-                                isOn: $settings.isEdgeGlowEnabled
-                            )
-                            .padding(.leading, 20)
                         }
+                        
+                        // 🌟 [핵심 수정] if문 밖으로 꺼내어 독립적인 구분선 추가
+                        Divider().padding(.horizontal, 15)
+                                                    
+                        // 🌟 [핵심 수정] 노치 엣지 글로우 옵션 (들여쓰기 제거 및 독립 레벨 배치)
+                        SettingToggleRow(
+                            title: String(localized: "Enable Notch Edge Glow"),
+                            isOn: $settings.isEdgeGlowEnabled
+                        )
                             
                         Text(String(localized: "Displays a brief overlay indicating the new language."))
                             .font(.caption).foregroundColor(.secondary).lineSpacing(2)
                             .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, -2)
                         
-                        // 🌟 [추가됨] 사운드 및 햅틱 피드백 토글 스위치 (구분선 Divider 포함)
+                        // 사운드 및 햅틱 피드백 토글 스위치
                         Divider().padding(.horizontal, 15)
                         
                         SettingToggleRow(title: String(localized: "Play sound on switch"), isOn: $settings.isSoundFeedbackEnabled)

@@ -180,9 +180,12 @@ extension EventMonitor {
             chunks.append(Array(chars[i..<end]))
         }
         
-        // 🌟 글자 씹힘 방지: for 루프가 아니라, 0.01초 간격으로 시간을 두고 이벤트를 예약합니다.
+        // 🌟 [안정성 강화 1] 청크 간격 시간: 무거운 앱(Electron) 대응을 위해 0.015초로 소폭 늘림
+        let chunkDelay: TimeInterval = 0.015
+        
+        // 글자 씹힘 방지: for 루프가 아니라, 간격을 두고 이벤트를 예약합니다.
         for (index, chunk) in chunks.enumerated() {
-            let delay = Double(index) * 0.01
+            let delay = Double(index) * chunkDelay
             
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 // 비동기 블록 안에서 포인터(&)를 쓰기 위해 복사본을 만듭니다.
@@ -204,8 +207,14 @@ extension EventMonitor {
             }
         }
         
-        // 모든 청크의 비동기 전송이 끝나는 시간을 계산하여 완료 콜백을 실행합니다.
-        let totalDelay = Double(chunks.count) * 0.01 + 0.01
+        // 🌟 [안정성 강화 2] 마지막 청크가 화면에 완전히 그려질 수 있도록 충분한 여유(Buffer) 시간 0.05초 확보
+        let lastChunkIndex = max(0, chunks.count - 1)
+        let lastChunkDelay = Double(lastChunkIndex) * chunkDelay
+        let completionBuffer: TimeInterval = 0.05
+        
+        let totalDelay = lastChunkDelay + completionBuffer
+        
+        // 모든 텍스트가 대상 앱에 완벽하게 렌더링된 후에만 다음 동작(트리거 키 입력)을 허용합니다.
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) {
             completion()
         }

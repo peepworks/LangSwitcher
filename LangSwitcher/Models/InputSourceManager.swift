@@ -91,7 +91,9 @@ class InputSourceManager: ObservableObject {
             StatsManager.shared.incrementLanguageSwitch()
             
             // 🌟 [추가] 노치 엣지 글로우 피드백 실행
-            EdgeGlowManager.shared.showGlow(forLanguage: id)
+            DispatchQueue.main.async {
+                EdgeGlowManager.shared.showGlow(forLanguage: id)
+            }
             
             // 🌟 [추가] 언어 전환 성공 시 햅틱 및 사운드 실행!
             SensoryFeedbackManager.shared.playFeedback(forLanguageID: id)
