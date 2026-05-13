@@ -15,7 +15,23 @@
 //  You should have received a copy of the GNU General Public License
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
-
+//
+//  LangSwitcher
+//  Copyright (C) 2026 peepboy
+//
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU General Public License as published by
+//  the Free Software Foundation, either version 3 of the License, or
+//  (at your option) any later version.
+//
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//  GNU General Public License for more details.
+//
+//  You should have received a copy of the GNU General Public License
+//  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
 
 import SwiftUI
 
@@ -30,7 +46,8 @@ enum SettingsTab: Hashable {
     case typoCorrection
     case excludedApps
     case stats
-    case rulePriority // 🌟 1. 규칙 우선순위 탭 식별자 추가
+    case rulePriority
+    case debugger // 🌟 1. 규칙 디버거 탭 식별자 추가
     case about
 }
 
@@ -80,9 +97,12 @@ struct SettingsView: View {
                     Label(String(localized: "Statistics"), systemImage: "chart.bar.xaxis")
                         .tag(SettingsTab.stats)
                     
-                    // 🌟 2. 사이드바 메뉴에 규칙 우선순위 버튼 추가
                     Label(String(localized: "Rule Priority"), systemImage: "list.number")
                         .tag(SettingsTab.rulePriority)
+                    
+                    // 🌟 2. 사이드바 메뉴에 규칙 디버거 버튼 추가 (아이콘은 벌레 모양의 ladybug 사용)
+                    Label(String(localized: "Rule Debugger"), systemImage: "ladybug")
+                        .tag(SettingsTab.debugger)
                     
                     Label(String(localized: "About & Support"), systemImage: "info.circle")
                         .tag(SettingsTab.about)
@@ -103,7 +123,8 @@ struct SettingsView: View {
                     if isKoreanUser { TypoCorrectionSettingsView() }
                 case .excludedApps: ExcludedAppsSettingsView()
                 case .stats: StatsSettingsView()
-                case .rulePriority: RulePrioritySettingsView() // 🌟 3. 화면 연결
+                case .rulePriority: RulePrioritySettingsView()
+                case .debugger: DebuggerSettingsView() // 🌟 3. 화면 연결
                 case .about: AboutSettingsView()
                 case nil: Text(String(localized: "Select a menu item.")).foregroundColor(.secondary)
                 }

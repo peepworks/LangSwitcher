@@ -34,6 +34,10 @@
 		126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */; };
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1283B3592FB2F3FC00E04E2B /* RulePriorityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */; };
+		128CF91E2FB439C600B9672C /* DecisionTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128CF91D2FB439C200B9672C /* DecisionTrace.swift */; };
+		128CF9202FB439F100B9672C /* DecisionTraceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128CF91F2FB439EC00B9672C /* DecisionTraceManager.swift */; };
+		128CF9222FB43A2900B9672C /* TraceFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128CF9212FB43A2600B9672C /* TraceFactory.swift */; };
+		128CF9242FB43AE800B9672C /* DebuggerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128CF9232FB43AE200B9672C /* DebuggerSettingsView.swift */; };
 		1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129930792F679EBC00878827 /* SettingsManager.swift */; };
 		129D74D42FA4329400227AD9 /* StatsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129D74D32FA4329100227AD9 /* StatsManager.swift */; };
 		12A6DB392FB190F50000A927 /* TextExpansionRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A6DB382FB190ED0000A927 /* TextExpansionRule.swift */; };
@@ -89,6 +93,10 @@
 		126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeGlowManager.swift; sourceTree = "<group>"; };
 		12744D562F89E66A0033C06A /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RulePriorityView.swift; sourceTree = "<group>"; };
+		128CF91D2FB439C200B9672C /* DecisionTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionTrace.swift; sourceTree = "<group>"; };
+		128CF91F2FB439EC00B9672C /* DecisionTraceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionTraceManager.swift; sourceTree = "<group>"; };
+		128CF9212FB43A2600B9672C /* TraceFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TraceFactory.swift; sourceTree = "<group>"; };
+		128CF9232FB43AE200B9672C /* DebuggerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebuggerSettingsView.swift; sourceTree = "<group>"; };
 		129930792F679EBC00878827 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
 		129D74D32FA4329100227AD9 /* StatsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsManager.swift; sourceTree = "<group>"; };
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -176,8 +184,10 @@
 			isa = PBXGroup;
 			children = (
 				1241A8BE2FAEEC0F0078CD5F /* SettingsManager */,
+				128CF91C2FB439AE00B9672C /* DecisionTraceManager */,
 				125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */,
 				12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */,
+				128CF91F2FB439EC00B9672C /* DecisionTraceManager.swift */,
 				12B699562FA71E9D00F6B79D /* DomainRule.swift */,
 				12B699582FA71ED000F6B79D /* DomainRuleManager.swift */,
 				12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */,
@@ -241,6 +251,15 @@
 			path = Audiio;
 			sourceTree = "<group>";
 		};
+		128CF91C2FB439AE00B9672C /* DecisionTraceManager */ = {
+			isa = PBXGroup;
+			children = (
+				128CF9212FB43A2600B9672C /* TraceFactory.swift */,
+				128CF91D2FB439C200B9672C /* DecisionTrace.swift */,
+			);
+			path = DecisionTraceManager;
+			sourceTree = "<group>";
+		};
 		129E05172F657B5200F34ABE = {
 			isa = PBXGroup;
 			children = (
@@ -279,15 +298,16 @@
 		12B3CA9D2FB2DA3500C5F49A /* Settings */ = {
 			isa = PBXGroup;
 			children = (
-				1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */,
 				12B3CA852FB2C78E00C5F49A /* AboutSettingsView.swift */,
 				12B3CA862FB2C78E00C5F49A /* AdvancedSettingsView.swift */,
 				12B3CA872FB2C78E00C5F49A /* AppLaunchSettingsView.swift */,
 				12B3CA882FB2C78E00C5F49A /* AppSpecificSettingsView.swift */,
 				12B3CA892FB2C78E00C5F49A /* CustomShortcutsSettingsView.swift */,
+				128CF9232FB43AE200B9672C /* DebuggerSettingsView.swift */,
 				12B3CA8A2FB2C78E00C5F49A /* DomainRuleSettingsView.swift */,
 				12B3CA8B2FB2C78E00C5F49A /* ExcludedAppsSettingsView.swift */,
 				12B3CA8C2FB2C78E00C5F49A /* GeneralSettingsView.swift */,
+				1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */,
 				12B3CA8D2FB2C78E00C5F49A /* SettingsComponents.swift */,
 				12B3CA8E2FB2C78E00C5F49A /* StatsSettingsView.swift */,
 				12B3CA8F2FB2C78E00C5F49A /* TextExpansionSettingsView.swift */,
@@ -400,6 +420,7 @@
 				1241A8C42FAEED310078CD5F /* Backup.swift in Sources */,
 				1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */,
 				125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */,
+				128CF9242FB43AE800B9672C /* DebuggerSettingsView.swift in Sources */,
 				125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */,
 				1220DB572FB15EB600D8CEAD /* LangSwitcherIntents.swift in Sources */,
 				12B3CA912FB2C78E00C5F49A /* AboutSettingsView.swift in Sources */,
@@ -411,6 +432,7 @@
 				12B3CA962FB2C78E00C5F49A /* DomainRuleSettingsView.swift in Sources */,
 				12B3CA972FB2C78E00C5F49A /* ExcludedAppsSettingsView.swift in Sources */,
 				12B3CA982FB2C78E00C5F49A /* GeneralSettingsView.swift in Sources */,
+				128CF9202FB439F100B9672C /* DecisionTraceManager.swift in Sources */,
 				12B3CA992FB2C78E00C5F49A /* SettingsComponents.swift in Sources */,
 				12B3CA9A2FB2C78E00C5F49A /* StatsSettingsView.swift in Sources */,
 				12B3CA9B2FB2C78E00C5F49A /* TextExpansionSettingsView.swift in Sources */,
@@ -418,8 +440,10 @@
 				125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */,
 				126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */,
 				1220DB592FB15EF100D8CEAD /* LangSwitcherShortcuts.swift in Sources */,
+				128CF9222FB43A2900B9672C /* TraceFactory.swift in Sources */,
 				1241A8C02FAEEC1E0078CD5F /* SettingsModels.swift in Sources */,
 				12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */,
+				128CF91E2FB439C600B9672C /* DecisionTrace.swift in Sources */,
 				12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */,
 				12B699572FA71EA800F6B79D /* DomainRule.swift in Sources */,
 				121445462FB1879F00BAD265 /* Simulation.swift in Sources */,

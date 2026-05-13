@@ -158,45 +158,89 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
         
-        // 🌟 안 쓰는 변수(latestAppID) 선언 삭제됨!
+        let latestAppID = AppMonitor.shared.activeAppBundleID
         let latestInputSource = self.getCurrentInputSourceID() ?? ""
         let pid = self.currentPID
         
-        // 🌟 메인 스레드에서 실행할 부수 효과(Side-effects)를 밖으로 빼내기 위한 변수들
+        var appSpecificLang: String? = nil
+        if snapshot.isAppSpecificEnabled {
+            if let customApp = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID }) {
+                appSpecificLang = customApp.targetLanguage
+            }
+        }
+        
+        var switchDelay: TimeInterval = 0.05
+        if let customDelay = snapshot.appDelays.first(where: { $0.bundleIdentifier == latestAppID }) {
+            switchDelay = customDelay.delay
+        }
+
         var languageToSwitch: String? = nil
         var isNewMemory = false
+        
+        // 🌟 [추가됨] 어떤 이유로 결정되었는지 담아둘 변수
+        var traceToRecord: DecisionTrace? = nil
 
-        // 🌟 하나의 거대한 자물쇠(Barrier)로 TOCTOU 경쟁 조건 원천 차단
         stateQueue.sync(flags: .barrier) {
             let savedData = self.windowLanguageMemory[windowID]
             
             if let data = savedData {
-                // [기존에 기록된 창]
-                // 1. 전환할 언어를 예약
-                languageToSwitch = data.lang
-                // 2. 기록 최신화 및 LRU(최근 사용) 터치
-                self.windowLanguageMemory[windowID] = (lang: data.lang, pid: pid)
+                // [기존에 열려있던 창]
+                if snapshot.isWindowMemoryEnabled {
+                    languageToSwitch = data.lang
+                    // 🌟 로깅: 창 기억에 의해 복원됨
+                    traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
+                } else if let targetLang = appSpecificLang {
+                    languageToSwitch = targetLang
+                    // 🌟 로깅: 앱별 규칙 적용
+                    traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
+                } else {
+                    // 🌟 로깅: 아무 규칙도 해당 없음
+                    traceToRecord = TraceFactory.create(event: .languageSwitch, result: .kept, reason: .noMatchingRule, appName: latestAppID)
+                }
+                
+                if let lang = languageToSwitch {
+                    self.windowLanguageMemory[windowID] = (lang: lang, pid: pid)
+                }
                 self.touchWindowMemory(windowID: windowID)
+                
             } else {
-                // [새로 인식된 창]
-                // 1. 현재 사용 중인 언어로 장부 신규 기록
-                self.windowLanguageMemory[windowID] = (lang: latestInputSource, pid: pid)
+                // [처음 열린 새 창]
+                if let targetLang = appSpecificLang {
+                    languageToSwitch = targetLang
+                    self.windowLanguageMemory[windowID] = (lang: targetLang, pid: pid)
+                    // 🌟 로깅: 앱별 규칙 적용
+                    traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
+                } else {
+                    self.windowLanguageMemory[windowID] = (lang: latestInputSource, pid: pid)
+                    // 🌟 로깅: 아무 규칙도 해당 없음
+                    traceToRecord = TraceFactory.create(event: .languageSwitch, result: .kept, reason: .noMatchingRule, appName: latestAppID)
+                }
                 self.touchWindowMemory(windowID: windowID)
-                // 2. 옵저버 등록을 위해 새 메모리임을 표시
                 isNewMemory = true
             }
-        } // 자물쇠 해제!
+        }
 
-        // 🌟 장벽(Barrier)을 빠져나온 후, 안전하게 메인 큐에서 한 번만 UI/시스템 작업 수행
+        // 🌟 지연 후 안전하게 실행 및 기록
+        if let lang = languageToSwitch {
+            DispatchQueue.main.asyncAfter(deadline: .now() + switchDelay) {
+                InputSourceManager.shared.switchLanguage(to: lang)
+                
+                // 🌟 메인 스레드에서 UI를 그리는 매니저에게 기록 전달
+                if let trace = traceToRecord {
+                    DecisionTraceManager.shared.record(trace)
+                }
+            }
+        } else {
+            // 언어가 바뀌지 않았어도(kept) 기록은 남김
+            DispatchQueue.main.async {
+                if let trace = traceToRecord {
+                    DecisionTraceManager.shared.record(trace)
+                }
+            }
+        }
+        
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            
-            // 1) 실제 언어 전환 실행
-            if let lang = languageToSwitch {
-                InputSourceManager.shared.switchLanguage(to: lang)
-            }
-            
-            // 2) 윈도우 파괴 감지 옵저버 등록 (AX API는 메인 큐에서 안전하게 실행)
             if isNewMemory, let observer = self.axObserver {
                 let refcon = Unmanaged.passUnretained(self).toOpaque()
                 AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, refcon)

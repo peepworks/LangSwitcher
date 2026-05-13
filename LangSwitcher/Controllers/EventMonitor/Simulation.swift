@@ -63,13 +63,31 @@ extension EventMonitor {
             else if let langID = targetLang { testLabel = "[Test] \(InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID)" }
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
         } else {
-            if isToggle { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchToNextInputSource()
-                StatsManager.shared.incrementLanguageSwitch()
-            } }
-            else if let bundleID = targetAppID { launchApp(bundleID: bundleID) }
-            else if let lang = targetLang { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { InputSourceManager.shared.switchLanguage(to: lang)
-                StatsManager.shared.incrementLanguageSwitch()
-            } }
+            // 🌟 [디버거 로깅 추가] 사용자의 수동 전환 이벤트 기록
+            let trace = TraceFactory.create(
+                event: .languageSwitch,
+                result: .switched,
+                reason: .manualOverride,
+                appName: targetAppName
+            )
+            
+            if isToggle {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    InputSourceManager.shared.switchToNextInputSource()
+                    StatsManager.shared.incrementLanguageSwitch()
+                    DecisionTraceManager.shared.record(trace) // 🌟 기록 저장
+                }
+            }
+            else if let bundleID = targetAppID {
+                launchApp(bundleID: bundleID)
+            }
+            else if let lang = targetLang {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    InputSourceManager.shared.switchLanguage(to: lang)
+                    StatsManager.shared.incrementLanguageSwitch()
+                    DecisionTraceManager.shared.record(trace) // 🌟 기록 저장
+                }
+            }
         }
     }
 
@@ -92,7 +110,6 @@ extension EventMonitor {
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
                     self.postTriggerKey(keyCode: triggerKeyCode)
-                    // 🌟 통계 증가 로직 추가됨
                     StatsManager.shared.incrementTypoCorrection()
                 }
             }
@@ -146,25 +163,29 @@ extension EventMonitor {
         return EventMonitor.charKeyMap[keyCode]
     }
     
-    // 텍스트 대치 실행 함수
-    func performTextExpansion(triggerLength: Int, replacementText: String, triggerKeyCode: UInt16) {
+    // 🌟 [디버거 로깅 추가] 트리거 텍스트를 받아서 기록하는 로직 추가
+    func performTextExpansion(triggerLength: Int, replacementText: String, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
         
-        // 1. 입력된 트리거 글자 수만큼 백스페이스로 지웁니다.
         self.batchDelete(count: triggerLength) { [weak self] in
             guard let self = self else { return }
             
-            // 2. 동적으로 파싱된 긴 텍스트를 청크 단위로 안전하게 삽입합니다.
             self.insertLongUnicodeText(replacementText) {
-                // 3. 🌟 삽입이 완전히 다 끝났다는 콜백을 받은 후, 트리거 키(스페이스/엔터)를 쏴줍니다.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                     self.postTriggerKey(keyCode: triggerKeyCode)
+                    
+                    // 🌟 스니펫 확장 성공 로깅
+                    let trace = TraceFactory.create(
+                        event: .snippetExpansion,
+                        result: .expanded,
+                        reason: .snippetExpanded(trigger: triggerText)
+                    )
+                    DecisionTraceManager.shared.record(trace) // 🌟 기록 저장
                 }
             }
         }
     }
     
-    // 🌟 [심층 리서치 반영] CGEventKeyboardSetUnicodeString 앱 호환성 완벽 해결
-    // 완료 시점을 알기 위해 completion 클로저를 추가했습니다.
+    // 🌟 [최적화 유지] 무거운 앱 호환성을 위한 버퍼 적용 로직 유지
     func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
         let chars = Array(text.utf16)
         if chars.isEmpty {
@@ -172,7 +193,6 @@ extension EventMonitor {
             return
         }
         
-        // 청크를 20자씩 안전하게 쪼개서 배열로 미리 만들어 둡니다.
         let chunkSize = 20
         var chunks: [[UTF16.CodeUnit]] = []
         for i in stride(from: 0, to: chars.count, by: chunkSize) {
@@ -180,25 +200,20 @@ extension EventMonitor {
             chunks.append(Array(chars[i..<end]))
         }
         
-        // 🌟 [안정성 강화 1] 청크 간격 시간: 무거운 앱(Electron) 대응을 위해 0.015초로 소폭 늘림
-        let chunkDelay: TimeInterval = 0.015
+        let chunkDelay: TimeInterval = 0.015 // 안전한 청크 딜레이
         
-        // 글자 씹힘 방지: for 루프가 아니라, 간격을 두고 이벤트를 예약합니다.
         for (index, chunk) in chunks.enumerated() {
             let delay = Double(index) * chunkDelay
             
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                // 비동기 블록 안에서 포인터(&)를 쓰기 위해 복사본을 만듭니다.
                 var localChunk = chunk
                 
-                // 1. Key Down 이벤트
                 if let eventDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
                     eventDown.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
                     eventDown.setIntegerValueField(.eventSourceUserData, value: 9999)
                     eventDown.post(tap: .cghidEventTap)
                 }
                 
-                // 2. Key Up 이벤트 (필수: 앱이 키가 떼어졌음을 인식하게 함)
                 if let eventUp = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) {
                     eventUp.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
                     eventUp.setIntegerValueField(.eventSourceUserData, value: 9999)
@@ -207,14 +222,13 @@ extension EventMonitor {
             }
         }
         
-        // 🌟 [안정성 강화 2] 마지막 청크가 화면에 완전히 그려질 수 있도록 충분한 여유(Buffer) 시간 0.05초 확보
+        // 충분한 여유(Buffer) 시간 확보
         let lastChunkIndex = max(0, chunks.count - 1)
         let lastChunkDelay = Double(lastChunkIndex) * chunkDelay
         let completionBuffer: TimeInterval = 0.05
         
         let totalDelay = lastChunkDelay + completionBuffer
         
-        // 모든 텍스트가 대상 앱에 완벽하게 렌더링된 후에만 다음 동작(트리거 키 입력)을 허용합니다.
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) {
             completion()
         }

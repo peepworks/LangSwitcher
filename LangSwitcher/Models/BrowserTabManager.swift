@@ -249,11 +249,11 @@ class BrowserTabManager {
     private func processTabContext(_ context: TabContext, bundleID: String) {
         guard let newKey = generateTabKey(from: context, bundleID: bundleID) else { return }
 
-        // 🌟 탭 접근 시간 갱신 (LRU)
         self.touchTabMemory(key: newKey)
         
         let isTabSwitched = (self.currentKey != newKey)
 
+        // 1. 도메인 규칙(Domain Rules) 판별 및 로깅
         if SettingsManager.shared.snapshot.isBrowserDomainModeEnabled, let urlString = context.url, let host = context.host {
             let lastHost = self.lastEvaluatedHostForTab[newKey]
 
@@ -265,9 +265,18 @@ class BrowserTabManager {
                     if isTabSwitched && SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled && hasManualMemory {
                         // 수동 탭 메모리에 양보
                     } else {
-                        // 도메인 규칙 적용!
+                        // 🌟 도메인 규칙 적용 및 로깅
                         DispatchQueue.main.async {
                             InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
+                            
+                            let trace = TraceFactory.create(
+                                event: .languageSwitch,
+                                result: .switched,
+                                reason: .domainRule(domain: host),
+                                appName: bundleID,
+                                domain: host
+                            )
+                            DecisionTraceManager.shared.record(trace)
                         }
                         self.currentKey = newKey
                         self.tabMemory[newKey] = matchedRule.targetInputSourceID
@@ -279,11 +288,21 @@ class BrowserTabManager {
 
         if !isTabSwitched { return }
 
+        // 2. 새 탭 기본 언어(New Tab Default) 판별 및 로깅
         if self.isNewTab(context: context) {
             let defaultLang = SettingsManager.shared.snapshot.newTabDefaultLanguage
             if defaultLang != "None" && !defaultLang.isEmpty {
                 DispatchQueue.main.async {
                     InputSourceManager.shared.switchLanguage(to: defaultLang)
+                    
+                    // 🌟 새 탭 설정 적용 로깅
+                    let trace = TraceFactory.create(
+                        event: .languageSwitch,
+                        result: .switched,
+                        reason: .browserTabRestore, // 또는 필요시 Factory에 newTab용 코드 추가 가능
+                        appName: bundleID
+                    )
+                    DecisionTraceManager.shared.record(trace)
                 }
                 self.currentKey = newKey
                 self.tabMemory[newKey] = defaultLang
@@ -292,8 +311,28 @@ class BrowserTabManager {
         }
 
         self.currentKey = newKey
+        
+        // 3. 탭 메모리 복구(Tab Memory Restore) 및 로깅
         if SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled {
-            self.restoreContext(for: newKey)
+            self.restoreContext(for: newKey, bundleID: bundleID)
+        }
+    }
+
+    // 🌟 파라미터에 bundleID 추가
+    private func restoreContext(for key: String, bundleID: String) {
+        if let savedSourceID = tabMemory[key] {
+            DispatchQueue.main.async {
+                InputSourceManager.shared.switchLanguage(to: savedSourceID)
+                
+                // 🌟 탭 메모리 복구 로깅
+                let trace = TraceFactory.create(
+                    event: .restore,
+                    result: .restored,
+                    reason: .browserTabRestore,
+                    appName: bundleID
+                )
+                DecisionTraceManager.shared.record(trace)
+            }
         }
     }
 

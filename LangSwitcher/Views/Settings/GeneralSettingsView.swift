@@ -71,8 +71,14 @@ struct GeneralSettingsView: View {
                         )
                             
                         Text(String(localized: "Displays a brief overlay indicating the new language."))
-                            .font(.caption).foregroundColor(.secondary).lineSpacing(2)
-                            .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, -2)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineSpacing(2)
+                            .multilineTextAlignment(.leading) // 🌟 텍스트가 여러 줄일 경우 좌측 정렬
+                            .frame(maxWidth: .infinity, alignment: .leading) // 🌟 뷰의 최대 너비를 확장하고 좌측으로 밀착
+                            .padding(.horizontal, 15)
+                            .padding(.bottom, 12)
+                            .padding(.top, -2)
                         
                         // 사운드 및 햅틱 피드백 토글 스위치
                         Divider().padding(.horizontal, 15)
