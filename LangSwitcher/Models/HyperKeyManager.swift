@@ -21,7 +21,7 @@ import Cocoa
 class HyperKeyManager {
     static let shared = HyperKeyManager()
 
-    // 🌟 스레드 안전성을 보장하기 위한 가벼운 자물쇠(Lock) 추가
+    // 🌟 스레드 안전성을 보장하기 위한 가벼운 자물쇠(Lock)
     private let stateLock = NSLock()
 
     private var isHyperDown = false
@@ -31,78 +31,123 @@ class HyperKeyManager {
     private let f19KeyCode: CGKeyCode = 80
     private let hyperKeyCodes: [CGKeyCode] = [55, 58, 59, 56]
     
-    // 🌟 [추가됨] Caps Lock 디바운스를 위한 WorkItem 저장 변수
+    // Caps Lock 디바운스를 위한 WorkItem 저장 변수
     private var capsLockWorkItem: DispatchWorkItem?
+
+    // 🌟 맵핑을 위한 상수 (0x700000039 = Caps Lock, 0x70000006E = F19)
+    private let capsLockSrc: Int = 30064771129
+    private let f19Dst: Int = 30064771182
 
     private init() {}
 
     func updateState(isEnabled: Bool) {
         setupHardwareMapping(enable: isEnabled)
         
-        // 외부(UI 스레드)에서 상태를 변경할 때도 안전하게 잠금 처리
         stateLock.lock()
         if !isEnabled { isHyperDown = false }
         stateLock.unlock()
     }
 
-    // 무거운 I/O 및 외부 프로세스 작업을 백그라운드 스레드로 분리하여 메인 UI 블로킹 방지
+    // 🌟 [핵심 수정] 무작정 덮어쓰지 않고 기존 설정을 파싱하여 병합(Merge)하는 로직으로 완전히 교체되었습니다.
     private func setupHardwareMapping(enable: Bool) {
-        let task = Process()
-        task.launchPath = "/usr/bin/hidutil"
+        // 백그라운드 스레드에서 실행하여 메인 UI를 절대 멈추게 하지 않습니다.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
 
-        let mappingString = enable
-            ? "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x70000006E}]}"
-            : "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x700000039}]}"
+            // 1. 현재 시스템의 UserKeyMapping 목록 읽어오기
+            let getTask = Process()
+            getTask.launchPath = "/usr/bin/hidutil"
+            getTask.arguments = ["property", "--get", "UserKeyMapping"]
+            let getPipe = Pipe()
+            getTask.standardOutput = getPipe
+            try? getTask.run()
+            getTask.waitUntilExit()
 
-        task.arguments = ["property", "--set", mappingString]
+            let getData = getPipe.fileHandleForReading.readDataToEndOfFile()
+            let getString = String(data: getData, encoding: .utf8) ?? ""
 
-        // 🌟 [최적화] GCD async 블록 안에서 묶여 기다리지 않고, terminationHandler를 사용해 비동기 콜백으로 처리합니다.
-        task.terminationHandler = { proc in
-            if proc.terminationStatus != 0 {
-                let errorMessage = "hidutil exited with code: \(proc.terminationStatus)"
-                // 로그 추가 같은 작업은 메인 스레드로 넘겨 UI나 다른 매니저와의 충돌을 방지하는 것이 좋습니다.
-                DispatchQueue.main.async {
-                    SettingsManager.shared.addLog(ActionLog(
-                        timestamp: Date(),
-                        targetApp: "System",
-                        appliedRule: "Hyper Key Mapping",
-                        finalInputSource: "Failed",
-                        result: .failure,
-                        failureReason: .unknown
-                    ))
+            var mappings: [[String: Int]] = []
+
+            // 2. 결과가 비어있지 않다면(null이 아님), plutil을 이용해 NeXTSTEP 포맷을 JSON으로 변환
+            if !getString.contains("(null)") && !getString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let plutilTask = Process()
+                plutilTask.launchPath = "/usr/bin/plutil"
+                plutilTask.arguments = ["-convert", "json", "-", "-o", "-"]
+                let plutilIn = Pipe()
+                let plutilOut = Pipe()
+                plutilTask.standardInput = plutilIn
+                plutilTask.standardOutput = plutilOut
+
+                do {
+                    try plutilTask.run()
+                    plutilIn.fileHandleForWriting.write(getData)
+                    plutilIn.fileHandleForWriting.closeFile()
+                    plutilTask.waitUntilExit()
+
+                    let jsonData = plutilOut.fileHandleForReading.readDataToEndOfFile()
+                    if let parsed = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Int]] {
+                        mappings = parsed
+                    }
+                } catch {
+                    print("HyperKeyManager: 기존 hidutil 맵핑을 파싱하는데 실패했습니다.")
                 }
-                print("hidutil 실행 실패: \(errorMessage)")
             }
-        }
 
-        do {
-            try task.run()
-            // 🌟 여기서 바로 빠져나가므로 스레드 블로킹이 전혀 발생하지 않습니다.
-        } catch {
-            DispatchQueue.main.async {
-                SettingsManager.shared.addLog(ActionLog(
-                    timestamp: Date(),
-                    targetApp: "System",
-                    appliedRule: "Hyper Key Mapping",
-                    finalInputSource: "Failed",
-                    result: .failure,
-                    failureReason: .unknown
-                ))
+            // 3. 기존에 등록된 Caps Lock 맵핑이 있다면 (다른 앱이 했든 우리가 했든) 충돌 방지를 위해 제거
+            mappings.removeAll { dict in
+                return dict["HIDKeyboardModifierMappingSrc"] == self.capsLockSrc
             }
-            print("hidutil 실행 실패: \(error)")
+
+            // 4. 기능이 활성화되었다면 우리의 F19 맵핑을 안전하게 추가
+            if enable {
+                mappings.append([
+                    "HIDKeyboardModifierMappingSrc": self.capsLockSrc,
+                    "HIDKeyboardModifierMappingDst": self.f19Dst
+                ])
+            }
+
+            // 5. 다시 시스템에 주입하기 위해 JSON 문자열로 변환
+            let finalMappingDict: [String: Any] = ["UserKeyMapping": mappings]
+            guard let finalJsonData = try? JSONSerialization.data(withJSONObject: finalMappingDict, options: []),
+                  let finalJsonString = String(data: finalJsonData, encoding: .utf8) else {
+                return
+            }
+
+            // 6. 안전하게 병합된 새로운 맵핑 목록을 시스템에 저장 (Set)
+            let setTask = Process()
+            setTask.launchPath = "/usr/bin/hidutil"
+            setTask.arguments = ["property", "--set", finalJsonString]
+            setTask.terminationHandler = { proc in
+                if proc.terminationStatus != 0 {
+                    DispatchQueue.main.async {
+                        SettingsManager.shared.addLog(ActionLog(
+                            timestamp: Date(),
+                            targetApp: "System",
+                            appliedRule: "Hyper Key Mapping",
+                            finalInputSource: "Failed",
+                            result: .failure,
+                            failureReason: .unknown
+                        ))
+                    }
+                    print("hidutil 실행 실패: code \(proc.terminationStatus)")
+                }
+            }
+
+            do {
+                try setTask.run()
+            } catch {
+                print("hidutil set 실행 자체를 실패함: \(error)")
+            }
         }
     }
 
     private func postHyperModifiers(isDown: Bool) {
         guard let eventSource = CGEventSource(stateID: .hidSystemState) else { return }
         
-        // 🌟 [수정됨] 불필요한 플래그(fn, caps lock 등)가 섞이지 않도록,
-        // 하이퍼 키를 구성하는 정확히 4개의 모디파이어만 조합하여 안전한 플래그 세트를 만듭니다.
         let hyperFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
         
         for keyCode in hyperKeyCodes {
             if let event = CGEvent(keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: isDown) {
-                // 🌟 [수정됨] 뭉뚱그려진 deviceIndependentFlagsMask 대신 정확한 hyperFlags를 주입합니다.
                 event.flags = isDown ? hyperFlags : []
                 event.setIntegerValueField(.eventSourceUserData, value: 9999)
                 event.post(tap: .cghidEventTap)
@@ -124,10 +169,9 @@ class HyperKeyManager {
         var shouldToggleCapsLock = false
         var modifiedFlags: CGEventFlags? = nil
 
-        // 🌟 [수정됨] 1단계를 do { } 블록으로 묶어 락의 범위를 완벽하게 제한합니다.
         do {
             stateLock.lock()
-            defer { stateLock.unlock() } // do 블록이 끝날 때 무조건 자물쇠를 해제합니다.
+            defer { stateLock.unlock() }
             
             if keyCode == f19KeyCode {
                 if type == .keyDown {
@@ -160,9 +204,8 @@ class HyperKeyManager {
                 flags.insert([.maskCommand, .maskAlternate, .maskControl, .maskShift])
                 modifiedFlags = flags
             }
-        } // 🔓 <-- 여기서 defer가 발동하여 알아서 자물쇠가 풀립니다! (수동 unlock 삭제됨)
+        }
 
-        // 2단계: 자물쇠가 풀린 안전한 상태에서 시스템 관련 동작을 실행합니다.
         if shouldPostDown { postHyperModifiers(isDown: true) }
         if shouldPostUp { postHyperModifiers(isDown: false) }
         if shouldHandleTap { handleTap() }
@@ -172,24 +215,16 @@ class HyperKeyManager {
         return shouldBlock
     }
     
-    // 🌟 [수정됨] 디바운스 적용: 빠른 연타 시 이전 작업을 취소하고 마지막 1번만 실행합니다.
     private func toggleNativeCapsLock() {
-        // 1. 이전에 예약된 작업이 있다면 취소 (연타 방지)
         capsLockWorkItem?.cancel()
         
-        // 2. 실행할 작업 정의
         let item = DispatchWorkItem { [weak self] in
             self?.executeCapsLockToggle()
         }
-        
-        // 3. 작업 저장 (다음 연타 시 취소할 수 있도록)
         capsLockWorkItem = item
-        
-        // 4. 0.05초(50ms) 대기 후 백그라운드 스레드에서 실행
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05, execute: item)
     }
 
-    // 🌟 [추가/수정됨] 실제 JXA 스크립트를 실행하는 로직
     private func executeCapsLockToggle() {
         let currentFlags = CGEventSource.flagsState(.hidSystemState)
         let currentState = currentFlags.contains(.maskAlphaShift)
@@ -212,14 +247,10 @@ class HyperKeyManager {
         task.launchPath = "/usr/bin/osascript"
         task.arguments = ["-l", "JavaScript", "-e", script]
         
-        // 🌟 [핵심 추가] 비동기로 스크립트 실행 결과를 확인하여 실패 시에만 로그를 남깁니다.
         task.terminationHandler = { proc in
             if proc.terminationStatus != 0 {
-                // UI나 공유 상태를 건드릴 수 있으므로 메인 스레드로 보냅니다.
                 DispatchQueue.main.async {
                     print("Caps Lock 토글 스크립트 실패 (종료 코드: \(proc.terminationStatus))")
-                    
-                    // (선택 사항) 시스템 설정 로깅에 실패 기록 추가
                     SettingsManager.shared.addLog(ActionLog(
                         timestamp: Date(),
                         targetApp: "System",
@@ -233,7 +264,7 @@ class HyperKeyManager {
         }
 
         do {
-            try task.run() // 🌟 이제 스레드를 막지 않고 실행만 한 뒤 바로 빠져나갑니다.
+            try task.run()
         } catch {
             print("Caps Lock toggle 실행 자체를 실패함: \(error)")
         }

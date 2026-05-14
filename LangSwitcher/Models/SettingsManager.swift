@@ -45,9 +45,11 @@ class SettingsManager: ObservableObject {
     @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags); updateSnapshot() } }
     @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString); updateSnapshot() } }
     
-    @Published var customShortcuts: [CustomShortcut] = [] { didSet { scheduleSave() } }
+    // 🌟 중복 선언 제거 및 통합 완료 (캐시 업데이트 연결)
+    @Published var customShortcuts: [CustomShortcut] = [] { didSet { scheduleSave(); updateShortcutCaches() } }
+    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { scheduleSave(); updateShortcutCaches() } }
+    
     @Published var customApps: [CustomApp] = [] { didSet { scheduleSave() } }
-    @Published var appLaunchShortcuts: [AppLaunchShortcut] = [] { didSet { scheduleSave() } }
     @Published var excludedApps: [ExcludedApp] = [] { didSet { scheduleSave() } }
     
     // 🌟 앱 딜레이 배열
@@ -68,9 +70,20 @@ class SettingsManager: ObservableObject {
     
     @Published private(set) var recentLogs: [ActionLog] = []
     
-    // 🌟 [추가됨] 텍스트 대치 배열 저장소
-    @Published var textExpansionRules: [TextExpansionRule] = [] { didSet { scheduleSave() } }
+    // 🌟 [추가] 미리 필터링 및 정렬된 텍스트 대치 규칙 캐시
+    @Published private(set) var cachedActiveTextExpansionRules: [TextExpansionRule] = []
+
+    @Published var textExpansionRules: [TextExpansionRule] = [] {
+        didSet {
+            scheduleSave()
+            updateTextExpansionCache() // 🌟 저장될 때마다 캐시 업데이트
+        }
+    }
     
+    // 🌟 [추가] 빛의 속도로 검색하기 위한 딕셔너리 캐시
+    private(set) var customShortcutCache: [ShortcutKey: CustomShortcut] = [:]
+    private(set) var appLaunchShortcutCache: [ShortcutKey: AppLaunchShortcut] = [:]
+
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled); updateSnapshot(); syncToCloud() }
     }
@@ -117,11 +130,10 @@ class SettingsManager: ObservableObject {
         if let data = d.data(forKey: "appLaunchShortcuts"), let dec = try? JSONDecoder().decode([AppLaunchShortcut].self, from: data) { appLaunchShortcuts = dec }
         if let data = d.data(forKey: "excludedApps"), let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { excludedApps = dec }
         
-        // 🌟 [수정됨] 텍스트 대치 규칙 불러오기 및 기본 프리셋 제공
+        // 🌟 텍스트 대치 규칙 불러오기 및 기본 프리셋 제공
         if let data = d.data(forKey: "textExpansionRules"), let dec = try? JSONDecoder().decode([TextExpansionRule].self, from: data) {
             textExpansionRules = dec
         } else {
-            // 저장된 데이터가 없는 경우(최초 실행 등) 유용한 날짜/시간 프리셋을 기본 제공합니다.
             textExpansionRules = [
                 TextExpansionRule(id: UUID(), trigger: ";date", replacement: "{{date:yyyy-MM-dd}}", isEnabled: true),
                 TextExpansionRule(id: UUID(), trigger: ";time", replacement: "{{date:HH:mm}}", isEnabled: true),
@@ -136,7 +148,6 @@ class SettingsManager: ObservableObject {
             DomainRuleManager.shared.rules = dec
         }
         
-        // 앱 딜레이 기본값 할당
         if let data = d.data(forKey: "appDelays"), let dec = try? JSONDecoder().decode([AppDelay].self, from: data) {
             appDelays = dec
         } else {
@@ -156,9 +167,10 @@ class SettingsManager: ObservableObject {
         typoDisplayString = d.string(forKey: "typoDisplayString") ?? ""
         isSentenceMode = d.object(forKey: "isSentenceMode") as? Bool ?? false
         
-        // SettingsSnapshot은 클래스가 아니므로 내부 변수만 초기화한 더미가 할당되었을 것입니다.
-        // updateSnapshot을 통해 최신 변수들로 구조체를 찍어냅니다.
         updateSnapshot()
+        // 앱 실행 시 최초 1회 캐시 빌드 (초기화 단계에서 didSet이 작동하지 않을 수 있으므로)
+        updateShortcutCaches()
+        updateTextExpansionCache()
         
         NotificationCenter.default.addObserver(
             self,
@@ -181,7 +193,6 @@ class SettingsManager: ObservableObject {
         if let e = try? JSONEncoder().encode(excludedApps) { d.set(e, forKey: "excludedApps") }
         if let e = try? JSONEncoder().encode(domainRules) { d.set(e, forKey: "domainRules") }
         if let e = try? JSONEncoder().encode(appDelays) { d.set(e, forKey: "appDelays") }
-        // 🌟 [추가됨] 텍스트 대치 규칙 저장
         if let e = try? JSONEncoder().encode(textExpansionRules) { d.set(e, forKey: "textExpansionRules") }
     }
     
@@ -190,7 +201,7 @@ class SettingsManager: ObservableObject {
     }
         
     func updateSnapshot() {
-        let newSnapshot = SettingsSnapshot(
+        var newSnapshot = SettingsSnapshot(
             isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive,
             ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
@@ -220,15 +231,15 @@ class SettingsManager: ObservableObject {
             customShortcuts: customShortcuts,
             domainRules: domainRules,
             appDelays: appDelays,
-            
-            // 🌟 [추가됨] 텍스트 대치 변수를 Snapshot 생성자에 주입
             isTextExpansionEnabled: isTextExpansionEnabled,
             textExpansionRules: textExpansionRules
         )
         
+        // 🌟 스냅샷에 딕셔너리 캐시 미리 구워두기
+        newSnapshot.buildCaches()
+        
         EventMonitor.shared.updateSettingsSnapshot(newSnapshot)
         snapshotQueue.async(flags: .barrier) {
-            // 이 클로저 내부에서는 Thread-safe하게 접근합니다.
             self._snapshot = newSnapshot
         }
     }
@@ -248,12 +259,10 @@ class SettingsManager: ObservableObject {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             
-            // 1. 실제 저장은 백그라운드에서 수행 (무거운 작업)
             self.performActualSave()
             
-            // 2. UI와 밀접한 스냅샷 업데이트 및 클라우드 동기화는 메인 스레드에서 수행
             DispatchQueue.main.async {
-                self.updateSnapshot() // 🌟 이제 메인 액터에서 실행되므로 에러가 사라집니다.
+                self.updateSnapshot()
                 if !self.isBatchUpdating { self.syncToCloud() }
             }
         }
@@ -265,12 +274,33 @@ class SettingsManager: ObservableObject {
     private func performActualSave() {
         self.saveAll()
         #if DEBUG
-        print("SettingsManager: 배열 데이터들이 디바운스 처리되어 한 번에 디스크에 저장되었습니다.")
+        print("SettingsManager: 배열 데이터들이 디스크에 저장되었습니다.")
         #endif
     }
     
+    // 🌟 [추가] 캐시 업데이트 함수 (isEnabled를 확인하여 필터링)
+    private func updateTextExpansionCache() {
+        cachedActiveTextExpansionRules = textExpansionRules
+            .filter { $0.isEnabled } // 🌟 isActive를 isEnabled로 수정완료
+            .sorted { $0.trigger.count > $1.trigger.count }
+    }
+    
+    // 🌟 [추가] 딕셔너리 업데이트 함수
+    private func updateShortcutCaches() {
+        customShortcutCache.removeAll()
+        for shortcut in customShortcuts {
+            let key = ShortcutKey(keyCode: shortcut.keyCode, modifiers: shortcut.modifierFlags)
+            customShortcutCache[key] = shortcut
+        }
+        
+        appLaunchShortcutCache.removeAll()
+        for shortcut in appLaunchShortcuts {
+            let key = ShortcutKey(keyCode: shortcut.keyCode, modifiers: shortcut.modifierFlags)
+            appLaunchShortcutCache[key] = shortcut
+        }
+    }
+    
     // MARK: - Cache & Memory Management
-    // 🌟 [추가됨] 앱별 딜레이 기본값 복원 함수
     @MainActor
     func restoreDefaultAppDelays() {
         self.appDelays = [
@@ -281,20 +311,14 @@ class SettingsManager: ObservableObject {
             AppDelay(bundleIdentifier: "md.obsidian", appName: "Obsidian", delay: 0.5),
             AppDelay(bundleIdentifier: "com.google.Chrome", appName: "Google Chrome", delay: 0.4)
         ]
-        
-        #if DEBUG
-        print("SettingsManager: App delays restored to defaults.")
-        #endif
     }
     
     // MARK: - Text Expansion Only Backup/Restore
-    
-    // 🌟 1. 텍스트 대치 전용 내보내기
     func exportTextExpansionRules(to url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = .prettyPrinted
-            let data = try encoder.encode(textExpansionRules) // 규칙 배열만 인코딩
+            let data = try encoder.encode(textExpansionRules)
             
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
@@ -309,7 +333,6 @@ class SettingsManager: ObservableObject {
         }
     }
 
-    // 🌟 2. 텍스트 대치 전용 불러오기 (기존 목록에 병합)
     func importTextExpansionRules(from url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -318,14 +341,13 @@ class SettingsManager: ObservableObject {
                     do {
                         let importedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
                         
-                        // 기존 목록과 중복되는 트리거가 없다면 추가합니다. (병합)
                         for rule in importedRules {
                             if !self.textExpansionRules.contains(where: { $0.trigger == rule.trigger }) {
                                 self.textExpansionRules.append(rule)
                             }
                         }
                         
-                        self.saveAll() // 변경사항 저장
+                        self.saveAll()
                         completion(true, nil)
                     } catch {
                         completion(false, error)

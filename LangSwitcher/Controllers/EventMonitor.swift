@@ -169,8 +169,9 @@ class EventMonitor {
                             #endif
                             
                             // 1순위: Text Expansion (텍스트 대치)
+                            // 🌟 [수정됨] 파라미터 3개(in, activeAppID, rules)를 던지던 구형 호출을, 캐시를 활용하는 신형(for:) 호출로 변경했습니다!
                             if snapshot.isTextExpansionEnabled,
-                                let matchedRule = TextExpander.shared.findMatch(in: currentBuffer, activeAppID: currentAppID, rules: snapshot.textExpansionRules) {
+                                let matchedRule = TextExpander.shared.findMatch(for: currentBuffer) {
                                     
                                 let parsedText = TextExpander.shared.parseDynamicVariables(text: matchedRule.replacement)
                                     

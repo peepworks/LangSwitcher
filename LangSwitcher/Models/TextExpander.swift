@@ -23,21 +23,19 @@ class TextExpander {
     static let shared = TextExpander()
     private init() {}
     
+    // 🌟 성능 최적화를 위한 공용 DateFormatter (딱 한 번만 생성됨)
+    private static let sharedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        return formatter
+    }()
+    
     // 1. 버퍼에서 트리거 매칭 확인
-    func findMatch(in buffer: String, activeAppID: String, rules: [TextExpansionRule]) -> TextExpansionRule? {
-        // 긴 트리거부터 매칭하기 위해 길이순 정렬
-        let activeRules = rules.filter { $0.isEnabled }
-            .sorted { $0.trigger.count > $1.trigger.count }
+    func findMatch(for buffer: String) -> TextExpansionRule? {
+        // 미리 정렬된 캐시 배열을 즉시 가져옵니다. (속도 대폭 향상)
+        let activeRules = SettingsManager.shared.cachedActiveTextExpansionRules
         
         for rule in activeRules {
-            // 앱별 범위 필터링 (사용자님이 추가하신 훌륭한 기능 유지)
-            // (주의: TextExpansionRule 모델에 해당 변수들이 선언되어 있어야 합니다)
-            /*
-            if rule.isExcludeMode && rule.targetAppBundleIDs.contains(activeAppID) { continue }
-            if !rule.isExcludeMode && !rule.targetAppBundleIDs.contains(activeAppID) { continue }
-            */
-            
-            // 버퍼가 트리거로 끝나는지 확인
             if buffer.hasSuffix(rule.trigger) {
                 return rule
             }
@@ -48,6 +46,7 @@ class TextExpander {
     // 2. 동적 스니펫 파싱 (정규식 엔진 + 고정 토큰 통합)
     func parseDynamicVariables(text: String, now: Date = Date()) -> String {
         var result = text as NSString
+        let sharedFormatter = TextExpander.sharedDateFormatter // 공용 포매터 가져오기 (이름 충돌 방지를 위해 sharedFormatter로 명명)
         
         // --- A. 고급 동적 날짜 파싱: {{date:yyyy-MM-dd}} ---
         let pattern = #"\{\{date:([^}]+)\}\}"#
@@ -58,21 +57,20 @@ class TextExpander {
             for match in matches.reversed() {
                 let fullRange = match.range(at: 0)
                 let formatRange = match.range(at: 1)
-                
                 let format = result.substring(with: formatRange)
                 
-                let formatter = DateFormatter()
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.dateFormat = format
+                // 🌟 수정됨: 새 DateFormatter를 만들지 않고 공용 포매터를 재사용합니다.
+                sharedFormatter.locale = Locale(identifier: "en_US_POSIX")
+                sharedFormatter.dateFormat = format
                 
-                let replacement = formatter.string(from: now)
+                let replacement = sharedFormatter.string(from: now)
                 result = result.replacingCharacters(in: fullRange, with: replacement) as NSString
             }
         }
         
         var parsedText = result as String
         
-        // 🌟 B. 클립보드 파싱: {{clipboard}}, {{clip}} 또는 {clip}
+        // --- B. 클립보드 파싱: {{clipboard}}, {{clip}} 또는 {clip} ---
         if parsedText.contains("{{clipboard}}") || parsedText.contains("{{clip}}") || parsedText.contains("{clip}") {
             let pasteboardString = NSPasteboard.general.string(forType: .string) ?? ""
             parsedText = parsedText.replacingOccurrences(of: "{{clipboard}}", with: pasteboardString)
@@ -82,15 +80,17 @@ class TextExpander {
         
         // --- C. 단순 날짜/시간 하위 호환성: {date}, {time} ---
         if parsedText.contains("{date}") {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            parsedText = parsedText.replacingOccurrences(of: "{date}", with: formatter.string(from: now))
+            // 🌟 수정됨: 공용 포매터 재사용 (A에서 변경되었을 수 있으므로 locale을 복구)
+            sharedFormatter.locale = Locale.current
+            sharedFormatter.dateFormat = "yyyy-MM-dd"
+            parsedText = parsedText.replacingOccurrences(of: "{date}", with: sharedFormatter.string(from: now))
         }
         
         if parsedText.contains("{time}") {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            parsedText = parsedText.replacingOccurrences(of: "{time}", with: formatter.string(from: now))
+            // 🌟 수정됨: 공용 포매터 재사용
+            sharedFormatter.locale = Locale.current
+            sharedFormatter.dateFormat = "HH:mm"
+            parsedText = parsedText.replacingOccurrences(of: "{time}", with: sharedFormatter.string(from: now))
         }
         
         return parsedText

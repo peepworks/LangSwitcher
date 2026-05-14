@@ -19,19 +19,20 @@
 import Cocoa
 
 extension EventMonitor {
+    
+    // 🌟 공통 키 생성 유틸리티 (keyCode와 modifiers를 하나의 UInt64로 병합)
+    private func makeShortcutKey(keyCode: UInt16, modifiers: UInt64) -> UInt64 {
+        return (UInt64(keyCode) << 32) | modifiers
+    }
+    
     func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
         
-        // 🌟 1. 잠금 (Lock) 추가
         EventMonitor.shared.snapshotLock.lock()
-        
-        // 🌟 2. 나갈 때 알아서 해제 (Defer)
         defer { EventMonitor.shared.snapshotLock.unlock() }
         
         guard let snapshot = EventMonitor.shared.localSnapshot else {
-            // 💡 수동 unlock() 제거됨 (defer가 알아서 해줍니다)
             return Unmanaged.passUnretained(event)
         }
-        // 💡 수동 unlock() 제거됨
         
         var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
         var isToggle = false; var appliedRule = ""
@@ -48,11 +49,13 @@ extension EventMonitor {
             if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == 57 && !snapshot.toggleDisplayString.isEmpty {
                 isToggle = true; appliedRule = "Toggle Key"
             } else {
-                if snapshot.isAppLaunchEnabled {
-                    for appLaunch in snapshot.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == 57 && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                }
-                if targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
-                    for shortcut in snapshot.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == 57 && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                // 🌟 [최적화] O(1) 딕셔너리 검색으로 교체됨
+                let searchKey = makeShortcutKey(keyCode: 57, modifiers: 0)
+                
+                if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
+                    targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
+                } else if snapshot.isCustomShortcutsEnabled, let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
+                    targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
                 }
             }
         } else {
@@ -71,11 +74,13 @@ extension EventMonitor {
                         if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == singleCode && !snapshot.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            if snapshot.isAppLaunchEnabled {
-                                for appLaunch in snapshot.appLaunchShortcuts where appLaunch.modifierFlags == 0 && appLaunch.keyCode == singleCode && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                            }
-                            if targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
-                                for shortcut in snapshot.customShortcuts where shortcut.modifierFlags == 0 && shortcut.keyCode == singleCode && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                            // 🌟 [최적화] O(1) 딕셔너리 검색
+                            let searchKey = makeShortcutKey(keyCode: singleCode, modifiers: 0)
+                            
+                            if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
+                                targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
+                            } else if snapshot.isCustomShortcutsEnabled, let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
+                                targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
                             }
                         }
                     } else if !stateSnap.maxMods.isEmpty {
@@ -89,11 +94,13 @@ extension EventMonitor {
                         if snapshot.toggleKeyCode == 0 && snapshot.toggleModifierFlags == modsRaw && !snapshot.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            if snapshot.isAppLaunchEnabled {
-                                for appLaunch in snapshot.appLaunchShortcuts where appLaunch.keyCode == 0 && appLaunch.modifierFlags == modsRaw && !appLaunch.displayString.isEmpty { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                            }
-                            if targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
-                                for shortcut in snapshot.customShortcuts where shortcut.keyCode == 0 && shortcut.modifierFlags == modsRaw && !shortcut.displayString.isEmpty { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
+                            // 🌟 [최적화] O(1) 딕셔너리 검색
+                            let searchKey = makeShortcutKey(keyCode: 0, modifiers: modsRaw)
+                            
+                            if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
+                                targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
+                            } else if snapshot.isCustomShortcutsEnabled, let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
+                                targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
                             }
                         }
                     }
@@ -111,7 +118,6 @@ extension EventMonitor {
 
     func handleKeyDown(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
         
-        // 🌟 handleKeyDown에도 동일한 잠금/스냅샷 로직 통일 적용
         EventMonitor.shared.snapshotLock.lock()
         defer { EventMonitor.shared.snapshotLock.unlock() }
         
@@ -124,6 +130,7 @@ extension EventMonitor {
 
         self.markOtherKeyPressed()
         let flags = modifierFlags.intersection([.command, .control, .option, .shift])
+        let flagsRaw = UInt64(flags.rawValue)
 
         if snapshot.isTypoCorrectionEnabled &&
            snapshot.typoKeyCode == keyCode &&
@@ -138,28 +145,25 @@ extension EventMonitor {
             if flags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
         }
 
+        // 🌟 [최적화] for 루프를 완전히 제거하고 O(1) 해시 검색으로 교체
+        let searchKey = makeShortcutKey(keyCode: keyCode, modifiers: flagsRaw)
+
         if !isToggle && snapshot.isAppLaunchEnabled {
-            for appLaunch in snapshot.appLaunchShortcuts {
+            if let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
                 let isSingleModifier = globalModifierKeyCodes.contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
                 let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
-                    if appLaunch.keyCode == keyCode && !appLaunch.displayString.isEmpty {
-                        let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(appLaunch.modifierFlags)).intersection([.command, .control, .option, .shift])
-                        if flags == savedModifierFlags { targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"; break }
-                    }
+                    targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
                 }
             }
         }
 
         if !isToggle && targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
-            for shortcut in snapshot.customShortcuts {
+            if let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
                 let isSingleModifier = globalModifierKeyCodes.contains(shortcut.keyCode) && shortcut.modifierFlags == 0
                 let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
-                    if shortcut.keyCode == keyCode && !shortcut.displayString.isEmpty {
-                        let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(shortcut.modifierFlags)).intersection([.command, .control, .option, .shift])
-                        if flags == savedModifierFlags { targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"; break }
-                    }
+                    targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
                 }
             }
         }

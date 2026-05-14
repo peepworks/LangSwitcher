@@ -16,7 +16,7 @@
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
-import Foundation
+import Cocoa
 
 struct CustomShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var targetLanguage: String }
 struct CustomApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String; var targetLanguage: String }
@@ -122,4 +122,32 @@ struct SettingsSnapshot {
     
     var isTextExpansionEnabled: Bool
     var textExpansionRules: [TextExpansionRule] = []
+    // 🌟 1. O(1) 검색을 위한 딕셔너리 변수 2개를 선언합니다. (기본값 빈 딕셔너리)
+    var customShortcutCache: [UInt64: CustomShortcut] = [:]
+    var appLaunchShortcutCache: [UInt64: AppLaunchShortcut] = [:]
+
+    // 🌟 2. 스냅샷이 생성될 때 기존 배열(Array)을 딕셔너리(Dictionary)로 1번만 구워두는 함수입니다.
+    mutating func buildCaches() {
+        var tempCustom: [UInt64: CustomShortcut] = [:]
+        for shortcut in customShortcuts {
+            let maskedMods = UInt64(NSEvent.ModifierFlags(rawValue: UInt(shortcut.modifierFlags)).intersection([.command, .control, .option, .shift]).rawValue)
+            let key = (UInt64(shortcut.keyCode) << 32) | maskedMods
+            tempCustom[key] = shortcut
+        }
+        self.customShortcutCache = tempCustom
+
+        var tempAppLaunch: [UInt64: AppLaunchShortcut] = [:]
+        for appLaunch in appLaunchShortcuts {
+            let maskedMods = UInt64(NSEvent.ModifierFlags(rawValue: UInt(appLaunch.modifierFlags)).intersection([.command, .control, .option, .shift]).rawValue)
+            let key = (UInt64(appLaunch.keyCode) << 32) | maskedMods
+            tempAppLaunch[key] = appLaunch
+        }
+        self.appLaunchShortcutCache = tempAppLaunch
+    }
+}
+
+// 🌟 [추가] 딕셔너리의 열쇠로 쓸 구조체
+struct ShortcutKey: Hashable {
+    let keyCode: UInt16
+    let modifiers: UInt64
 }
