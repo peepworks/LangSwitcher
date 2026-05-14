@@ -103,12 +103,16 @@ extension EventMonitor {
     func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
         self.batchDelete(count: originalLength) { [weak self] in
             guard let self = self else { return }
+            
+            // 1. 교정된 텍스트 먼저 삽입
             self.postUnicodeString(correctedText)
             
+            // 2. 텍스트가 대상 앱에 완전히 입력될 시간을 0.03초 기다린 후 한글 전환 명령
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
                 self.safeSwitchToKorean()
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                // 🌟 [핵심 수정] macOS가 실제로 입력 소스를 한글로 완전히 바꾸는 물리적 여유 시간(Buffer)을 0.02초 추가로 줍니다.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                     self.postTriggerKey(keyCode: triggerKeyCode)
                     StatsManager.shared.incrementTypoCorrection()
                 }

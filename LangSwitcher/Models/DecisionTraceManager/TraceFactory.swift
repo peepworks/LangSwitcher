@@ -69,15 +69,18 @@ struct TraceFactory {
         }
     }
     
+    // 🌟 파라미터 맨 끝에 timestamp를 추가하고 기본값으로 Date()를 줍니다.
     static func create(
         event: DecisionTrace.EventType,
         result: DecisionTrace.ResultType,
         reason: Reason,
         appName: String? = nil,
         domain: String? = nil,
-        trigger: String? = nil
+        trigger: String? = nil,
+        timestamp: Date = Date() // 🌟 테스트를 위한 의존성 주입(DI) 통로
     ) -> DecisionTrace {
         return DecisionTrace(
+            timestamp: timestamp, // 🌟 외부에서 받은 시간을 그대로 전달
             eventType: event,
             resultType: result,
             reasonCode: reason.code,

@@ -20,14 +20,12 @@ import Foundation
 import Combine
 import SwiftUI
 
-@MainActor
+// 💡 클래스 전체에 걸려있던 @MainActor를 제거하고, 필요한 곳에만 DispatchQueue를 적용합니다.
 final class DecisionTraceManager: ObservableObject {
     static let shared = DecisionTraceManager()
     
-    // 🌟 UI에 즉각 표시될 로그 배열 (가장 최신이 0번 인덱스)
     @Published private(set) var recentTraces: [DecisionTrace] = []
     
-    // 로깅 기능 On/Off (사용자가 설정에서 끄면 리소스 절약)
     @AppStorage("isTraceLoggingEnabled") var isTraceLoggingEnabled: Bool = true
     
     private let maxTraceCount = 200
@@ -38,11 +36,16 @@ final class DecisionTraceManager: ObservableObject {
     func record(_ trace: DecisionTrace) {
         guard isTraceLoggingEnabled else { return }
         
-        recentTraces.insert(trace, at: 0)
-        
-        // 제한 개수를 넘어가면 과거 기록 삭제 (메모리 보호)
-        if recentTraces.count > maxTraceCount {
-            recentTraces.removeLast(recentTraces.count - maxTraceCount)
+        // 🌟 [핵심 수정] 외부에서 어떤 스레드로 호출하든 100% 안전하게 메인 스레드에서만 배열을 수정하도록 보장합니다.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            self.recentTraces.insert(trace, at: 0)
+            
+            // 제한 개수를 넘어가면 과거 기록 삭제 (메모리 보호)
+            if self.recentTraces.count > self.maxTraceCount {
+                self.recentTraces.removeLast(self.recentTraces.count - self.maxTraceCount)
+            }
         }
         
         #if DEBUG
@@ -52,6 +55,9 @@ final class DecisionTraceManager: ObservableObject {
 
     /// 모든 기록을 삭제합니다.
     func clear() {
-        recentTraces.removeAll()
+        // 배열을 비우는 작업도 UI 업데이트를 유발하므로 메인 스레드에서 실행합니다.
+        DispatchQueue.main.async { [weak self] in
+            self?.recentTraces.removeAll()
+        }
     }
 }

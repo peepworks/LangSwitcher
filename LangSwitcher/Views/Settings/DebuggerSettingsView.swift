@@ -93,9 +93,12 @@ struct DebuggerSettingsView: View {
                             .foregroundColor(.secondary)
                             .padding(.vertical, 10)
                     } else {
-                        VStack(spacing: 0) {
-                            // 앞의 1건(최근 카드)을 제외한 나머지 내역 표시
-                            ForEach(traceManager.recentTraces.dropFirst().prefix(20)) { trace in
+                        
+                        // 🌟 [성능 최적화] 일반 VStack 대신 'LazyVStack'을 사용하여 화면에 보일 때만 렌더링합니다.
+                        LazyVStack(spacing: 0) {
+                            
+                            // 🌟 [성능 최적화] id: \.id 를 명시하여, 새로운 항목이 추가될 때 전체를 다시 그리지 않고 기존 항목은 재사용하도록 만듭니다.
+                            ForEach(traceManager.recentTraces.dropFirst().prefix(20), id: \.id) { trace in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(trace.reasonMessage).font(.subheadline)

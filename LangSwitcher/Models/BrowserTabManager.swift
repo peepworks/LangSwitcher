@@ -224,24 +224,30 @@ class BrowserTabManager {
 
         saveCurrentContext()
 
-        // 🌟 이전 요청 즉시 취소 (광클 시 Race Condition 완벽 차단)
+        // 이전 요청 취소
         fetchTask?.cancel()
 
-        fetchTask = Task {
+        // 🌟 [Swift 6 대응] [weak self] 캡처를 아예 지워버려서 엄격한 동시성 에러를 원천 차단합니다!
+        fetchTask = Task.detached(priority: .userInitiated) {
+            
             // 150ms 대기 (디바운스 타임)
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
 
+            // 무거운 JXA 스크립트 실행
             let result = await adapter.fetchActiveTabInfo(appName: appName)
 
-            // 대기하는 동안 또 다른 탭을 눌렀다면 무시
             guard !Task.isCancelled else { return }
 
-            switch result {
-            case .success(let context):
-                self.processTabContext(context, bundleID: bundleID)
-            case .failure(let error):
-                self.handleFetchFailure(error: error, appName: appName)
+            // 다시 메인 스레드로 돌아옵니다.
+            await MainActor.run {
+                // 🌟 self 대신 안전한 전역 싱글톤(shared)을 사용하여 함수를 호출합니다.
+                switch result {
+                case .success(let context):
+                    BrowserTabManager.shared.processTabContext(context, bundleID: bundleID)
+                case .failure(let error):
+                    BrowserTabManager.shared.handleFetchFailure(error: error, appName: appName)
+                }
             }
         }
     }
