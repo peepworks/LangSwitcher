@@ -24,7 +24,8 @@ class ShortcutRecorder {
     private var timeoutTask: DispatchWorkItem?
     private init() {}
     
-    func startRecording(completion: @escaping Completion, onTimeout: @escaping () -> Void) {
+    // 🌟 [핵심 변경] isForAppLaunch 플래그 추가 (기본값 false)
+    func startRecording(isForAppLaunch: Bool = false, completion: @escaping Completion, onTimeout: @escaping () -> Void) {
         EventMonitor.shared.isPaused = true
         timeoutTask?.cancel()
         
@@ -65,7 +66,19 @@ class ShortcutRecorder {
                     return
                 }
                 state.m.removeAll(); state.f = []; state.r = false; return
+                
             } else if e.type == .keyDown {
+                
+                // 🌟 [핵심 변경] 앱 실행 단축키 화면(isForAppLaunch == true)일 때만 방어 로직 작동!
+                if isForAppLaunch && code == 49 {
+                    let snapshot = SettingsManager.shared.snapshot
+                    let pureFlags = flags.intersection([.control, .command, .option, .shift])
+                    
+                    if pureFlags == .control && snapshot.isCtrlActive { state.r = true; return }
+                    if pureFlags == .command && snapshot.isCmdActive { state.r = true; return }
+                    if pureFlags == .option && snapshot.isOptActive { state.r = true; return }
+                }
+                
                 state.r = true; var str = ""
                 if flags.contains(.control) { str += "⌃ " }
                 if flags.contains(.option) { str += "⌥ " }

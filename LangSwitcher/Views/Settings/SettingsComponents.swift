@@ -41,7 +41,6 @@ let globalKeyMap: [UInt16: String] = [
 let globalModifierKeyCodes: Set<UInt16> = [54, 55, 56, 60, 58, 61, 59, 62, 57, 63]
 
 // 키보드 입력을 문자열로 예쁘게 포맷팅 해주는 공통 헬퍼 함수
-// 키보드 입력을 문자열로 예쁘게 포맷팅 해주는 공통 헬퍼 함수
 func formatKeyEquivalent(modifierFlags: UInt, keyCode: UInt16) -> String {
     var parts: [String] = []
     let flags = NSEvent.ModifierFlags(rawValue: modifierFlags)
@@ -51,7 +50,6 @@ func formatKeyEquivalent(modifierFlags: UInt, keyCode: UInt16) -> String {
     if flags.contains(.shift)   { parts.append("⇧") }
     if flags.contains(.command) { parts.append("⌘") }
     
-    // 🌟 [수정됨] 함수 내부에 있던 배열을 지우고, 방금 만든 전역 상수(globalModifierKeyCodes)를 사용합니다.
     if globalModifierKeyCodes.contains(keyCode) && modifierFlags == 0 {
         return globalKeyMap[keyCode] ?? "Unknown"
     }
@@ -70,7 +68,6 @@ struct ToggleShortcutRow: View {
     @State private var isRecording = false
     @State private var showDuplicateWarning = false
     @State private var conflictMessage = ""
-    // 🗑️ timeoutTask 삭제됨
 
     var body: some View {
         HStack {
@@ -124,7 +121,6 @@ struct ToggleShortcutRow: View {
     }
 
     private func stopRecording() {
-        // 🌟 [수정됨] 공용 매니저를 통해 정지하도록 통일
         ShortcutRecorder.shared.stopRecording()
         isRecording = false
     }
@@ -149,8 +145,6 @@ struct CustomShortcutRow: View {
     @Binding var shortcut: CustomShortcut
     
     @State private var isRecording = false
-    // 🗑️ timeoutTask 삭제됨
-    
     @State private var showDuplicateWarning = false
     @State private var conflictMessage = ""
 
@@ -224,7 +218,6 @@ struct CustomShortcutRow: View {
     }
 
     private func stopRecording() {
-        // 🌟 [수정됨] 공용 매니저를 통해 정지하도록 통일
         ShortcutRecorder.shared.stopRecording()
         isRecording = false
     }
@@ -246,11 +239,8 @@ struct AppLaunchShortcutRow: View {
     @Binding var shortcut: AppLaunchShortcut
     
     @State private var isRecording = false
-    // 🗑️ timeoutTask 삭제됨
-    
     @State private var appIcon: NSImage? = nil
     @State private var currentIconLoadID = UUID()
-    
     @State private var showDuplicateWarning = false
     @State private var conflictMessage = ""
 
@@ -340,7 +330,8 @@ struct AppLaunchShortcutRow: View {
         isRecording = true
         showDuplicateWarning = false
             
-        ShortcutRecorder.shared.startRecording { code, mods, display in
+        // 🌟 [핵심 변경] 앱 실행 단축키 화면임을 녹화기에게 알려주어, 기본 단축키로 켜진 스페이스바 조합을 방어합니다.
+        ShortcutRecorder.shared.startRecording(isForAppLaunch: true) { code, mods, display in
             self.saveShortcut(keyCode: code, modifiers: mods, displayString: display)
         } onTimeout: {
             self.isRecording = false
@@ -369,7 +360,6 @@ struct AppLaunchShortcutRow: View {
     }
 
     private func stopRecording() {
-        // 🌟 [수정됨] 공용 매니저를 통해 정지하도록 통일
         ShortcutRecorder.shared.stopRecording()
         isRecording = false
     }

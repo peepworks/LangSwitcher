@@ -49,7 +49,6 @@ extension EventMonitor {
             if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == 57 && !snapshot.toggleDisplayString.isEmpty {
                 isToggle = true; appliedRule = "Toggle Key"
             } else {
-                // 🌟 [최적화] O(1) 딕셔너리 검색으로 교체됨
                 let searchKey = makeShortcutKey(keyCode: 57, modifiers: 0)
                 
                 if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
@@ -74,7 +73,6 @@ extension EventMonitor {
                         if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == singleCode && !snapshot.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            // 🌟 [최적화] O(1) 딕셔너리 검색
                             let searchKey = makeShortcutKey(keyCode: singleCode, modifiers: 0)
                             
                             if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
@@ -94,7 +92,6 @@ extension EventMonitor {
                         if snapshot.toggleKeyCode == 0 && snapshot.toggleModifierFlags == modsRaw && !snapshot.toggleDisplayString.isEmpty {
                             isToggle = true; appliedRule = "Toggle Key"
                         } else {
-                            // 🌟 [최적화] O(1) 딕셔너리 검색
                             let searchKey = makeShortcutKey(keyCode: 0, modifiers: modsRaw)
                             
                             if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
@@ -110,8 +107,13 @@ extension EventMonitor {
         
         if isToggle || targetAppBundleID != nil || targetLang != nil {
             EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-            if keyCode == 57 { return nil }
-            return Unmanaged.passUnretained(event)
+            
+            if keyCode == 57 { return nil } // Caps Lock 토글시 차단
+            
+            // 🌟 [요청사항 반영] 오직 '앱 실행 단축키'일 때만 시스템 이벤트 무효화
+            if targetAppBundleID != nil { return nil }
+            
+            return Unmanaged.passUnretained(event) // 나머지는 통과
         }
         return Unmanaged.passUnretained(event)
     }
@@ -145,7 +147,6 @@ extension EventMonitor {
             if flags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
         }
 
-        // 🌟 [최적화] for 루프를 완전히 제거하고 O(1) 해시 검색으로 교체
         let searchKey = makeShortcutKey(keyCode: keyCode, modifiers: flagsRaw)
 
         if !isToggle && snapshot.isAppLaunchEnabled {
@@ -176,8 +177,13 @@ extension EventMonitor {
 
         if isToggle || targetAppBundleID != nil || targetLang != nil {
             EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-            if isToggle { return nil }
-            return Unmanaged.passUnretained(event)
+            
+            if isToggle { return nil } // 토글 동작시 차단
+            
+            // 🌟 [요청사항 반영] 오직 '앱 실행 단축키'일 때만 시스템 이벤트 무효화
+            if targetAppBundleID != nil { return nil }
+            
+            return Unmanaged.passUnretained(event) // 커스텀 단축키 및 기본 단축키는 그대로 통과
         }
         return Unmanaged.passUnretained(event)
     }
