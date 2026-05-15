@@ -63,29 +63,20 @@ extension EventMonitor {
             else if let langID = targetLang { testLabel = "[Test] \(InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID)" }
             if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
         } else {
-            // 🌟 [디버거 로깅 추가] 사용자의 수동 전환 이벤트 기록
-            let trace = TraceFactory.create(
-                event: .languageSwitch,
-                result: .switched,
-                reason: .manualOverride,
-                appName: targetAppName
-            )
-            
+            let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .manualOverride, appName: targetAppName)
             if isToggle {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     InputSourceManager.shared.switchToNextInputSource()
                     StatsManager.shared.incrementLanguageSwitch()
-                    DecisionTraceManager.shared.record(trace) // 🌟 기록 저장
+                    DecisionTraceManager.shared.record(trace)
                 }
-            }
-            else if let bundleID = targetAppID {
+            } else if let bundleID = targetAppID {
                 launchApp(bundleID: bundleID)
-            }
-            else if let lang = targetLang {
+            } else if let lang = targetLang {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     InputSourceManager.shared.switchLanguage(to: lang)
                     StatsManager.shared.incrementLanguageSwitch()
-                    DecisionTraceManager.shared.record(trace) // 🌟 기록 저장
+                    DecisionTraceManager.shared.record(trace)
                 }
             }
         }
@@ -100,41 +91,29 @@ extension EventMonitor {
         }
     }
     
+    // 🌟 [핵심 변경 1] 순서 최적화 및 딜레이 제거
     func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
-        self.batchDelete(count: originalLength) { [weak self] in
-            guard let self = self else { return }
-            
-            // 1. 교정된 텍스트 먼저 삽입
-            self.postUnicodeString(correctedText)
-            
-            // 2. 텍스트가 대상 앱에 완전히 입력될 시간을 0.03초 기다린 후 한글 전환 명령
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-                self.safeSwitchToKorean()
-                
-                // 🌟 [핵심 수정] macOS가 실제로 입력 소스를 한글로 완전히 바꾸는 물리적 여유 시간(Buffer)을 0.02초 추가로 줍니다.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-                    self.postTriggerKey(keyCode: triggerKeyCode)
-                    StatsManager.shared.incrementTypoCorrection()
-                }
-            }
-        }
+        // 1. 가장 먼저 한글 전환을 OS에 던져놓아 물리적 딜레이 시간을 법니다.
+        self.safeSwitchToKorean()
+        
+        // 2. 딜레이(async) 없이 빛의 속도로 백스페이스를 쏟아냅니다.
+        self.batchDelete(count: originalLength)
+        
+        // 3. 딜레이 없이 즉각 교정 텍스트 삽입
+        self.postUnicodeString(correctedText)
+        
+        // 4. 스페이스바 즉각 전송
+        self.postTriggerKey(keyCode: triggerKeyCode)
+        
+        StatsManager.shared.incrementTypoCorrection()
     }
 
-    func batchDelete(count: Int, completion: @escaping () -> Void) {
-        guard count > 0 else {
-            completion()
-            return
-        }
-        for i in 0..<count {
-            let delay = Double(i) * 0.01
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                self.postKeyEvent(keyCode: 51, keyDown: true)
-                self.postKeyEvent(keyCode: 51, keyDown: false)
-            }
-        }
-        let totalDelay = Double(count) * 0.01 + 0.005
-        DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) {
-            completion()
+    // 🌟 [핵심 변경 2] 타이머 완전 삭제. 사용자 입력과 뒤섞이는 끔찍한 버그 해결
+    func batchDelete(count: Int) {
+        guard count > 0 else { return }
+        for _ in 0..<count {
+            self.postKeyEvent(keyCode: 51, keyDown: true)
+            self.postKeyEvent(keyCode: 51, keyDown: false)
         }
     }
 
@@ -167,35 +146,23 @@ extension EventMonitor {
         return EventMonitor.charKeyMap[keyCode]
     }
     
-    // 🌟 [디버거 로깅 추가] 트리거 텍스트를 받아서 기록하는 로직 추가
     func performTextExpansion(triggerLength: Int, replacementText: String, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
+        // 🌟 텍스트 대치 시에도 즉각 삭제 사용
+        self.batchDelete(count: triggerLength)
         
-        self.batchDelete(count: triggerLength) { [weak self] in
+        self.insertLongUnicodeText(replacementText) { [weak self] in
             guard let self = self else { return }
-            
-            self.insertLongUnicodeText(replacementText) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-                    self.postTriggerKey(keyCode: triggerKeyCode)
-                    
-                    // 🌟 스니펫 확장 성공 로깅
-                    let trace = TraceFactory.create(
-                        event: .snippetExpansion,
-                        result: .expanded,
-                        reason: .snippetExpanded(trigger: triggerText)
-                    )
-                    DecisionTraceManager.shared.record(trace) // 🌟 기록 저장
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                self.postTriggerKey(keyCode: triggerKeyCode)
+                let trace = TraceFactory.create(event: .snippetExpansion, result: .expanded, reason: .snippetExpanded(trigger: triggerText))
+                DecisionTraceManager.shared.record(trace)
             }
         }
     }
     
-    // 🌟 [최적화 유지] 무거운 앱 호환성을 위한 버퍼 적용 로직 유지
     func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
         let chars = Array(text.utf16)
-        if chars.isEmpty {
-            completion()
-            return
-        }
+        if chars.isEmpty { completion(); return }
         
         let chunkSize = 20
         var chunks: [[UTF16.CodeUnit]] = []
@@ -204,20 +171,16 @@ extension EventMonitor {
             chunks.append(Array(chars[i..<end]))
         }
         
-        let chunkDelay: TimeInterval = 0.015 // 안전한 청크 딜레이
-        
+        let chunkDelay: TimeInterval = 0.015
         for (index, chunk) in chunks.enumerated() {
             let delay = Double(index) * chunkDelay
-            
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 var localChunk = chunk
-                
                 if let eventDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
                     eventDown.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
                     eventDown.setIntegerValueField(.eventSourceUserData, value: 9999)
                     eventDown.post(tap: .cghidEventTap)
                 }
-                
                 if let eventUp = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) {
                     eventUp.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
                     eventUp.setIntegerValueField(.eventSourceUserData, value: 9999)
@@ -226,15 +189,8 @@ extension EventMonitor {
             }
         }
         
-        // 충분한 여유(Buffer) 시간 확보
         let lastChunkIndex = max(0, chunks.count - 1)
-        let lastChunkDelay = Double(lastChunkIndex) * chunkDelay
-        let completionBuffer: TimeInterval = 0.05
-        
-        let totalDelay = lastChunkDelay + completionBuffer
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) {
-            completion()
-        }
+        let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.05
+        DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) { completion() }
     }
 }

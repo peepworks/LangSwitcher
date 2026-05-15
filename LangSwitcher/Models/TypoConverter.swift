@@ -47,12 +47,33 @@ class TypoConverter {
             }
             else if (scalar.value >= 0x3130 && scalar.value <= 0x318F) || (char.isASCII && char.isLetter) {
                 hasIncomplete = true
-                break
             }
         }
         
-        if hasSyllable && !hasIncomplete {
-            return converted
+        if hasSyllable {
+            if !hasIncomplete {
+                return converted
+            } else {
+                // 🌟 [핵심 해결책] macOS 한영 전환 딜레이 버그 패턴 감지 ("q완벽하게", "d일어나고")
+                let containsEnglish = englishInput.contains { $0.isASCII && $0.isLetter }
+                let containsKoreanSyllable = englishInput.unicodeScalars.contains { $0.value >= 0xAC00 && $0.value <= 0xD7A3 }
+                
+                // 영어와 한글이 섞여 있다면 딜레이로 인한 오타가 확실하므로 찌꺼기를 필터링합니다.
+                if containsEnglish && containsKoreanSyllable {
+                    let cleaned = String(converted.filter { char in
+                        guard let val = char.unicodeScalars.first?.value else { return true }
+                        let isIncompleteJamo = (val >= 0x3130 && val <= 0x318F) // 찌꺼기 자음/모음 (예: ㄷ)
+                        let isStrayEnglish = char.isASCII && char.isLetter     // 찌꺼기 알파벳 (예: e)
+                        
+                        // 찌꺼기가 아닌 완벽한 글자나 기호, 띄어쓰기만 남깁니다.
+                        return !isIncompleteJamo && !isStrayEnglish
+                    })
+                    
+                    if !cleaned.isEmpty {
+                        return cleaned
+                    }
+                }
+            }
         }
         
         return nil
@@ -175,7 +196,23 @@ class TypoConverter {
         up?.post(tap: .cghidEventTap)
     }
     
+    // MARK: - 수동 단축키 교정 시에도 찌꺼기 제거 적용
     private func convertString(_ text: String) -> String {
+        let containsEnglish = text.contains { $0.isASCII && $0.isLetter }
+        let containsKoreanSyllable = text.unicodeScalars.contains { $0.value >= 0xAC00 && $0.value <= 0xD7A3 }
+        
+        // 🌟 수동 교정(단축키)으로 블록을 잡고 실행했을 때도 "d일어나고" -> "일어나고"로 완벽하게 정제합니다.
+        if containsEnglish && containsKoreanSyllable {
+            let converted = convertToKo(text)
+            let cleaned = String(converted.filter { char in
+                guard let val = char.unicodeScalars.first?.value else { return true }
+                let isIncompleteJamo = (val >= 0x3130 && val <= 0x318F)
+                let isStrayEnglish = char.isASCII && char.isLetter
+                return !isIncompleteJamo && !isStrayEnglish
+            })
+            if !cleaned.isEmpty { return cleaned }
+        }
+        
         let hasKorean = text.unicodeScalars.contains {
             ($0.value >= 0xAC00 && $0.value <= 0xD7A3) || ($0.value >= 0x3130 && $0.value <= 0x318F)
         }
