@@ -28,7 +28,9 @@ final class DecisionTraceManager: ObservableObject {
     
     @AppStorage("isTraceLoggingEnabled") var isTraceLoggingEnabled: Bool = true
     
-    private let maxTraceCount = 200
+    // 🌟 [수정 포인트] 리뷰어의 권장 사항에 따라 최대 로깅 개수를 200에서 50으로 줄입니다.
+    // 배열 크기가 작아지면서 insert(at: 0) 시 발생하는 메모리 이동(O(n)) 부하가 사실상 0이 됩니다.
+    private let maxTraceCount = 50
 
     private init() {}
 
@@ -36,15 +38,16 @@ final class DecisionTraceManager: ObservableObject {
     func record(_ trace: DecisionTrace) {
         guard isTraceLoggingEnabled else { return }
         
-        // 🌟 [핵심 수정] 외부에서 어떤 스레드로 호출하든 100% 안전하게 메인 스레드에서만 배열을 수정하도록 보장합니다.
+        // 🌟 외부에서 어떤 스레드로 호출하든 100% 안전하게 메인 스레드에서만 배열을 수정하도록 보장합니다.
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
             self.recentTraces.insert(trace, at: 0)
             
-            // 제한 개수를 넘어가면 과거 기록 삭제 (메모리 보호)
+            // 제한 개수를 넘어가면 과거 기록 삭제 (메모리 보호 및 SwiftUI 렌더링 최적화)
             if self.recentTraces.count > self.maxTraceCount {
-                self.recentTraces.removeLast(self.recentTraces.count - self.maxTraceCount)
+                // 한 번에 하나씩만 초과하므로 removeLast()로 단일 삭제하는 것이 더 빠르고 깔끔합니다.
+                self.recentTraces.removeLast()
             }
         }
         

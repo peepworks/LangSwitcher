@@ -53,7 +53,12 @@ class SettingsManager: ObservableObject {
     @Published var excludedApps: [ExcludedApp] = [] { didSet { scheduleSave() } }
     
     // 🌟 앱 딜레이 배열
-    @Published var appDelays: [AppDelay] = [] { didSet { scheduleSave() } }
+    @Published var appDelays: [AppDelay] = [] {
+        didSet {
+            scheduleSave()
+            updateSnapshot() // 🌟 [리뷰어 지적 반영] 변경 사항을 실시간 스냅샷에 즉각 반영합니다!
+        }
+    }
     
     @Published var domainRules: [DomainRule] = [] {
         didSet {

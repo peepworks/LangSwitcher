@@ -23,9 +23,9 @@ class TypoConverter {
     
     // lazy var의 스레드 불안정성을 피하기 위해 상수(let)로 변경하여 완벽한 스레드 안전성 보장
     private let eventSource: CGEventSource? = CGEventSource(stateID: .combinedSessionState)
-    
-    // 타이밍 충돌을 막아줄 튼튼한 자물쇠 (진행 상태 플래그)
+
     private var isConvertingInProgress = false
+    private let conversionLock = NSLock()
     
     // 클립보드 원본 백업용 변수
     private var savedClipboardString: String?
@@ -60,8 +60,18 @@ class TypoConverter {
 
     // MARK: - 수동 단축키 오타 교정 (VSCode 방어 및 데드락 완벽 해결)
     func executeCorrection() {
+        conversionLock.lock()
+        // 함수 블록이 끝날 때 무조건 자물쇠를 풀도록 예약합니다.
+        defer { conversionLock.unlock() }
+
+        // 이미 작업 중이면 그냥 종료 (defer가 알아서 unlock 해줌)
         guard !isConvertingInProgress else { return }
+
+        // 작업 시작 표시
         isConvertingInProgress = true
+        
+        // 4. 안전하게 팻말을 바꿨으니 자물쇠를 풉니다.
+        conversionLock.unlock()
             
         DispatchQueue.main.async {
             self.backupClipboard()
@@ -132,7 +142,10 @@ class TypoConverter {
     
     private func safeRestoreAndUnlock() {
         restoreClipboard()
-        self.isConvertingInProgress = false
+        // 상태를 false로 되돌릴 때도 자물쇠를 채웁니다.
+        conversionLock.lock()
+        isConvertingInProgress = false
+        conversionLock.unlock()
     }
 
     private func backupClipboard() {

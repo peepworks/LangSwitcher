@@ -58,8 +58,9 @@ struct DecisionTrace: Identifiable, Codable, Hashable {
     let ignoredRules: [IgnoredRuleTrace]
     let metadata: [String: String]
     
-    // 초기화 편의성을 위한 init
-    init(id: UUID = UUID(), timestamp: Date = Date(), eventType: EventType, resultType: ResultType, reasonCode: String, reasonMessage: String, appBundleID: String? = nil, appName: String? = nil, windowTitlePreview: String? = nil, domain: String? = nil, triggerTextPreview: String? = nil, matchedRuleID: UUID? = nil, matchedRuleName: String? = nil, ignoredRules: [IgnoredRuleTrace] = [], metadata: [String : String] = [:]) {
+    // 🌟 [핵심 수정] timestamp 파라미터의 기본값(= Date())을 제거했습니다!
+    // 이제 무조건 TraceFactory가 건네주는 시간만 받아들입니다.
+    init(id: UUID = UUID(), timestamp: Date, eventType: EventType, resultType: ResultType, reasonCode: String, reasonMessage: String, appBundleID: String? = nil, appName: String? = nil, windowTitlePreview: String? = nil, domain: String? = nil, triggerTextPreview: String? = nil, matchedRuleID: UUID? = nil, matchedRuleName: String? = nil, ignoredRules: [IgnoredRuleTrace] = [], metadata: [String : String] = [:]) {
         self.id = id
         self.timestamp = timestamp
         self.eventType = eventType

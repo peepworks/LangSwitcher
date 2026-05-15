@@ -242,6 +242,8 @@ class HyperKeyManager {
         $.IOHIDSetModifierLockState(ioConnect, 1, \(newState ? "true" : "false"));
         $.IOServiceClose(ioConnect);
         """
+        
+        guard let item = capsLockWorkItem, !item.isCancelled else { return }
 
         let task = Process()
         task.launchPath = "/usr/bin/osascript"
