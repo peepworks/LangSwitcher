@@ -21,6 +21,16 @@
 #### ⚡ Zero-Delay Typo Correction
 The typo-correction engine has been redesigned for high-speed typing. LangSwitcher now switches the macOS input source first and removes artificial backspace timers, making corrections feel instant and preventing broken characters or leftover English text. [file:2]
 
+#### ✍️ Custom Text Expansion / Snippets
+v0.8.0 introduces custom text expansion, allowing short triggers to be automatically replaced with predefined text after typing a trigger and pressing Space. The feature also supports dynamic placeholders such as date/time patterns and clipboard insertion, including examples like `{{date:yyyy-MM-dd}}`, `{{date:HH:mm}}`, and `{{clipboard}}`. [file:3]
+
+Examples:
+- `;date` → `{{date:yyyy-MM-dd}}` [file:3]
+- `;time` → `{{date:HH:mm}}` [file:3]
+- `;now` → `{{date:yyyy-MM-dd HH:mm}}` [file:3]
+- `;day` → `{{date:EEEE}}` [file:3]
+- `;clip` → `{{clipboard}}` [file:3]
+
 #### 🛡️ Smart Shortcut Conflict Prevention
 App Launch Shortcuts now block conflicting key combinations such as `Cmd + Space` only when those shortcuts are already being used as active default language toggles. This makes shortcut setup safer without being unnecessarily restrictive. [file:2]
 
@@ -33,7 +43,7 @@ This release improves reliability during rapid keyboard input and heavy multitas
 
 If you often launch apps or jump into search fields with keyboard shortcuts, you’ve probably experienced typing in the wrong language right after focusing a new app or browser tab. LangSwitcher is designed to reduce those interruptions and keep your keyboard workflow smooth. [file:2]
 
-It combines direct language switching, app-specific input rules, browser tab language memory, app launch shortcuts, and typo correction in one native macOS menu bar app. [file:2]
+It combines direct language switching, app-specific input rules, browser tab language memory, app launch shortcuts, typo correction, and text expansion in one native macOS menu bar app. [file:2][file:3]
 
 ---
 
@@ -43,6 +53,8 @@ It combines direct language switching, app-specific input rules, browser tab lan
 - App-specific keyboard rules that automatically switch language when an app becomes active. [file:2]
 - Browser Tab Memory for Chrome, Safari, Edge, and Brave. [file:2]
 - Typo correction for mistyped English ⇄ Korean text. [file:2]
+- Custom Text Expansion / Snippets with trigger-based replacement. [file:3]
+- Dynamic snippet variables for date, time, weekday, and clipboard content. [file:3]
 - Hyper Key mapping for Caps Lock (`⌃⌥⇧⌘`). [file:2]
 - Single modifier toggle key support, such as Right Command or Right Option. [file:2]
 - App Launch Shortcuts to launch or focus apps instantly. [file:2]
@@ -145,11 +157,11 @@ Accessibility
 
 1. Launch LangSwitcher from the menu bar. [file:2]
 2. Open **Preferences**. [file:2]
-3. Configure startup behavior, HUD, Hyper Key, and toggle key. [file:2]
+3. Configure startup behavior, HUD, Hyper Key, toggle key, and text expansion rules. [file:2][file:3]
 4. Enable Window Focus Management and Browser Tab Memory. [file:2]
 5. Add custom language shortcuts. [file:2]
 6. Set app-specific keyboard rules. [file:2]
-7. Add app launch shortcuts. [file:2]
+7. Add app launch shortcuts and text snippets. [file:2][file:3]
 
 ---
 
@@ -186,6 +198,16 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**
 #### ⚡ 무지연(Zero-Delay) 초고속 오타 교정
 초고속 타이핑 환경에 맞춰 오타 교정 엔진의 실행 순서를 전면 재설계했습니다. macOS 입력 소스 전환을 먼저 실행하고 인위적인 백스페이스 타이머를 제거해, 글자가 꼬이거나 영문 찌꺼기가 남는 문제 없이 즉각적인 교정을 제공합니다. [file:2]
 
+#### ✍️ 커스텀 텍스트 대치 (Text Expansion / Snippets)
+v0.8.0에서는 사용자가 직접 텍스트 대치 규칙을 등록할 수 있는 기능이 추가되었습니다. 짧은 트리거를 입력한 뒤 스페이스를 누르면 미리 지정한 텍스트로 자동 치환되며, 날짜/시간 포맷과 클립보드 같은 동적 변수도 지원합니다. [file:3]
+
+예시:
+- `;date` → `{{date:yyyy-MM-dd}}` [file:3]
+- `;time` → `{{date:HH:mm}}` [file:3]
+- `;now` → `{{date:yyyy-MM-dd HH:mm}}` [file:3]
+- `;day` → `{{date:EEEE}}` [file:3]
+- `;clip` → `{{clipboard}}` [file:3]
+
 #### 🛡️ 스마트 단축키 충돌 방지
 앱 실행 단축키 등록 시 `Cmd + Space` 같은 조합이 현재 기본 언어 전환 단축키로 실제 사용 중일 때만 충돌로 판단해 차단합니다. 불필요한 제한 없이 더 안전하게 단축키를 설정할 수 있습니다. [file:2]
 
@@ -198,7 +220,7 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**
 
 LangSwitcher는 단축키 중심 워크플로우에서 발생하는 입력 소스 전환 스트레스를 줄여 주는 macOS 메뉴바 앱입니다. Spotlight, ChatGPT, Terminal, 브라우저, 메신저처럼 포커스가 자주 바뀌는 환경에서 특히 유용합니다. [file:2]
 
-직접 입력 언어 전환, 앱별 자동 입력 언어 규칙, 브라우저 탭별 언어 기억, 앱 실행 단축키, 오타 자동 변환 기능을 하나의 네이티브 앱으로 제공합니다. [file:2]
+직접 입력 언어 전환, 앱별 자동 입력 언어 규칙, 브라우저 탭별 언어 기억, 앱 실행 단축키, 오타 자동 변환, 텍스트 대치 기능을 하나의 네이티브 앱으로 제공합니다. [file:2][file:3]
 
 ---
 
@@ -208,6 +230,8 @@ LangSwitcher는 단축키 중심 워크플로우에서 발생하는 입력 소�
 - 특정 앱 활성화 시 자동으로 언어를 바꾸는 앱별 키보드 규칙. [file:2]
 - Chrome, Safari, Edge, Brave용 브라우저 탭별 언어 기억. [file:2]
 - 영문 ⇄ 한글 오타 자동 변환. [file:2]
+- 트리거 기반 커스텀 텍스트 대치 / 스니펫 기능. [file:3]
+- 날짜, 시간, 요일, 클립보드 내용을 넣을 수 있는 동적 변수 지원. [file:3]
 - Caps Lock을 Hyper Key(`⌃⌥⇧⌘`)로 매핑. [file:2]
 - Right Command, Right Option 같은 단일 수식 키 전환 지원. [file:2]
 - 앱을 즉시 실행하거나 앞으로 가져오는 앱 실행 단축키. [file:2]
@@ -310,11 +334,11 @@ sudo xattr -r -d com.apple.quarantine /Applications/LangSwitcher.app
 
 1. 메뉴바에서 LangSwitcher를 실행합니다. [file:2]
 2. **환경설정(Preferences)** 를 엽니다. [file:2]
-3. 자동 실행, HUD, Hyper Key, 입력 전환 키를 설정합니다. [file:2]
+3. 자동 실행, HUD, Hyper Key, 입력 전환 키, 텍스트 대치 규칙을 설정합니다. [file:2][file:3]
 4. 창 포커스 관리와 브라우저 탭 기억 기능을 활성화합니다. [file:2]
 5. 사용자 지정 언어 단축키를 등록합니다. [file:2]
 6. 앱별 키보드 규칙을 설정합니다. [file:2]
-7. 앱 실행 단축키를 추가합니다. [file:2]
+7. 앱 실행 단축키와 텍스트 스니펫을 추가합니다. [file:2][file:3]
 
 ---
 
