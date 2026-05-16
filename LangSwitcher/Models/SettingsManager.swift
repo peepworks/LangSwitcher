@@ -75,13 +75,10 @@ class SettingsManager: ObservableObject {
     
     @Published private(set) var recentLogs: [ActionLog] = []
     
-    // 🌟 [추가] 미리 필터링 및 정렬된 텍스트 대치 규칙 캐시
-    @Published private(set) var cachedActiveTextExpansionRules: [TextExpansionRule] = []
-
     @Published var textExpansionRules: [TextExpansionRule] = [] {
         didSet {
             scheduleSave()
-            updateTextExpansionCache() // 🌟 저장될 때마다 캐시 업데이트
+            updateSnapshot() // 🌟 저장될 때마다 캐시 업데이트
         }
     }
     
@@ -175,7 +172,6 @@ class SettingsManager: ObservableObject {
         updateSnapshot()
         // 앱 실행 시 최초 1회 캐시 빌드 (초기화 단계에서 didSet이 작동하지 않을 수 있으므로)
         updateShortcutCaches()
-        updateTextExpansionCache()
         
         NotificationCenter.default.addObserver(
             self,
@@ -281,13 +277,6 @@ class SettingsManager: ObservableObject {
         #if DEBUG
         print("SettingsManager: 배열 데이터들이 디스크에 저장되었습니다.")
         #endif
-    }
-    
-    // 🌟 [추가] 캐시 업데이트 함수 (isEnabled를 확인하여 필터링)
-    private func updateTextExpansionCache() {
-        cachedActiveTextExpansionRules = textExpansionRules
-            .filter { $0.isEnabled } // 🌟 isActive를 isEnabled로 수정완료
-            .sorted { $0.trigger.count > $1.trigger.count }
     }
     
     // 🌟 [추가] 딕셔너리 업데이트 함수

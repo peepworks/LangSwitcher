@@ -141,8 +141,10 @@ class EventMonitor {
                         if isPureSpace || isEnterTrigger {
                             let currentBuffer = EventMonitor.shared.typingBuffer
                             
+                            // 🌟 [수정] TextExpander 호출 시 스냅샷의 안전한 캐시 배열을 전달합니다.
                             if snapshot.isTextExpansionEnabled,
-                                let matchedRule = TextExpander.shared.findMatch(for: currentBuffer) {
+                                let matchedRule = TextExpander.shared.findMatch(for: currentBuffer, rules: snapshot.cachedActiveTextExpansionRules) {
+                                
                                 let parsedText = TextExpander.shared.parseDynamicVariables(text: matchedRule.replacement)
                                 EventMonitor.shared.performTextExpansion(triggerLength: matchedRule.trigger.count, replacementText: parsedText, triggerKeyCode: UInt16(keyCode))
                                 
@@ -150,7 +152,7 @@ class EventMonitor {
                                 var log = ActionLog(timestamp: Date(), targetApp: currentAppID, appliedRule: "Text Expansion (\(matchedRule.trigger))", finalInputSource: "Expanded: \(maskedText) (\(parsedText.count) chars)", result: .success, failureReason: .none)
                                 log.actionType = .textExpansion
                                 SettingsManager.shared.addLog(log)
-                                    
+
                                 EventMonitor.shared.clearTypingBuffer()
                                 return nil
                             }
@@ -176,14 +178,12 @@ class EventMonitor {
                             EventMonitor.shared.clearTypingBuffer()
                         }
                         else {
-                            if !EventMonitor.shared.isCurrentLanguageEnglish() {
-                                EventMonitor.shared.clearTypingBuffer()
-                            } else {
-                                if let nsEvent = NSEvent(cgEvent: event), let chars = nsEvent.characters, !chars.isEmpty {
-                                    let char = chars.first!
-                                    if char.isLetter || char.isNumber || char.isPunctuation || char == ";" {
-                                        EventMonitor.shared.appendToTypingBuffer(char)
-                                    }
+                            // 🌟 [버그 수정] OS 언어 상태 인식 지연으로 인한 첫 글자 유실 방지
+                            // 언어 모드와 무관하게 사용자가 입력한 키는 항상 버퍼에 기록합니다.
+                            if let nsEvent = NSEvent(cgEvent: event), let chars = nsEvent.characters, !chars.isEmpty {
+                                let char = chars.first!
+                                if char.isLetter || char.isNumber || char.isPunctuation || char == ";" {
+                                    EventMonitor.shared.appendToTypingBuffer(char)
                                 }
                             }
                         }

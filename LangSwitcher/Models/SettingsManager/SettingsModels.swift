@@ -125,6 +125,8 @@ struct SettingsSnapshot {
     // 🌟 1. O(1) 검색을 위한 딕셔너리 변수 2개를 선언합니다. (기본값 빈 딕셔너리)
     var customShortcutCache: [UInt64: CustomShortcut] = [:]
     var appLaunchShortcutCache: [UInt64: AppLaunchShortcut] = [:]
+    
+    var cachedActiveTextExpansionRules: [TextExpansionRule] = []
 
     // 🌟 2. 스냅샷이 생성될 때 기존 배열(Array)을 딕셔너리(Dictionary)로 1번만 구워두는 함수입니다.
     mutating func buildCaches() {
@@ -143,6 +145,9 @@ struct SettingsSnapshot {
             tempAppLaunch[key] = appLaunch
         }
         self.appLaunchShortcutCache = tempAppLaunch
+        self.cachedActiveTextExpansionRules = textExpansionRules
+            .filter { $0.isEnabled }
+            .sorted { $0.trigger.count > $1.trigger.count }
     }
 }
 

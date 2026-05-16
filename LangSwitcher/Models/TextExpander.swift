@@ -31,11 +31,10 @@ class TextExpander {
     }()
     
     // 1. 버퍼에서 트리거 매칭 확인
-    func findMatch(for buffer: String) -> TextExpansionRule? {
-        // 미리 정렬된 캐시 배열을 즉시 가져옵니다. (속도 대폭 향상)
-        let activeRules = SettingsManager.shared.cachedActiveTextExpansionRules
-        
-        for rule in activeRules {
+    // 🌟 [수정] 파라미터로 스레드 세이프한 규칙 배열(rules)을 받도록 변경
+    func findMatch(for buffer: String, rules: [TextExpansionRule]) -> TextExpansionRule? {
+        // 외부에서 이미 정렬 및 필터링된 배열을 받으므로 즉시 순회합니다.
+        for rule in rules {
             if buffer.hasSuffix(rule.trigger) {
                 return rule
             }
