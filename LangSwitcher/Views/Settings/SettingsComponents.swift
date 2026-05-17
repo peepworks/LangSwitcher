@@ -75,6 +75,7 @@ struct ToggleShortcutRow: View {
             Spacer()
 
             Button(action: {
+                // 🌟 전역 변수로 유지되는 ToggleKey 초기화
                 settings.toggleDisplayString = ""; settings.toggleKeyCode = 0; settings.toggleModifierFlags = 0
                 showDuplicateWarning = false; isRecording = true
                 startRecording()
@@ -109,7 +110,7 @@ struct ToggleShortcutRow: View {
     }
 
     private func registerShortcut(keyCode: UInt16, modifiers: UInt64, display: String) {
-        if let conflictName = getConflictMessage(keyCode: keyCode, modifiers: modifiers, ignoreID: nil) {
+        if let conflictName = getConflictMessage(keyCode: keyCode, modifiers: modifiers) {
             NSSound.beep()
             conflictMessage = String(format: String(localized: "In use: %@"), conflictName)
             showDuplicateWarning = true; isRecording = false; stopRecording()
@@ -125,14 +126,16 @@ struct ToggleShortcutRow: View {
         isRecording = false
     }
 
-    private func getConflictMessage(keyCode: UInt16, modifiers: UInt64, ignoreID: UUID?) -> String? {
-        if settings.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) {
+    // 🌟 [수정] 충돌 검사 대상을 현재 활성 프로필 내부 데이터로 경로 수정
+    private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
+        let payload = settings.activeProfile.payload
+        if payload.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) {
             return String(localized: "Custom Shortcut")
         }
-        if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) {
+        if payload.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) {
             return String(localized: "App Launch Shortcut")
         }
-        if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers {
+        if payload.isTypoCorrectionEnabled && payload.typoKeyCode == keyCode && payload.typoModifierFlags == modifiers {
             return String(localized: "Typo Correction")
         }
         return nil
@@ -156,7 +159,7 @@ struct CustomShortcutRow: View {
                 Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString)))
                     .frame(width: 90)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8) // 글자가 길면 살짝 줄여줌
+                    .minimumScaleFactor(0.8)
                     .foregroundColor(showDuplicateWarning ? .red : (isRecording ? .red : .primary))
             }
             
@@ -173,7 +176,8 @@ struct CustomShortcutRow: View {
             .frame(width: 140)
             
             Button(action: {
-                settings.customShortcuts.removeAll { $0.id == shortcut.id }
+                // 🌟 [수정] 삭제 타겟을 활성 프로필 페이로드 내부로 경로 변경
+                settings.activeProfile.payload.customShortcuts.removeAll { $0.id == shortcut.id }
             }) {
                 Image(systemName: "trash").foregroundColor(.red)
             }
@@ -198,20 +202,20 @@ struct CustomShortcutRow: View {
     
     private func saveShortcut(keyCode: UInt16, modifiers: UInt64, displayString: String) {
         if let conflict = getConflictMessage(keyCode: keyCode, modifiers: modifiers) {
-            NSSound.beep() // 에러 소리 재생
+            NSSound.beep()
             conflictMessage = String(format: String(localized: "In use: %@"), conflict)
             showDuplicateWarning = true
             stopRecording()
             
-            // 2초 뒤 경고 메시지 해제
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 showDuplicateWarning = false
             }
         } else {
-            if let index = settings.customShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
-                settings.customShortcuts[index].keyCode = keyCode
-                settings.customShortcuts[index].modifierFlags = modifiers
-                settings.customShortcuts[index].displayString = displayString
+            // 🌟 [수정] 저장 타겟 인덱스 서치를 활성 프로필 페이로드 내부 배열로 이관
+            if let index = settings.activeProfile.payload.customShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
+                settings.activeProfile.payload.customShortcuts[index].keyCode = keyCode
+                settings.activeProfile.payload.customShortcuts[index].modifierFlags = modifiers
+                settings.activeProfile.payload.customShortcuts[index].displayString = displayString
             }
             stopRecording()
         }
@@ -222,12 +226,13 @@ struct CustomShortcutRow: View {
         isRecording = false
     }
     
+    // 🌟 [수정] 충돌 검사 타겟을 활성 프로필 내부 데이터로 경로 교체
     private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
+        let payload = settings.activeProfile.payload
         if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifiers { return String(localized: "Toggle Key") }
-        if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }
-        if settings.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "App Launch Shortcut") }
-        // 자기 자신을 제외한 다른 Custom Shortcut과 중복되는지 체크
-        if settings.customShortcuts.contains(where: { $0.id != self.shortcut.id && $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "Custom Shortcut") }
+        if payload.isTypoCorrectionEnabled && payload.typoKeyCode == keyCode && payload.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }
+        if payload.appLaunchShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "App Launch Shortcut") }
+        if payload.customShortcuts.contains(where: { $0.id != self.shortcut.id && $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "Custom Shortcut") }
         
         return nil
     }
@@ -246,7 +251,6 @@ struct AppLaunchShortcutRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            
             if shortcut.bundleIdentifier.isEmpty {
                 Button(String(localized: "Select App...")) {
                     selectApp()
@@ -281,7 +285,8 @@ struct AppLaunchShortcutRow: View {
             .padding(.trailing, 5)
 
             Button(action: {
-                settings.appLaunchShortcuts.removeAll { $0.id == shortcut.id }
+                // 🌟 [수정] 삭제 타겟을 활성 프로필 페이로드 내부 목록으로 변경
+                settings.activeProfile.payload.appLaunchShortcuts.removeAll { $0.id == shortcut.id }
             }) {
                 Image(systemName: "trash").foregroundColor(.red)
             }
@@ -319,9 +324,10 @@ struct AppLaunchShortcutRow: View {
         if panel.runModal() == .OK, let url = panel.url {
             guard let bundle = Bundle(url: url), let bundleId = bundle.bundleIdentifier else { return }
             let appName = url.deletingPathExtension().lastPathComponent
-            if let index = settings.appLaunchShortcuts.firstIndex(where: { $0.id == shortcut.id }) {
-                settings.appLaunchShortcuts[index].bundleIdentifier = bundleId
-                settings.appLaunchShortcuts[index].appName = appName
+            // 🌟 [수정] 서치 대상을 활성 프로필 페이로드 내부 배열로 우회
+            if let index = settings.activeProfile.payload.appLaunchShortcuts.firstIndex(where: { $0.id == shortcut.id }) {
+                settings.activeProfile.payload.appLaunchShortcuts[index].bundleIdentifier = bundleId
+                settings.activeProfile.payload.appLaunchShortcuts[index].appName = appName
             }
         }
     }
@@ -330,7 +336,6 @@ struct AppLaunchShortcutRow: View {
         isRecording = true
         showDuplicateWarning = false
             
-        // 🌟 [핵심 변경] 앱 실행 단축키 화면임을 녹화기에게 알려주어, 기본 단축키로 켜진 스페이스바 조합을 방어합니다.
         ShortcutRecorder.shared.startRecording(isForAppLaunch: true) { code, mods, display in
             self.saveShortcut(keyCode: code, modifiers: mods, displayString: display)
         } onTimeout: {
@@ -340,20 +345,20 @@ struct AppLaunchShortcutRow: View {
     
     private func saveShortcut(keyCode: UInt16, modifiers: UInt64, displayString: String) {
         if let conflict = getConflictMessage(keyCode: keyCode, modifiers: modifiers) {
-            NSSound.beep() // 에러 소리 재생
+            NSSound.beep()
             conflictMessage = String(format: String(localized: "In use: %@"), conflict)
             showDuplicateWarning = true
             stopRecording()
             
-            // 2초 뒤 경고 메시지 해제
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 showDuplicateWarning = false
             }
         } else {
-            if let index = settings.appLaunchShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
-                settings.appLaunchShortcuts[index].keyCode = keyCode
-                settings.appLaunchShortcuts[index].modifierFlags = modifiers
-                settings.appLaunchShortcuts[index].displayString = displayString
+            // 🌟 [수정] 인덱스 할당 타겟을 활성 프로필 페이로드 내부 구조로 변경
+            if let index = settings.activeProfile.payload.appLaunchShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
+                settings.activeProfile.payload.appLaunchShortcuts[index].keyCode = keyCode
+                settings.activeProfile.payload.appLaunchShortcuts[index].modifierFlags = modifiers
+                settings.activeProfile.payload.appLaunchShortcuts[index].displayString = displayString
             }
             stopRecording()
         }
@@ -364,18 +369,19 @@ struct AppLaunchShortcutRow: View {
         isRecording = false
     }
     
+    // 🌟 [수정] 중복 검사 타겟을 활성 프로필 페이로드 데이터로 이관
     private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
+        let payload = settings.activeProfile.payload
         if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifiers { return String(localized: "Toggle Key") }
-        if settings.isTypoCorrectionEnabled && settings.typoKeyCode == keyCode && settings.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }
-        if settings.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "Custom Shortcut") }
-        // 자기 자신을 제외한 다른 App Launch Shortcut과 중복되는지 체크
-        if settings.appLaunchShortcuts.contains(where: { $0.id != self.shortcut.id && $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "App Launch Shortcut") }
+        if payload.isTypoCorrectionEnabled && payload.typoKeyCode == keyCode && payload.typoModifierFlags == modifiers { return String(localized: "Typo Correction") }
+        if payload.customShortcuts.contains(where: { $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "Custom Shortcut") }
+        if payload.appLaunchShortcuts.contains(where: { $0.id != self.shortcut.id && $0.keyCode == keyCode && $0.modifierFlags == modifiers }) { return String(localized: "App Launch Shortcut") }
         
         return nil
     }
 }
 
-// MARK: - 기타 컴포넌트들
+// MARK: - 기타 컴포넌트들 (전역 변수로 남은 마스터 변수들이므로 기존 유지)
 struct SettingToggleRow: View {
     let title: String
     @Binding var isOn: Bool

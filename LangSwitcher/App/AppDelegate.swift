@@ -75,7 +75,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
         let snapshot = SettingsManager.shared.snapshot
-        
         let activeAppID = AppMonitor.shared.activeAppBundleID
         let activeAppName = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == activeAppID })?.localizedName ?? "App"
 
@@ -84,6 +83,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
            let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyLocalizedName) {
             currentLang = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
         }
+
+        // 🌟 [새로 추가됨] 0. 프로필 빠른 전환 메뉴
+        let activeProfileName = SettingsManager.shared.activeProfile.name
+        let profileMenuItem = NSMenuItem(title: String(localized: "Profile: \(activeProfileName)"), action: nil, keyEquivalent: "")
+        profileMenuItem.image = NSImage(systemSymbolName: "person.crop.circle", accessibilityDescription: nil)
+        
+        let profileSubmenu = NSMenu()
+        for profile in SettingsManager.shared.profiles {
+            let item = NSMenuItem(title: profile.name, action: #selector(switchProfile(_:)), keyEquivalent: "")
+            item.target = self
+            // 식별자로 쓸 UUID를 String 형태로 임시 보관
+            item.representedObject = profile.id.uuidString
+            item.state = (SettingsManager.shared.activeProfileID == profile.id) ? .on : .off
+            profileSubmenu.addItem(item)
+        }
+        
+        profileSubmenu.addItem(NSMenuItem.separator())
+        let manageItem = NSMenuItem(title: String(localized: "Manage Profiles..."), action: #selector(openProfileSettings), keyEquivalent: "")
+        manageItem.target = self
+        profileSubmenu.addItem(manageItem)
+        
+        profileMenuItem.submenu = profileSubmenu
+        menu.addItem(profileMenuItem)
+        menu.addItem(NSMenuItem.separator())
 
         // 1. 현재 입력 소스
         let langItem = NSMenuItem(title: "\(String(localized: "Language")): \(currentLang)", action: #selector(toggleLanguage), keyEquivalent: "")
@@ -101,19 +124,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // 🌟 3. 핵심 기능 빠른 토글 (수정된 영역)
-        
-        // 3-1. 스마트 자동 오타 교정
+        // 3. 핵심 기능 빠른 토글 (스냅샷에서 값을 읽어오는 것은 동일함)
         let autoTypoItem = NSMenuItem(title: String(localized: "Smart Auto Typo Correction"), action: #selector(toggleAutoTypo), keyEquivalent: "")
         autoTypoItem.state = snapshot.isAutoTypoCorrectionEnabled ? .on : .off
         menu.addItem(autoTypoItem)
         
-        // 3-2. 수동 오타 교정
         let manualTypoItem = NSMenuItem(title: String(localized: "Manual Typo Correction"), action: #selector(toggleManualTypo), keyEquivalent: "")
         manualTypoItem.state = snapshot.isTypoCorrectionEnabled ? .on : .off
         menu.addItem(manualTypoItem)
         
-        // 3-3. 텍스트 대치
         let textExpansionItem = NSMenuItem(title: String(localized: "Text Expansion"), action: #selector(toggleTextExpansion), keyEquivalent: "")
         textExpansionItem.state = snapshot.isTextExpansionEnabled ? .on : .off
         menu.addItem(textExpansionItem)
@@ -135,6 +154,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // 4. 동적 예외 앱 관리
         if !activeAppID.isEmpty && activeAppID != Bundle.main.bundleIdentifier {
+            // 예외 앱 목록도 현재 프로필 기준
             let isExcluded = snapshot.excludedApps.contains { $0.bundleIdentifier == activeAppID }
             let title = isExcluded
                 ? String(localized: "Remove \(activeAppName) from Excluded Apps")
@@ -154,7 +174,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clearCacheItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
         menu.addItem(clearCacheItem)
         
-
         let settingsItem = NSMenuItem(title: String(localized: "Settings..."), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         menu.addItem(settingsItem)
@@ -165,6 +184,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Actions
+    
+    // 🌟 [새로 추가됨] 프로필 동작
+    @objc func switchProfile(_ sender: NSMenuItem) {
+        guard let idString = sender.representedObject as? String,
+              let profileID = UUID(uuidString: idString) else { return }
+        
+        // 프로필 변경 시 SettingsManager가 캐시/스냅샷 업데이트 및 로그를 자동 처리합니다.
+        SettingsManager.shared.activeProfileID = profileID
+        HUDManager.shared.showHUD(languageName: "Profile: \(SettingsManager.shared.activeProfile.name)")
+    }
+    
+    @objc func openProfileSettings() {
+        SettingsManager.shared.selectedTab = .profiles
+        openSettings()
+        // 필요시 SettingsView 내부의 활성 탭 상태를 프로필 관리 탭으로 띄워주는 로직을 연결할 수 있습니다.
+    }
 
     @objc func toggleLanguage() { InputSourceManager.shared.switchToNextInputSource() }
     
@@ -175,34 +210,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             EventMonitor.shared.isPaused = newState
             let statusMessage = newState ? String(localized: "LangSwitcher Paused") : String(localized: "LangSwitcher Resumed")
             HUDManager.shared.showHUD(languageName: statusMessage)
-            #if DEBUG
-            print("메뉴바 클릭: LangSwitcher 일시 정지 상태 -> \(newState)")
-            #endif
         }
     }
     
     @objc func clearAppMemory() { SettingsManager.shared.clearAllAppCaches() }
     
-    // 🌟 [수정됨] 분리된 토글 액션들
-    @objc func toggleAutoTypo() { SettingsManager.shared.isAutoTypoCorrectionEnabled.toggle() }
-    @objc func toggleManualTypo() { SettingsManager.shared.isTypoCorrectionEnabled.toggle() }
-    @objc func toggleTextExpansion() { SettingsManager.shared.isTextExpansionEnabled.toggle() }
+    // 🌟 [수정됨] 페이로드(Payload) 내부 변수들 토글 업데이트
+    @objc func toggleAutoTypo() {
+        var profile = SettingsManager.shared.activeProfile
+        profile.payload.isAutoTypoCorrectionEnabled.toggle()
+        SettingsManager.shared.activeProfile = profile
+    }
+    @objc func toggleManualTypo() {
+        var profile = SettingsManager.shared.activeProfile
+        profile.payload.isTypoCorrectionEnabled.toggle()
+        SettingsManager.shared.activeProfile = profile
+    }
+    @objc func toggleTextExpansion() {
+        var profile = SettingsManager.shared.activeProfile
+        profile.payload.isTextExpansionEnabled.toggle()
+        SettingsManager.shared.activeProfile = profile
+    }
     
+    // 이 항목들은 전역(Global) 변수로 남아있으므로 기존과 동일
     @objc func toggleHyper() { SettingsManager.shared.isHyperKeyEnabled.toggle() }
     @objc func toggleWindowMemory() { SettingsManager.shared.isWindowMemoryEnabled.toggle() }
 
+    // 🌟 [수정됨] 예외 앱 목록 업데이트 (프로필 종속)
     @objc func toggleExcludeCurrentApp(_ sender: NSMenuItem) {
         guard let info = sender.representedObject as? [String: String],
               let id = info["id"], let name = info["name"] else { return }
         
-        var currentList = SettingsManager.shared.excludedApps
-        if let index = currentList.firstIndex(where: { $0.bundleIdentifier == id }) {
-            currentList.remove(at: index)
+        var profile = SettingsManager.shared.activeProfile
+        if let index = profile.payload.excludedApps.firstIndex(where: { $0.bundleIdentifier == id }) {
+            profile.payload.excludedApps.remove(at: index)
         } else {
-            currentList.append(ExcludedApp(bundleIdentifier: id, appName: name))
+            profile.payload.excludedApps.append(ExcludedApp(bundleIdentifier: id, appName: name))
         }
-        SettingsManager.shared.excludedApps = currentList
+        SettingsManager.shared.activeProfile = profile
     }
+
+    // (이하 openSettings, quitApp, toggleBrowserTabMemory 등은 기존 파일 내용과 동일하게 유지하시면 됩니다.)
 
     @objc func openSettings() {
         if let window = settingsWindow {

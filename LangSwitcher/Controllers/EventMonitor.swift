@@ -145,11 +145,16 @@ class EventMonitor {
                             if snapshot.isTextExpansionEnabled,
                                 let matchedRule = TextExpander.shared.findMatch(for: currentBuffer, rules: snapshot.cachedActiveTextExpansionRules) {
                                 
-                                let parsedText = TextExpander.shared.parseDynamicVariables(text: matchedRule.replacement)
-                                EventMonitor.shared.performTextExpansion(triggerLength: matchedRule.trigger.count, replacementText: parsedText, triggerKeyCode: UInt16(keyCode))
+                                // 🌟 1. 템플릿 렌더링 및 커서 위치 계산
+                                let renderedSnippet = TextExpander.shared.expand(template: matchedRule.replacement)
                                 
-                                let maskedText = String(repeating: "*", count: parsedText.count)
-                                var log = ActionLog(timestamp: Date(), targetApp: currentAppID, appliedRule: "Text Expansion (\(matchedRule.trigger))", finalInputSource: "Expanded: \(maskedText) (\(parsedText.count) chars)", result: .success, failureReason: .none)
+                                // 🌟 2. 렌더링된 전체 결과(text, cursorOffset)를 전달
+                                EventMonitor.shared.performTextExpansion(triggerLength: matchedRule.trigger.count, snippet: renderedSnippet, triggerKeyCode: UInt16(keyCode))
+                                
+                                // 🌟 3. 디버거 로그 기록 (reason 추가)
+                                let cursorLog = renderedSnippet.cursorOffsetFromStart != nil ? " (Cursor Restored)" : ""
+                                let maskedText = String(repeating: "*", count: renderedSnippet.text.count)
+                                var log = ActionLog(timestamp: Date(), targetApp: currentAppID, appliedRule: "Text Expansion (\(matchedRule.trigger))", finalInputSource: "Expanded: \(maskedText)\(cursorLog)", result: .success, failureReason: .none)
                                 log.actionType = .textExpansion
                                 SettingsManager.shared.addLog(log)
 

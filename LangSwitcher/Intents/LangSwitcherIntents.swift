@@ -57,13 +57,23 @@ struct ToggleTypoCorrectionIntent: AppIntent {
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
         let manager = SettingsManager.shared
         
+        // 🌟 현재 활성화된 프로필 사본을 가져옵니다.
+        var currentProfile = manager.activeProfile
+        
         switch state {
-        case .on: manager.isTypoCorrectionEnabled = true
-        case .off: manager.isTypoCorrectionEnabled = false
-        case .toggle: manager.isTypoCorrectionEnabled.toggle()
+        case .on:
+            currentProfile.payload.isTypoCorrectionEnabled = true
+        case .off:
+            currentProfile.payload.isTypoCorrectionEnabled = false
+        case .toggle:
+            currentProfile.payload.isTypoCorrectionEnabled.toggle()
         }
         
-        let currentState = manager.isTypoCorrectionEnabled ? "Enabled" : "Disabled"
+        // 🌟 수정한 프로필 설정을 다시 manager에 반영합니다.
+        // (이 시점에 didSet이 구동되면서 스냅샷과 엔진에 즉시 전파됩니다.)
+        manager.activeProfile = currentProfile
+        
+        let currentState = currentProfile.payload.isTypoCorrectionEnabled ? "Enabled" : "Disabled"
         return .result(value: currentState)
     }
 }

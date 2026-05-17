@@ -22,21 +22,37 @@ import UniformTypeIdentifiers
 
 struct AppSpecificSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
-    var hasIncomplete: Bool { settings.customApps.contains { $0.targetLanguage.isEmpty } }
+    
+    // 🌟 [수정] 현재 활성화된 프로필 페이로드 내부의 customApps를 검사하도록 수정
+    var hasIncomplete: Bool {
+        settings.activeProfile.payload.customApps.contains { $0.targetLanguage.isEmpty }
+    }
+
+    // 🌟 [추가] 구조체 연산 프로퍼티 내 캡슐화된 데이터 바인딩 통로 우회 구축
+    private var payload: Binding<ProfileSettingsPayload> {
+        Binding(
+            get: { settings.activeProfile.payload },
+            set: { settings.activeProfile.payload = $0 }
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 🌟 1. 마스터 스위치 영역
+            // 🌟 1. 전역 프로필 컨텍스트 제어 헤더 추가
+            ProfileHeaderView()
+
+            // 🌟 2. 마스터 스위치 영역
             HStack {
                 Text(String(localized: "App-Specific Keyboards")).font(.title2.bold())
                 Spacer()
-                Toggle("", isOn: $settings.isAppSpecificEnabled)
+                // 🌟 [수정] 프로필 페이로드 내부 변수로 바인딩 대상 교체
+                Toggle("", isOn: payload.isAppSpecificEnabled)
                     .toggleStyle(.switch)
                     .labelsHidden()
-                    .controlSize(.small) // 🌟 일반 설정과 동일한 아담한 크기로 변경
-            }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 10)
+                    .controlSize(.small)
+            }.padding(.horizontal, 30).padding(.top, 15).padding(.bottom, 10)
 
-            // 🌟 2. 스위치 상태에 따라 활성/비활성되는 영역
+            // 🌟 3. 스위치 상태에 따라 활성/비활성되는 영역
             VStack(alignment: .leading, spacing: 15) {
                 HStack {
                     Text(String(localized: "Automatically switch to a specific language when an app becomes active."))
@@ -50,11 +66,13 @@ struct AppSpecificSettingsView: View {
 
                 ScrollView {
                     VStack(spacing: 4) {
-                        if settings.customApps.isEmpty {
+                        // 🌟 [수정] 현재 활성 프로필 기준으로 비어있는지 체크
+                        if settings.activeProfile.payload.customApps.isEmpty {
                             Text(String(localized: "No apps configured.")).font(.subheadline).foregroundColor(.secondary).padding(.vertical, 20)
                         }
 
-                        ForEach($settings.customApps) { $app in
+                        // 🌟 [수정] 안전하게 구조화된 프로필 Payload Binding 트리 구조 배열을 전달
+                        ForEach(payload.customApps) { $app in
                             CustomAppRow(customApp: $app)
                         }
                     }.padding(15).frame(maxWidth: .infinity, alignment: .top)
@@ -62,8 +80,9 @@ struct AppSpecificSettingsView: View {
                 .background(Color(NSColor.textBackgroundColor)).cornerRadius(8).overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
             }
             .padding(.horizontal, 30).padding(.bottom, 30)
-            .opacity(settings.isAppSpecificEnabled ? 1.0 : 0.5) // 끄면 반투명
-            .disabled(!settings.isAppSpecificEnabled) // 끄면 클릭 차단
+            // 🌟 [수정] 상태 종속성 타겟을 활성 프로필 내부 스위치 상태로 수정
+            .opacity(settings.activeProfile.payload.isAppSpecificEnabled ? 1.0 : 0.5)
+            .disabled(!settings.activeProfile.payload.isAppSpecificEnabled)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -75,20 +94,19 @@ struct AppSpecificSettingsView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             guard let bundle = Bundle(url: url), let bundleId = bundle.bundleIdentifier else { return }
-            if !settings.customApps.contains(where: { $0.bundleIdentifier == bundleId }) {
-                settings.customApps.append(CustomApp(bundleIdentifier: bundleId, appName: url.deletingPathExtension().lastPathComponent, targetLanguage: ""))
+            
+            // 🌟 [수정] 중복 추가 방지 검사 및 추가 타겟을 활성 프로필 내부 배열로 이관
+            if !settings.activeProfile.payload.customApps.contains(where: { $0.bundleIdentifier == bundleId }) {
+                settings.activeProfile.payload.customApps.append(CustomApp(bundleIdentifier: bundleId, appName: url.deletingPathExtension().lastPathComponent, targetLanguage: ""))
             }
         }
     }
 }
 
-// CustomAppRow 코드는 기존과 동일하게 이 아래에 두시면 됩니다!
 struct CustomAppRow: View {
     @Binding var customApp: CustomApp
     @ObservedObject private var settings = SettingsManager.shared
     @State private var appIcon: NSImage? = nil
-    
-    // 🌟 [추가됨] 현재 진행 중인 아이콘 로드 작업을 식별하는 고유 ID
     @State private var currentIconLoadID = UUID()
 
     var body: some View {
@@ -107,7 +125,8 @@ struct CustomAppRow: View {
                 ForEach(InputSourceManager.shared.availableKeyboards) { keyboard in Text(keyboard.name).tag(keyboard.id) }
             }.pickerStyle(.menu).labelsHidden().frame(width: 140)
             
-            Button(action: { settings.customApps.removeAll { $0.id == customApp.id } }) {
+            // 🌟 [수정] 삭제 타겟 경로를 활성 프로필의 페이로드 내부 인스턴스로 바인딩 변경
+            Button(action: { settings.activeProfile.payload.customApps.removeAll { $0.id == customApp.id } }) {
                 Image(systemName: "trash").foregroundColor(.red)
             }
             .buttonStyle(.plain).padding(.leading, 5)
@@ -121,7 +140,6 @@ struct CustomAppRow: View {
         let bundleID = customApp.bundleIdentifier
         guard !bundleID.isEmpty else { return }
         
-        // 🌟 [추가됨] 매 호출마다 새로운 고유 ID(번호표) 발급 및 저장
         let loadID = UUID()
         self.currentIconLoadID = loadID
         
@@ -130,7 +148,6 @@ struct CustomAppRow: View {
             let icon = NSWorkspace.shared.icon(forFile: url.path)
             
             DispatchQueue.main.async {
-                // 🌟 [추가됨] 현재 저장된 최신 ID와 내 ID가 일치할 때만 UI 업데이트 (덮어쓰기 방어)
                 if self.currentIconLoadID == loadID {
                     self.appIcon = icon
                 }

@@ -146,17 +146,54 @@ extension EventMonitor {
         return EventMonitor.charKeyMap[keyCode]
     }
     
-    func performTextExpansion(triggerLength: Int, replacementText: String, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
+    // 🌟 [수정] 파라미터를 replacementText에서 snippet: RenderedSnippet으로 변경
+    func performTextExpansion(triggerLength: Int, snippet: RenderedSnippet, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
         // 🌟 텍스트 대치 시에도 즉각 삭제 사용
         self.batchDelete(count: triggerLength)
         
-        self.insertLongUnicodeText(replacementText) { [weak self] in
+        // 🌟 교체: 단순 문자열이 아닌 snippet.text를 삽입
+        self.insertLongUnicodeText(snippet.text) { [weak self] in
             guard let self = self else { return }
+            
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                // 1. 트리거 키(예: 스페이스바, 엔터) 전송
                 self.postTriggerKey(keyCode: triggerKeyCode)
+                
+                // 2. 🌟 커서 위치 복원 연산 및 실행
+                if let cursorOffset = snippet.cursorOffsetFromStart {
+                    let textLength = snippet.text.count
+                    
+                    // 주의: 방금 위에서 postTriggerKey로 스페이스/엔터가 추가되었으므로
+                    // 커서가 1칸 더 우측으로 밀려 있습니다. 따라서 '+ 1'을 해줍니다.
+                    // (만약 텍스트 대치 후 스페이스바가 남는 것이 싫다면, 커서가 있을 때 postTriggerKey를 생략하는 분기 처리를 해도 됩니다.)
+                    let moveLeftCount = (textLength - cursorOffset) + 1
+                    
+                    if moveLeftCount > 0 {
+                        self.moveCursorLeft(count: moveLeftCount)
+                    }
+                }
+                
                 let trace = TraceFactory.create(event: .snippetExpansion, result: .expanded, reason: .snippetExpanded(trigger: triggerText))
                 DecisionTraceManager.shared.record(trace)
             }
+        }
+    }
+    
+    // 🌟 [추가] 지정된 횟수만큼 왼쪽 방향키(←) 이벤트를 발생시키는 헬퍼 메서드
+    func moveCursorLeft(count: Int) {
+        guard count > 0 else { return }
+        let leftArrowKeyCode: CGKeyCode = 123 // kVK_LeftArrow
+        
+        for _ in 0..<count {
+            let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: leftArrowKeyCode, keyDown: true)
+            let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: leftArrowKeyCode, keyDown: false)
+            
+            // EventMonitor의 재귀적 루프를 막기 위해 9999 태그 부여
+            keyDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            keyUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            
+            keyDown?.post(tap: .cghidEventTap)
+            keyUp?.post(tap: .cghidEventTap)
         }
     }
     

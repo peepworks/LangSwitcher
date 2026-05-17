@@ -20,36 +20,38 @@ import SwiftUI
 
 struct DomainRuleSettingsView: View {
     @ObservedObject var settings = SettingsManager.shared
-    
+
     @State private var showingEditSheet = false
     @State private var editingRule: DomainRule? = nil
-    
+
+    private var payload: Binding<ProfileSettingsPayload> {
+        Binding(
+            get: { settings.activeProfile.payload },
+            set: { settings.activeProfile.payload = $0 }
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            ProfileHeaderView() // 🌟 헤더 추가
             
-            // 🌟 1. 마스터 스위치 영역
             HStack {
                 Text(String(localized: "Website Keyboard Auto-Switching"))
                     .font(.title2.bold())
                 Spacer()
-                Toggle("", isOn: $settings.isBrowserDomainModeEnabled)
+                Toggle("", isOn: payload.isBrowserDomainModeEnabled)
                     .toggleStyle(.switch)
                     .labelsHidden()
                     .controlSize(.small)
             }
-            .padding(.horizontal, 30)
-            .padding(.top, 30)
-            .padding(.bottom, 10)
-            
-            // 🌟 2. 메인 콘텐츠 영역
+            .padding(.horizontal, 30).padding(.top, 15).padding(.bottom, 10)
+
             VStack(alignment: .leading, spacing: 15) {
                 HStack {
                     Text(String(localized: "Set the input source to automatically change when visiting specific domains."))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    
                     Spacer()
-                    
                     Button(action: {
                         editingRule = nil
                         showingEditSheet = true
@@ -59,26 +61,23 @@ struct DomainRuleSettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                
-                // 🌟 3. 박스 디자인
+
                 ScrollView {
                     VStack(spacing: 0) {
-                        if settings.domainRules.isEmpty {
+                        if settings.activeProfile.payload.domainRules.isEmpty {
                             Text(String(localized: "No domain rules added."))
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 40)
+                                .font(.subheadline).foregroundColor(.secondary).padding(.vertical, 40)
                         } else {
                             VStack(spacing: 0) {
-                                ForEach(settings.domainRules) { rule in
+                                ForEach(settings.activeProfile.payload.domainRules) { rule in
                                     DomainRuleRowView(
                                         rule: rule,
                                         onUpdate: { updatedRule in saveRule(updatedRule) },
                                         onDelete: { deleteRule(id: rule.id) },
                                         onEdit: { openEditSheet(for: rule) }
                                     )
-                                    
-                                    if rule.id != settings.domainRules.last?.id {
+
+                                    if rule.id != settings.activeProfile.payload.domainRules.last?.id {
                                         Divider().padding(.horizontal, 15)
                                     }
                                 }
@@ -89,16 +88,13 @@ struct DomainRuleSettingsView: View {
                 }
                 .background(Color(NSColor.textBackgroundColor))
                 .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                )
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
             }
             .padding(.horizontal, 30)
             .padding(.bottom, 30)
-            .opacity(settings.isBrowserDomainModeEnabled ? 1.0 : 0.5)
-            .disabled(!settings.isBrowserDomainModeEnabled)
-            
+            .opacity(settings.activeProfile.payload.isBrowserDomainModeEnabled ? 1.0 : 0.5)
+            .disabled(!settings.activeProfile.payload.isBrowserDomainModeEnabled)
+
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(isPresented: $showingEditSheet) {
@@ -107,23 +103,22 @@ struct DomainRuleSettingsView: View {
             }
         }
     }
-    
-    // MARK: - Actions
+
     private func openEditSheet(for rule: DomainRule) {
         editingRule = rule
         showingEditSheet = true
     }
-    
+
     private func saveRule(_ rule: DomainRule) {
-        if let index = settings.domainRules.firstIndex(where: { $0.id == rule.id }) {
-            settings.domainRules[index] = rule
+        if let index = settings.activeProfile.payload.domainRules.firstIndex(where: { $0.id == rule.id }) {
+            settings.activeProfile.payload.domainRules[index] = rule
         } else {
-            settings.domainRules.append(rule)
+            settings.activeProfile.payload.domainRules.append(rule)
         }
     }
-    
+
     private func deleteRule(id: UUID) {
-        settings.domainRules.removeAll { $0.id == id }
+        settings.activeProfile.payload.domainRules.removeAll { $0.id == id }
     }
 }
 

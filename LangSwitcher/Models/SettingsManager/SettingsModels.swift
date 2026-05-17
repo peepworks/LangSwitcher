@@ -156,3 +156,60 @@ struct ShortcutKey: Hashable {
     let keyCode: UInt16
     let modifiers: UInt64
 }
+
+// MARK: - Profile Management Models
+
+/// 프로필 자체의 메타데이터와 실제 설정값(Payload)을 담는 구조체
+struct SettingsProfile: Identifiable, Codable { // 🌟 Hashable 제거
+    var id: UUID
+    var name: String
+    var note: String
+    var isDefault: Bool
+    var createdAt: Date
+    var updatedAt: Date
+    var payload: ProfileSettingsPayload
+}
+
+struct ProfileSettingsPayload: Codable { // 🌟 Hashable, Equatable 제거
+    var customShortcuts: [CustomShortcut] = []
+    var appLaunchShortcuts: [AppLaunchShortcut] = []
+    var customApps: [CustomApp] = []
+    var excludedApps: [ExcludedApp] = []
+    var domainRules: [DomainRule] = []
+    var appDelays: [AppDelay] = []
+    
+    // 2. 텍스트 대치
+    var isTextExpansionEnabled: Bool = false
+    var textExpansionRules: [TextExpansionRule] = []
+    
+    // 3. 오타 교정
+    var isTypoCorrectionEnabled: Bool = false
+    var typoKeyCode: UInt16 = 0
+    var typoModifierFlags: UInt64 = 0
+    var typoDisplayString: String = ""
+    var isSentenceMode: Bool = false
+    var isAutoTypoCorrectionEnabled: Bool = false
+    var isAutoTypoCorrectionOnEnterEnabled: Bool = false
+    
+    // 4. 프로필 종속적인 일부 고급 설정 (선택적)
+    var isAppSpecificEnabled: Bool = true
+    var isBrowserDomainModeEnabled: Bool = false
+}
+
+// 🌟 탭 열거형을 전역 모델로 독립 (앱 내의 모든 파일에서 접근 가능해집니다)
+enum SettingsTab: Hashable {
+    case profiles
+    case general
+    case advanced
+    case customShortcuts
+    case appSpecific
+    case domainRules
+    case appLaunch
+    case textExpansion
+    case typoCorrection
+    case excludedApps
+    case stats
+    case rulePriority
+    case debugger
+    case about
+}
