@@ -21,36 +21,26 @@ import Foundation
 extension SettingsManager {
     func exportBackup(to url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
         do {
-            // 🌟 현재 활성화된 프로필의 페이로드를 가져옵니다.
-            let payload = activeProfile.payload
-            
             let backup = BackupData(
                 version: currentSettingsVersion,
-                isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive,
-                ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
-                showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
-                toggleKeyCode: toggleKeyCode, toggleModifierFlags: toggleModifierFlags, toggleDisplayString: toggleDisplayString,
+                isCtrlActive: isCtrlActive,
+                isCmdActive: isCmdActive,
+                isOptActive: isOptActive,
+                ctrlLang: ctrlLang,
+                cmdLang: cmdLang,
+                optLang: optLang,
+                showVisualFeedback: showVisualFeedback,
+                isTestMode: isTestMode,
+                toggleKeyCode: toggleKeyCode,
+                toggleModifierFlags: UInt(toggleModifierFlags),
+                toggleDisplayString: toggleDisplayString,
                 
-                // 🌟 [수정] 프로필 페이로드 내부의 값들을 안전하게 매핑합니다.
-                customShortcuts: payload.customShortcuts,
-                customApps: payload.customApps,
-                appLaunchShortcuts: payload.appLaunchShortcuts,
-                excludedApps: payload.excludedApps,
-                isTypoCorrectionEnabled: payload.isTypoCorrectionEnabled,
-                typoKeyCode: payload.typoKeyCode,
-                typoModifierFlags: payload.typoModifierFlags,
-                typoDisplayString: payload.typoDisplayString,
-                isSentenceMode: payload.isSentenceMode,
-                isExcludedAppsEnabled: isExcludedAppsEnabled, // 전역 설정
-                isAutoTypoCorrectionEnabled: payload.isAutoTypoCorrectionEnabled,
-                isEdgeGlowEnabled: isEdgeGlowEnabled, // 전역 설정
-                isAutoTypoCorrectionOnEnterEnabled: payload.isAutoTypoCorrectionOnEnterEnabled,
-                isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled, // 전역 설정
-                isBrowserDomainModeEnabled: payload.isBrowserDomainModeEnabled,
-                domainRules: payload.domainRules,
-                appDelays: payload.appDelays,
-                isTextExpansionEnabled: payload.isTextExpansionEnabled,
-                textExpansionRules: payload.textExpansionRules
+                isExcludedAppsEnabled: isExcludedAppsEnabled,
+                isEdgeGlowEnabled: isEdgeGlowEnabled,
+                isBrowserTabMemoryEnabled: isBrowserTabMemoryEnabled,
+                
+                profiles: self.profiles,
+                activeProfileID: self.activeProfileID
             )
             
             let encoder = JSONEncoder()
@@ -87,42 +77,64 @@ extension SettingsManager {
                             self.isBatchUpdating = false
                         }
                         
-                        // 1. 전역 변수 복원
-                        self.isCtrlActive = backup.isCtrlActive; self.isCmdActive = backup.isCmdActive; self.isOptActive = backup.isOptActive
-                        self.ctrlLang = backup.ctrlLang; self.cmdLang = backup.cmdLang; self.optLang = backup.optLang
-                        self.showVisualFeedback = backup.showVisualFeedback
+                        // 전역 변수 복원
+                        self.isCtrlActive = backup.isCtrlActive ?? self.isCtrlActive
+                        self.isCmdActive = backup.isCmdActive ?? self.isCmdActive
+                        self.isOptActive = backup.isOptActive ?? self.isOptActive
+                        self.ctrlLang = backup.ctrlLang ?? self.ctrlLang
+                        self.cmdLang = backup.cmdLang ?? self.cmdLang
+                        self.optLang = backup.optLang ?? self.optLang
+                        self.showVisualFeedback = backup.showVisualFeedback ?? self.showVisualFeedback
                         self.isTestMode = false
-                        self.toggleKeyCode = backup.toggleKeyCode; self.toggleModifierFlags = backup.toggleModifierFlags; self.toggleDisplayString = backup.toggleDisplayString
-                        self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? true
-                        self.isEdgeGlowEnabled = backup.isEdgeGlowEnabled ?? false
-                        self.isBrowserTabMemoryEnabled = backup.isBrowserTabMemoryEnabled ?? false
                         
-                        // 2. 🌟 프로필 데이터 복원 구조로 교체
-                        // 백업 파일의 내용을 현재 활성화된 프로필의 payload에 채워 넣습니다.
-                        var currentProfile = self.activeProfile
+                        self.toggleKeyCode = backup.toggleKeyCode ?? self.toggleKeyCode
+                        if let flags = backup.toggleModifierFlags {
+                            self.toggleModifierFlags = UInt64(flags)
+                        }
+                        self.toggleDisplayString = backup.toggleDisplayString ?? self.toggleDisplayString
                         
-                        currentProfile.payload.customShortcuts = backup.customShortcuts
-                        currentProfile.payload.customApps = backup.customApps
-                        currentProfile.payload.appLaunchShortcuts = backup.appLaunchShortcuts
-                        currentProfile.payload.excludedApps = backup.excludedApps ?? []
-                        currentProfile.payload.isTypoCorrectionEnabled = backup.isTypoCorrectionEnabled ?? false
-                        currentProfile.payload.typoKeyCode = backup.typoKeyCode ?? 0
-                        currentProfile.payload.typoModifierFlags = backup.typoModifierFlags ?? 0
-                        currentProfile.payload.typoDisplayString = backup.typoDisplayString ?? ""
-                        currentProfile.payload.isSentenceMode = backup.isSentenceMode ?? false
-                        currentProfile.payload.isAutoTypoCorrectionEnabled = backup.isAutoTypoCorrectionEnabled ?? false
-                        currentProfile.payload.isAutoTypoCorrectionOnEnterEnabled = backup.isAutoTypoCorrectionOnEnterEnabled ?? false
-                        currentProfile.payload.isBrowserDomainModeEnabled = backup.isBrowserDomainModeEnabled ?? false
-                        currentProfile.payload.domainRules = backup.domainRules ?? []
-                        currentProfile.payload.appDelays = backup.appDelays ?? currentProfile.payload.appDelays
-                        currentProfile.payload.isTextExpansionEnabled = backup.isTextExpansionEnabled ?? false
-                        currentProfile.payload.textExpansionRules = backup.textExpansionRules ?? []
+                        self.isExcludedAppsEnabled = backup.isExcludedAppsEnabled ?? self.isExcludedAppsEnabled
+                        self.isEdgeGlowEnabled = backup.isEdgeGlowEnabled ?? self.isEdgeGlowEnabled
+                        self.isBrowserTabMemoryEnabled = backup.isBrowserTabMemoryEnabled ?? self.isBrowserTabMemoryEnabled
                         
-                        // 변경된 프로필 저장 (세터 구동 -> 자동으로 캐시 세팅 및 스냅샷 전파)
-                        self.activeProfile = currentProfile
+                        // 프로필 데이터 복원 분기 처리
+                        if let importedProfiles = backup.profiles, !importedProfiles.isEmpty {
+                            self.profiles = importedProfiles
+                            if let activeID = backup.activeProfileID {
+                                self.activeProfileID = activeID
+                            } else {
+                                self.activeProfileID = importedProfiles[0].id
+                            }
+                        } else {
+                            var currentProfile = self.activeProfile
+                            
+                            currentProfile.payload.customShortcuts = backup.customShortcuts ?? []
+                            currentProfile.payload.customApps = backup.customApps ?? []
+                            currentProfile.payload.appLaunchShortcuts = backup.appLaunchShortcuts ?? []
+                            currentProfile.payload.excludedApps = backup.excludedApps ?? []
+                            currentProfile.payload.isTypoCorrectionEnabled = backup.isTypoCorrectionEnabled ?? false
+                            currentProfile.payload.typoKeyCode = backup.typoKeyCode ?? 0
+                            
+                            // 🌟 [핵심 수정] 여기서 UInt64로 캐스팅해줍니다!
+                            currentProfile.payload.typoModifierFlags = UInt64(backup.typoModifierFlags ?? 0)
+                            
+                            currentProfile.payload.typoDisplayString = backup.typoDisplayString ?? ""
+                            currentProfile.payload.isSentenceMode = backup.isSentenceMode ?? false
+                            currentProfile.payload.isAutoTypoCorrectionEnabled = backup.isAutoTypoCorrectionEnabled ?? false
+                            currentProfile.payload.isAutoTypoCorrectionOnEnterEnabled = backup.isAutoTypoCorrectionOnEnterEnabled ?? false
+                            currentProfile.payload.isBrowserDomainModeEnabled = backup.isBrowserDomainModeEnabled ?? false
+                            currentProfile.payload.domainRules = backup.domainRules ?? []
+                            currentProfile.payload.appDelays = backup.appDelays ?? []
+                            currentProfile.payload.isTextExpansionEnabled = backup.isTextExpansionEnabled ?? false
+                            currentProfile.payload.textExpansionRules = backup.textExpansionRules ?? []
+                            
+                            if let index = self.profiles.firstIndex(where: { $0.id == currentProfile.id }) {
+                                self.profiles[index] = currentProfile
+                            }
+                            self.activeProfileID = currentProfile.id
+                        }
                         
-                        // 별도 동기화가 필요한 싱글톤 컴포넌트 갱신
-                        DomainRuleManager.shared.rules = currentProfile.payload.domainRules
+                        DomainRuleManager.shared.rules = self.activeProfile.payload.domainRules
                         
                         completion(true, nil)
                     } catch {

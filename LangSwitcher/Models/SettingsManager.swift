@@ -19,6 +19,12 @@
 import Foundation
 import Combine
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
+
+extension Notification.Name {
+    static let profileDidSwitch = Notification.Name("LangSwitcherProfileDidSwitch")
+}
 
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
@@ -85,10 +91,26 @@ class SettingsManager: ObservableObject {
         }
     }
     
+    // 🌟 [핵심 수정] 프로필 전환 시 즉각적으로 엔진에 갱신을 지시하는 옵저버
     @Published var activeProfileID: UUID {
         didSet {
-            UserDefaults.standard.set(activeProfileID.uuidString, forKey: "activeProfileID")
-            if !isBatchUpdating { applyActiveProfile() }
+            // 값이 실제로 변경되었을 때만 작동
+            guard oldValue != activeProfileID else { return }
+            
+            // 🌟 1. 이미 만들어두신 완벽한 갱신 파이프라인 호출!
+            // (내부에서 도메인 룰 동기화, 단축키 캐시 굽기, 엔진 스냅샷 최신화가 모두 이루어짐)
+            applyActiveProfile()
+            
+            // 2. 다른 UI 컴포넌트나 매니저가 알 수 있도록 노티 발송
+            NotificationCenter.default.post(name: .profileDidSwitch, object: nil)
+            
+            // 3. 변경된 프로필 상태를 디스크/클라우드에 즉시 저장
+            DispatchQueue.main.async {
+                self.saveAll()
+                self.syncToCloud()
+            }
+            
+            print("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
         }
     }
     
@@ -339,6 +361,62 @@ class SettingsManager: ObservableObject {
                     } catch { completion(false, error) }
                 }
             } catch { DispatchQueue.main.async { completion(false, error) } }
+        }
+    }
+    
+    // 🌟 프로필 전체 데이터 내보내기 (Export)
+    func exportProfiles() {
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.json]
+        savePanel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        savePanel.nameFieldStringValue = "LangSwitcher_Profiles_Backup.json"
+        savePanel.title = String(localized: "Export Profiles Backup")
+        
+        savePanel.begin { response in
+            if response == .OK, let url = savePanel.url {
+                do {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .prettyPrinted
+                    let data = try encoder.encode(self.profiles)
+                    
+                    try data.write(to: url)
+                    print("✅ Profiles successfully exported to \(url.lastPathComponent)")
+                } catch {
+                    print("❌ Failed to export profiles: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    // 🌟 프로필 전체 데이터 가져오기 (Import)
+    func importProfiles() {
+        let openPanel = NSOpenPanel()
+        openPanel.allowedContentTypes = [.json]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+        openPanel.title = String(localized: "Import Profiles Backup")
+        
+        openPanel.begin { response in
+            if response == .OK, let url = openPanel.url {
+                do {
+                    let data = try Data(contentsOf: url)
+                    let decoder = JSONDecoder()
+                    let importedProfiles = try decoder.decode([SettingsProfile].self, from: data)
+                    
+                    guard !importedProfiles.isEmpty else { return }
+                    
+                    DispatchQueue.main.async {
+                        self.profiles = importedProfiles
+                        if let firstProfile = importedProfiles.first {
+                            self.activeProfileID = firstProfile.id
+                        }
+                    }
+                    print("✅ Profiles successfully imported from \(url.lastPathComponent)")
+                } catch {
+                    print("❌ Failed to import profiles: \(error.localizedDescription)")
+                }
+            }
         }
     }
 }

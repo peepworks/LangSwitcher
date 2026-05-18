@@ -60,32 +60,47 @@ struct ActionLog: Identifiable, Codable {
     var actionType: ActionType? = nil
 }
 
+// 🌟 V1(구버전)과 V2(신버전: 프로필 시스템) 백업 파일을 모두 호환하기 위한 통합 구조체
 struct BackupData: Codable {
-    let version: String?
-    let isCtrlActive: Bool; let isCmdActive: Bool; let isOptActive: Bool
-    let ctrlLang: String; let cmdLang: String; let optLang: String
-    let showVisualFeedback: Bool; let isTestMode: Bool
-    let toggleKeyCode: UInt16; let toggleModifierFlags: UInt64; let toggleDisplayString: String
-    let customShortcuts: [CustomShortcut]; let customApps: [CustomApp]; let appLaunchShortcuts: [AppLaunchShortcut]
-    let excludedApps: [ExcludedApp]?
-    let isTypoCorrectionEnabled: Bool?
-    let typoKeyCode: UInt16?
-    let typoModifierFlags: UInt64?
-    let typoDisplayString: String?
-    let isSentenceMode: Bool?
-    let isExcludedAppsEnabled: Bool?
-    let isAutoTypoCorrectionEnabled: Bool?
-    let isEdgeGlowEnabled: Bool?
-    let isAutoTypoCorrectionOnEnterEnabled: Bool?
+    var version: String?
+    var isCtrlActive: Bool?
+    var isCmdActive: Bool?
+    var isOptActive: Bool?
+    var ctrlLang: String?
+    var cmdLang: String?
+    var optLang: String?
+    var showVisualFeedback: Bool?
+    var isTestMode: Bool?
+    var toggleKeyCode: UInt16?
+    var toggleModifierFlags: UInt?
+    var toggleDisplayString: String?
     
-    let isBrowserTabMemoryEnabled: Bool?
-    let isBrowserDomainModeEnabled: Bool?
+    // 전역 환경 설정
+    var isExcludedAppsEnabled: Bool?
+    var isEdgeGlowEnabled: Bool?
+    var isBrowserTabMemoryEnabled: Bool?
     
-    let domainRules: [DomainRule]?
-    let appDelays: [AppDelay]? // 🌟 백업용 앱 딜레이
+    // 🌟 [신규 추가] V2: 다중 프로필 시스템 데이터
+    var profiles: [SettingsProfile]? = nil
+    var activeProfileID: UUID? = nil
     
-    let isTextExpansionEnabled: Bool?
-    let textExpansionRules: [TextExpansionRule]?
+    // 🌟 [수정] V1: 구버전 단일 프로필 데이터 (생략 가능하도록 모두 '= nil' 기본값 할당)
+    var customShortcuts: [CustomShortcut]? = nil
+    var customApps: [CustomApp]? = nil
+    var appLaunchShortcuts: [AppLaunchShortcut]? = nil
+    var excludedApps: [ExcludedApp]? = nil
+    var isTypoCorrectionEnabled: Bool? = nil
+    var typoKeyCode: UInt16? = nil
+    var typoModifierFlags: UInt? = nil
+    var typoDisplayString: String? = nil
+    var isSentenceMode: Bool? = nil
+    var isAutoTypoCorrectionEnabled: Bool? = nil
+    var isAutoTypoCorrectionOnEnterEnabled: Bool? = nil
+    var isBrowserDomainModeEnabled: Bool? = nil
+    var domainRules: [DomainRule]? = nil
+    var appDelays: [AppDelay]? = nil
+    var isTextExpansionEnabled: Bool? = nil
+    var textExpansionRules: [TextExpansionRule]? = nil
 }
 
 struct SettingsSnapshot {

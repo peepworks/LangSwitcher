@@ -195,9 +195,9 @@
 		125FF4CA2F657F10005DAB0C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				128CF91C2FB439AE00B9672C /* DecisionTraceManager */,
 				1241A8BE2FAEEC0F0078CD5F /* SettingsManager */,
 				128F407B2FB93C81009B58AF /* Snippet */,
-				128CF91C2FB439AE00B9672C /* DecisionTraceManager */,
 				125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */,
 				12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */,
 				128CF91F2FB439EC00B9672C /* DecisionTraceManager.swift */,

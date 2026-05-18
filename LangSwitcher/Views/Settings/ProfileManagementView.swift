@@ -21,44 +21,71 @@ import SwiftUI
 struct ProfileManagementView: View {
     @ObservedObject var settings = SettingsManager.shared
     @State private var selection: UUID?
-
+    
     var body: some View {
         HStack(spacing: 0) {
+            
             // ── 좌측: 프로필 목록 ──────────────────────────────
             VStack(spacing: 0) {
-                List(selection: $selection) {
-                    ForEach(settings.profiles) { profile in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(profile.name)
-                                    .font(.body).bold()
-                                Spacer()
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(settings.profiles) { profile in
+                            VStack(alignment: .leading, spacing: 5) {
+                                
+                                // 🌟 1. "현재 사용 중" 배지를 이름 위로 단독 배치하여 좌우 쏠림 해결
                                 if profile.id == settings.activeProfileID {
                                     Text(String(localized: "Currently Active"))
                                         .font(.system(size: 9, weight: .bold))
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
                                         .background(Color.blue)
                                         .foregroundColor(.white)
                                         .cornerRadius(4)
                                 }
+                                
+                                Text(profile.name)
+                                    .font(.body).bold()
+                                
+                                // 프로필 설명 및 밀도 보강 (규칙 요약)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if !profile.note.isEmpty {
+                                        Text(profile.note)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                    } else {
+                                        Text(String(localized: "No description"))
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary).opacity(0.5)
+                                    }
+                                    
+                                    // 규칙 수 요약 (앱과 웹사이트 규칙 포함)
+                                    let payload = profile.payload
+                                    let stats = String(format: String(localized: "Apps %d · Web %d · Shortcuts %d · Snippets %d · Excluded %d"), payload.customApps.count, payload.domainRules.count, payload.customShortcuts.count, payload.textExpansionRules.count, payload.excludedApps.count)
+                                    
+                                    Text(stats)
+                                        .font(.system(size: 10))
+                                        .foregroundColor(selection == profile.id ? .white.opacity(0.8) : .secondary.opacity(0.8))
+                                }
                             }
-                            if !profile.note.isEmpty {
-                                Text(profile.note)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(selection == profile.id ? Color(.selectedControlColor) : Color.clear)
+                            .foregroundColor(selection == profile.id ? .white : .primary)
+                            .cornerRadius(6)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selection = profile.id
                             }
                         }
-                        .padding(.vertical, 4)
-                        .tag(profile.id)
                     }
+                    .padding(10)
                 }
-                .listStyle(.plain)
-
+                
                 Divider()
-
+                
                 // 하단 +/- 버튼
                 HStack(spacing: 0) {
                     Button(action: addProfile) {
@@ -84,11 +111,11 @@ struct ProfileManagementView: View {
                 .padding(.vertical, 4)
                 .background(Color(NSColor.controlBackgroundColor))
             }
-            .frame(width: 220)  // ✅ 고정폭: HSplitView 대신 frame으로 크기 고정
+            .frame(width: 240)
             .background(Color(NSColor.controlBackgroundColor))
-
-            Divider() // ✅ 좌우 구분선
-
+            
+            Divider()
+            
             // ── 우측: 프로필 상세 ──────────────────────────────
             Group {
                 if let selection = selection,
@@ -102,43 +129,51 @@ struct ProfileManagementView: View {
                                     TextField(String(localized: "Description"), text: $settings.profiles[index].note)
                                         .textFieldStyle(.roundedBorder)
                                 }
-
-                                Spacer().frame(height: 20)
-
+                                
+                                Spacer().frame(height: 25)
+                                
                                 Section {
-                                    HStack(spacing: 15) {
+                                    // 🌟 2. Form 오버플로우 방지: 상태 라벨과 버튼 그룹을 수직(VStack)으로 명확히 분리
+                                    VStack(alignment: .leading, spacing: 14) {
                                         if settings.activeProfileID == settings.profiles[index].id {
                                             Label(String(localized: "Currently Active"), systemImage: "checkmark.circle.fill")
                                                 .font(.body.bold())
                                                 .foregroundColor(.green)
-                                                .padding(.vertical, 4)
                                         } else {
                                             Button(String(localized: "Switch to this Profile")) {
                                                 settings.activeProfileID = settings.profiles[index].id
                                             }
                                             .buttonStyle(.borderedProminent)
                                         }
-
-                                        Button(String(localized: "Duplicate Profile")) {
-                                            duplicateProfile(index: index)
+                                        
+                                        HStack(spacing: 12) {
+                                            Button(String(localized: "Duplicate Profile")) {
+                                                duplicateProfile(index: index)
+                                            }
+                                            
+                                            Button(String(localized: "New Profile")) {
+                                                addProfile()
+                                            }
                                         }
                                     }
                                 }
                             }
                             .padding()
-
+                            
                             Spacer().frame(height: 20)
-
+                            
                             // 하단 안내 문구
                             VStack(alignment: .leading, spacing: 8) {
                                 Divider()
                                 Text(String(localized: "About Profiles"))
                                     .font(.caption).bold()
-                                Text(String(localized: "This profile includes your custom shortcuts, app/website specific keyboards, text expansion rules, typo correction settings, and excluded apps."))
+                                
+                                Text(String(localized: "This profile includes app-specific keyboards, website rules, text expansion, excluded apps, and custom shortcuts."))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Text(String(localized: "Startup options, cloud sync, and UI preferences are applied globally across all profiles."))
+                                
+                                Text(String(localized: "App operational settings like startup options, auto-update, and cloud sync apply globally across all profiles."))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -155,13 +190,12 @@ struct ProfileManagementView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        // ✅ 부모 NavigationSplitView의 detail 패널을 꽉 채움
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             if selection == nil { selection = settings.activeProfileID }
         }
     }
-
+    
     // MARK: - Actions
     private func addProfile() {
         let newPayload = settings.activeProfile.payload
@@ -173,7 +207,7 @@ struct ProfileManagementView: View {
         selection = newProfile.id
         settings.activeProfileID = newProfile.id
     }
-
+    
     private func removeProfile() {
         guard let id = selection, settings.profiles.count > 1 else { return }
         if id == settings.activeProfileID {
@@ -184,7 +218,7 @@ struct ProfileManagementView: View {
         settings.profiles.removeAll(where: { $0.id == id })
         selection = settings.activeProfileID
     }
-
+    
     private func duplicateProfile(index: Int) {
         var newProfile = settings.profiles[index]
         newProfile.id = UUID()

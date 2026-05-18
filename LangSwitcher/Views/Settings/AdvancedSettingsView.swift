@@ -24,13 +24,10 @@ struct AdvancedSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
 
     @State private var showAutomationAlert = false
-    
     private let showICloudFeature = false
 
     var body: some View {
-        // 🌟 스크롤 인디케이터를 숨기고 컴팩트하게 정렬합니다.
         ScrollView(showsIndicators: false) {
-            // 🌟 [핵심] 전체 섹션 간 간격을 25 -> 16으로 줄여 공간을 확보합니다.
             VStack(alignment: .leading, spacing: 16) {
                 Text(String(localized: "Advanced Features"))
                     .font(.title2.bold())
@@ -39,13 +36,14 @@ struct AdvancedSettingsView: View {
                 hardwareKeyboardSection
                 windowFocusSection
                 browserTabSection
-                backupRestoreSection
+                
+                // 🌟 [수정] 프로필 백업 및 복원 섹션으로 교체
+                profileBackupRestoreSection
                 
                 if showICloudFeature {
                     cloudSyncSection
                 }
                 
-                // 🌟 [새로 추가됨] 메모리 관리 섹션 연결
                 memoryManagementSection
                 
                 Spacer()
@@ -138,10 +136,8 @@ struct AdvancedSettingsView: View {
                         Picker("", selection: $settings.newTabDefaultLanguage) {
                             Text(String(localized: "Keep Previous")).tag("None")
                             Divider()
-                            // 🌟 [수정됨] 무거운 연산 프로퍼티 대신, 이미 캐시된 availableKeyboards를 사용합니다.
                             ForEach(InputSourceManager.shared.availableKeyboards, id: \.id) { keyboard in
                                 Text(keyboard.name).tag(keyboard.id)
-                                // 주의: source.localizedName -> keyboard.name 으로 변경되었습니다.
                             }
                         }
                         .pickerStyle(.menu)
@@ -160,21 +156,26 @@ struct AdvancedSettingsView: View {
         }
     }
     
-    private var backupRestoreSection: some View {
+    // 🌟 [수정] 프로필 시스템(v0.9.0)에 맞춰 텍스트와 UI 구조를 개선한 백업 섹션
+    private var profileBackupRestoreSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 0) {
-                SettingButtonRow(title: String(localized: "Export Settings"), buttonTitle: String(localized: "Export...")) {
+                Text(String(localized: "You can save all your current profile layouts, website rules, and replacement text presets to a JSON file, or restore them anytime."))
+                    .font(.caption).foregroundColor(.secondary).lineSpacing(2)
+                    .padding(.horizontal, 15).padding(.bottom, 12).padding(.top, 4)
+                
+                SettingButtonRow(title: String(localized: "Export Profiles"), buttonTitle: String(localized: "Export...")) {
                     exportSettings()
                 }
                 
                 Divider().padding(.horizontal, 15)
                 
-                SettingButtonRow(title: String(localized: "Import Settings"), buttonTitle: String(localized: "Import...")) {
+                SettingButtonRow(title: String(localized: "Import Profiles"), buttonTitle: String(localized: "Import...")) {
                     importSettings()
                 }
             }
         } label: {
-            Text(String(localized: "Backup & Restore")).font(.headline)
+            Text(String(localized: "Profile Backup & Restore")).font(.headline)
         }
     }
     
@@ -207,7 +208,6 @@ struct AdvancedSettingsView: View {
         }
     }
     
-    // 🌟 [새로 추가됨] 메모리 초기화 UI 섹션
     private var memoryManagementSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 0) {
@@ -239,19 +239,20 @@ struct AdvancedSettingsView: View {
     }
     
     // MARK: - Actions
+    
+    // 🌟 [수정] 파일명 생성 및 메시지 알림을 프로필(Profiles) 맥락으로 변경
     private func exportSettings() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         
-        // 문서(Documents) 폴더를 기본값으로 지정
         if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             panel.directoryURL = docsURL
         }
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmm"
-        panel.nameFieldStringValue = "LangSwitcher_Backup_\(formatter.string(from: Date())).json"
-
+        // 파일명을 Profiles로 변경
+        panel.nameFieldStringValue = "LangSwitcher_Profiles_\(formatter.string(from: Date())).json"
         NSApp.activate(ignoringOtherApps: true)
 
         if panel.runModal() == .OK, let url = panel.url {
@@ -259,8 +260,8 @@ struct AdvancedSettingsView: View {
                 if success {
                     DispatchQueue.main.async {
                         let alert = NSAlert()
-                        alert.messageText = String(localized: "Backup Successful")
-                        alert.informativeText = String(localized: "Your settings have been exported successfully.")
+                        alert.messageText = String(localized: "Profiles Backup Successful")
+                        alert.informativeText = String(localized: "All profiles and associated settings have been exported successfully.")
                         if let appIcon = NSImage(named: NSImage.applicationIconName) {
                             alert.icon = appIcon
                         }
@@ -285,8 +286,8 @@ struct AdvancedSettingsView: View {
                 if success {
                     DispatchQueue.main.async {
                         let alert = NSAlert()
-                        alert.messageText = String(localized: "Restore Successful")
-                        alert.informativeText = String(localized: "Your settings have been imported successfully.")
+                        alert.messageText = String(localized: "Profiles Restore Successful")
+                        alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
                         if let appIcon = NSImage(named: NSImage.applicationIconName) {
                             alert.icon = appIcon
                         }

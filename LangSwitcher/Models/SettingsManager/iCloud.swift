@@ -34,49 +34,52 @@ extension SettingsManager {
             
             let dict = self.icloudStore.dictionaryRepresentation
             
+            // 전역 설정 동기화
             if let val = dict["showVisualFeedback"] as? Bool { self.showVisualFeedback = val }
             if let val = dict["isHyperKeyEnabled"] as? Bool { self.isHyperKeyEnabled = val }
             if let val = dict["isWindowMemoryEnabled"] as? Bool { self.isWindowMemoryEnabled = val }
             if let val = dict["isCursorHUDEnabled"] as? Bool { self.isCursorHUDEnabled = val }
-            if let val = dict["isTypoCorrectionEnabled"] as? Bool { self.activeProfile.payload.isTypoCorrectionEnabled = val }
-            if let val = dict["isAutoTypoCorrectionEnabled"] as? Bool { self.activeProfile.payload.isAutoTypoCorrectionEnabled = val }
             if let val = dict["isEdgeGlowEnabled"] as? Bool { self.isEdgeGlowEnabled = val }
-            if let val = dict["isAutoTypoCorrectionOnEnterEnabled"] as? Bool { self.activeProfile.payload.isAutoTypoCorrectionOnEnterEnabled = val }
+            if let val = dict["isBrowserTabMemoryEnabled"] as? Bool { self.isBrowserTabMemoryEnabled = val }
             
-            if let data = dict["excludedApps"] as? Data, let dec = try? JSONDecoder().decode([ExcludedApp].self, from: data) { self.activeProfile.payload.excludedApps = dec }
-            if let data = dict["customShortcuts"] as? Data, let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { self.activeProfile.payload.customShortcuts = dec }
-            if let data = dict["appDelays"] as? Data, let dec = try? JSONDecoder().decode([AppDelay].self, from: data) { self.activeProfile.payload.appDelays = dec } // 🌟 추가
-            
-            if let data = dict["domainRules"] as? Data, let dec = try? JSONDecoder().decode([DomainRule].self, from: data) {
-                self.activeProfile.payload.domainRules = dec
-                DomainRuleManager.shared.rules = dec
+            // 🌟 [핵심 수정] 다중 프로필 전체 배열 동기화 처리
+            if let data = dict["profiles"] as? Data, let decodedProfiles = try? JSONDecoder().decode([SettingsProfile].self, from: data) {
+                if !decodedProfiles.isEmpty {
+                    self.profiles = decodedProfiles
+                }
             }
             
-            if let val = dict["isBrowserTabMemoryEnabled"] as? Bool { self.isBrowserTabMemoryEnabled = val }
-            if let val = dict["isBrowserDomainModeEnabled"] as? Bool { self.activeProfile.payload.isBrowserDomainModeEnabled = val }
+            // 활성 프로필 ID 동기화
+            if let activeIDString = dict["activeProfileID"] as? String, let activeID = UUID(uuidString: activeIDString) {
+                // 가져온 프로필 목록 중에 해당 ID가 존재하는지 안전장치 확인 후 전환
+                if self.profiles.contains(where: { $0.id == activeID }) {
+                    self.activeProfileID = activeID
+                }
+            }
+            
+            // 싱글톤 매니저 강제 갱신
+            DomainRuleManager.shared.rules = self.activeProfile.payload.domainRules
         }
     }
-    
+
     func syncToCloud() {
         guard isCloudSyncEnabled, !isBatchUpdating else { return }
         
+        // 전역 설정 업로드
         icloudStore.set(showVisualFeedback, forKey: "showVisualFeedback")
         icloudStore.set(isHyperKeyEnabled, forKey: "isHyperKeyEnabled")
         icloudStore.set(isWindowMemoryEnabled, forKey: "isWindowMemoryEnabled")
         icloudStore.set(isCursorHUDEnabled, forKey: "isCursorHUDEnabled")
-        icloudStore.set(activeProfile.payload.isTypoCorrectionEnabled, forKey: "isTypoCorrectionEnabled")
         icloudStore.set(isHapticFeedbackEnabled, forKey: "isHapticFeedbackEnabled")
         icloudStore.set(isSoundFeedbackEnabled, forKey: "isSoundFeedbackEnabled")
-        icloudStore.set(activeProfile.payload.isAutoTypoCorrectionEnabled, forKey: "isAutoTypoCorrectionEnabled")
         icloudStore.set(isEdgeGlowEnabled, forKey: "isEdgeGlowEnabled")
-        icloudStore.set(activeProfile.payload.isAutoTypoCorrectionOnEnterEnabled, forKey: "isAutoTypoCorrectionOnEnterEnabled")
         icloudStore.set(isBrowserTabMemoryEnabled, forKey: "isBrowserTabMemoryEnabled")
-        icloudStore.set(activeProfile.payload.isBrowserDomainModeEnabled, forKey: "isBrowserDomainModeEnabled")
         
-        if let e = try? JSONEncoder().encode(activeProfile.payload.excludedApps) { icloudStore.set(e, forKey: "excludedApps") }
-        if let e = try? JSONEncoder().encode(activeProfile.payload.customShortcuts) { icloudStore.set(e, forKey: "customShortcuts") }
-        if let e = try? JSONEncoder().encode(activeProfile.payload.domainRules) { icloudStore.set(e, forKey: "domainRules") }
-        if let e = try? JSONEncoder().encode(activeProfile.payload.appDelays) { icloudStore.set(e, forKey: "appDelays") } // 🌟 추가
+        // 🌟 [핵심 수정] 파편화된 payload 대신 프로필 배열 전체와 활성 ID를 업로드
+        if let encodedProfiles = try? JSONEncoder().encode(self.profiles) {
+            icloudStore.set(encodedProfiles, forKey: "profiles")
+        }
+        icloudStore.set(self.activeProfileID.uuidString, forKey: "activeProfileID")
         
         icloudStore.synchronize()
     }
