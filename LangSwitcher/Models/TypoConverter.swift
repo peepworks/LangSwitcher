@@ -81,17 +81,19 @@ class TypoConverter {
 
     // MARK: - 수동 단축키 오타 교정 (VSCode 방어 및 데드락 완벽 해결)
     func executeCorrection() {
+        // 1. 자물쇠를 채웁니다.
         conversionLock.lock()
-        // 함수 블록이 끝날 때 무조건 자물쇠를 풀도록 예약합니다.
-        defer { conversionLock.unlock() }
-
-        // 이미 작업 중이면 그냥 종료 (defer가 알아서 unlock 해줌)
-        guard !isConvertingInProgress else { return }
-
-        // 작업 시작 표시
+        
+        // 2. 변환 중인지 확인합니다. (자물쇠 안에서 안전하게 읽기)
+        if isConvertingInProgress {
+            conversionLock.unlock() // 진행 중이면 자물쇠를 풀고 즉시 취소
+            return
+        }
+        
+        // 3. 변환을 시작한다고 팻말을 바꿉니다. (자물쇠 안에서 안전하게 쓰기)
         isConvertingInProgress = true
         
-        // 4. 안전하게 팻말을 바꿨으니 자물쇠를 풉니다.
+        // 4. 상태 변경이 끝났으므로 자물쇠를 풉니다.
         conversionLock.unlock()
             
         DispatchQueue.main.async {

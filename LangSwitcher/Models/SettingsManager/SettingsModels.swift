@@ -141,7 +141,8 @@ struct SettingsSnapshot {
     var customShortcutCache: [UInt64: CustomShortcut] = [:]
     var appLaunchShortcutCache: [UInt64: AppLaunchShortcut] = [:]
     
-    var cachedActiveTextExpansionRules: [TextExpansionRule] = []
+    var textExpansionDict: [String: TextExpansionRule] = [:]
+    var maxTriggerLength: Int = 0
 
     // 🌟 2. 스냅샷이 생성될 때 기존 배열(Array)을 딕셔너리(Dictionary)로 1번만 구워두는 함수입니다.
     mutating func buildCaches() {
@@ -160,9 +161,15 @@ struct SettingsSnapshot {
             tempAppLaunch[key] = appLaunch
         }
         self.appLaunchShortcutCache = tempAppLaunch
-        self.cachedActiveTextExpansionRules = textExpansionRules
-            .filter { $0.isEnabled }
-            .sorted { $0.trigger.count > $1.trigger.count }
+        textExpansionDict.removeAll()
+        maxTriggerLength = 0
+        
+        for rule in textExpansionRules where rule.isEnabled {
+            textExpansionDict[rule.trigger] = rule
+            if rule.trigger.count > maxTriggerLength {
+                maxTriggerLength = rule.trigger.count
+            }
+        }
     }
 }
 

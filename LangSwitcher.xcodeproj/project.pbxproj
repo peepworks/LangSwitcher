@@ -198,6 +198,7 @@
 				128CF91C2FB439AE00B9672C /* DecisionTraceManager */,
 				1241A8BE2FAEEC0F0078CD5F /* SettingsManager */,
 				128F407B2FB93C81009B58AF /* Snippet */,
+				1261736A2FBAA757006D5EAE /* TextExpander */,
 				125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */,
 				12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */,
 				128CF91F2FB439EC00B9672C /* DecisionTraceManager.swift */,
@@ -209,7 +210,6 @@
 				129930792F679EBC00878827 /* SettingsManager.swift */,
 				129D74D32FA4329100227AD9 /* StatsManager.swift */,
 				12A6DB3A2FB191030000A927 /* TextExpander.swift */,
-				12A6DB382FB190ED0000A927 /* TextExpansionRule.swift */,
 				12242E2C2F933CA300690095 /* TypoConverter.swift */,
 				12744D562F89E66A0033C06A /* UpdateManager.swift */,
 			);
@@ -244,6 +244,14 @@
 			children = (
 			);
 			path = AppIcon;
+			sourceTree = "<group>";
+		};
+		1261736A2FBAA757006D5EAE /* TextExpander */ = {
+			isa = PBXGroup;
+			children = (
+				12A6DB382FB190ED0000A927 /* TextExpansionRule.swift */,
+			);
+			path = TextExpander;
 			sourceTree = "<group>";
 		};
 		1280BFF12FA1AFA6007FE696 /* Assets */ = {

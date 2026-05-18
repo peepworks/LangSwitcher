@@ -21,6 +21,7 @@ import Combine
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import AppIntents
 
 extension Notification.Name {
     static let profileDidSwitch = Notification.Name("LangSwitcherProfileDidSwitch")
@@ -41,8 +42,21 @@ class SettingsManager: ObservableObject {
     
     // MARK: - Global Settings (전역 설정)
     
-    @Published var isCtrlActive: Bool { didSet { save("isCtrlActive", isCtrlActive); scheduleSave() } }
-    @Published var isCmdActive: Bool { didSet { save("isCmdActive", isCmdActive); scheduleSave() } }
+    @Published var isCtrlActive: Bool {
+        didSet {
+            save("isCtrlActive", isCtrlActive)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            scheduleSave()
+        }
+    }
+    
+    @Published var isCmdActive: Bool {
+        didSet {
+            save("isCmdActive", isCmdActive)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            scheduleSave()
+        }
+    }
     @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive); scheduleSave() } }
     @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang); scheduleSave() } }
     @Published var cmdLang: String { didSet { save("cmdLang", cmdLang); scheduleSave() } }
@@ -51,7 +65,13 @@ class SettingsManager: ObservableObject {
     @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback); scheduleSave() } }
     @Published var isTestMode: Bool { didSet { save("isTestMode", isTestMode); updateSnapshot() } }
     
-    @Published var toggleKeyCode: UInt16 { didSet { save("toggleKeyCode", toggleKeyCode); updateSnapshot() } }
+    @Published var toggleKeyCode: UInt16 {
+        didSet {
+            save("toggleKeyCode", toggleKeyCode)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            updateSnapshot()
+        }
+    }
     @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags); updateSnapshot() } }
     @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString); updateSnapshot() } }
     
@@ -62,7 +82,12 @@ class SettingsManager: ObservableObject {
     private(set) var appLaunchShortcutCache: [ShortcutKey: AppLaunchShortcut] = [:]
 
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
-        didSet { HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled); updateSnapshot(); syncToCloud() }
+        didSet {
+            HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            updateSnapshot()
+            syncToCloud()
+        }
     }
     
     @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true { didSet { updateSnapshot() } }
@@ -94,20 +119,21 @@ class SettingsManager: ObservableObject {
     // 🌟 [핵심 수정] 프로필 전환 시 즉각적으로 엔진에 갱신을 지시하는 옵저버
     @Published var activeProfileID: UUID {
         didSet {
-            // 값이 실제로 변경되었을 때만 작동
             guard oldValue != activeProfileID else { return }
             
-            // 🌟 1. 이미 만들어두신 완벽한 갱신 파이프라인 호출!
-            // (내부에서 도메인 룰 동기화, 단축키 캐시 굽기, 엔진 스냅샷 최신화가 모두 이루어짐)
             applyActiveProfile()
-            
-            // 2. 다른 UI 컴포넌트나 매니저가 알 수 있도록 노티 발송
             NotificationCenter.default.post(name: .profileDidSwitch, object: nil)
             
-            // 3. 변경된 프로필 상태를 디스크/클라우드에 즉시 저장
             DispatchQueue.main.async {
                 self.saveAll()
                 self.syncToCloud()
+                
+                // 🌟 [추가] 프로필 전환 시 Siri 및 단축어 파라미터 최신화!
+                if #available(macOS 13.0, *) {
+                    Task {
+                        LangSwitcherShortcuts.updateAppShortcutParameters()
+                    }
+                }
             }
             
             print("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
@@ -127,6 +153,9 @@ class SettingsManager: ObservableObject {
     }
     
     private init() {
+        // 🌟 1. 초기화 데이터 붓기 시작! 연쇄 갱신 방어막을 가장 먼저 켭니다.
+        self.isBatchUpdating = true
+        
         let d = UserDefaults.standard
         
         // 1. 전역 설정 로드
@@ -137,7 +166,6 @@ class SettingsManager: ObservableObject {
         toggleDisplayString = d.string(forKey: "toggleDisplayString") ?? ""
         ctrlLang = d.string(forKey: "ctrlLang") ?? ""; cmdLang = d.string(forKey: "cmdLang") ?? ""; optLang = d.string(forKey: "optLang") ?? ""
         
-        // 🌟 [수정됨] 임시 변수를 사용하여 초기화 에러 우회
         var tempProfiles: [SettingsProfile] = []
         
         // 2. 프로필 데이터 로드 및 마이그레이션
@@ -189,12 +217,14 @@ class SettingsManager: ObservableObject {
             tempActiveID = savedID
         }
         
-        // 🌟 [핵심] 모든 임시 변수를 실제 프로퍼티에 한 번에 할당합니다.
+        // 모든 임시 변수를 실제 프로퍼티에 한 번에 할당합니다.
         self.profiles = tempProfiles
         self.activeProfileID = tempActiveID
         
-        // 4. 초기화 후 상태 반영
+        // 🌟 2. 초기화 후 상태 반영 (이 내부에서 방어막 해제 및 updateSnapshot() 1회 호출이 이루어짐)
         applyActiveProfile()
+        
+        // 🌟 3. 중복된 isBatchUpdating = false 및 updateSnapshot() 제거 완료
         
         NotificationCenter.default.addObserver(
             self,
@@ -217,20 +247,28 @@ class SettingsManager: ObservableObject {
         #endif
     }
     
-    // 🌟 [핵심] 프로필이 전환될 때 호출되는 통합 업데이트 메서드
+    // 🌟 [핵심] 프로필이 전환될 때 호출되는 통합 업데이트 메서드 (최적화 완료)
     func applyActiveProfile() {
+        // 1. 연쇄 업데이트 방어막 활성화
+        self.isBatchUpdating = true
+        
+        // 2. 함수 종료 시 방어막을 해제하고 스냅샷을 1회만 생성하도록 예약
+        defer {
+            self.isBatchUpdating = false
+            self.updateSnapshot()
+        }
+        
         let payload = activeProfile.payload
         
-        // 1. 도메인 룰 매니저 동기화
+        // 3. 도메인 룰 매니저 동기화
         DomainRuleManager.shared.rules = payload.domainRules
         
-        // 2. 단축키 캐시 굽기
+        // 4. 단축키 캐시 굽기
         updateShortcutCaches()
         
-        // 3. 엔진 스냅샷 최신화
-        updateSnapshot()
+        // (기존에 3번에 있던 updateSnapshot()은 위 defer 블록으로 이동하여 1회만 실행됨)
         
-        // 4. 프로필 전환 로그 기록 (디버거 연동용)
+        // 5. 프로필 전환 로그 기록 (디버거 연동용)
         let log = ActionLog(timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Profile Switched", finalInputSource: "Active Profile: \(activeProfile.name)", result: .success, failureReason: .none)
         addLog(log)
     }
@@ -299,6 +337,13 @@ class SettingsManager: ObservableObject {
             DispatchQueue.main.async {
                 self.updateSnapshot()
                 if !self.isBatchUpdating { self.syncToCloud() }
+                
+                // 🌟 [추가] 설정 변경이 디스크에 저장될 때 Siri 및 단축어 파라미터도 최신화!
+                if #available(macOS 13.0, *) {
+                    Task {
+                        LangSwitcherShortcuts.updateAppShortcutParameters()
+                    }
+                }
             }
         }
         saveWorkItem = workItem

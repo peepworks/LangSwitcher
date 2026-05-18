@@ -94,6 +94,13 @@ class EventMonitor {
                     }
                 }
                 
+                if let callback = EventMonitor.shared.shortcutRecordingCallback {
+                    if type == .keyDown || type == .flagsChanged {
+                        if let nsEvent = NSEvent(cgEvent: event) { DispatchQueue.main.async { callback(nsEvent) } }
+                        return nil
+                    }
+                }
+                
                 let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
 
                 if type == .keyDown {
@@ -128,7 +135,15 @@ class EventMonitor {
                     }
                 }
 
-                if isSimulated { return Unmanaged.passUnretained(event) }
+                // 🌟 [핵심 수정] 시뮬레이션 이벤트(가짜 입력) 필터링 및 방향키 예외 처리
+                if isSimulated {
+                    // 시뮬레이션 이벤트라도 커서 이동(←, →, ↓, ↑) 이벤트라면, 버퍼에 남은 찌꺼기를 지워줍니다.
+                    if type == .keyDown && (keyCode == 123 || keyCode == 124 || keyCode == 125 || keyCode == 126) {
+                        EventMonitor.shared.clearTypingBuffer()
+                    }
+                    // 무한 루프 방지를 위해 실제 이벤트 처리는 건너뛰고 그냥 통과시킵니다.
+                    return Unmanaged.passUnretained(event)
+                }
                 
                 if type == .keyDown {
                     if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
@@ -143,7 +158,11 @@ class EventMonitor {
                             
                             // 🌟 [수정] TextExpander 호출 시 스냅샷의 안전한 캐시 배열을 전달합니다.
                             if snapshot.isTextExpansionEnabled,
-                                let matchedRule = TextExpander.shared.findMatch(for: currentBuffer, rules: snapshot.cachedActiveTextExpansionRules) {
+                               let matchedRule = TextExpander.shared.findMatch(
+                                    for: currentBuffer,
+                                    dict: snapshot.textExpansionDict,
+                                    maxLength: snapshot.maxTriggerLength
+                               ) {
                                 
                                 // 🌟 1. 템플릿 렌더링 및 커서 위치 계산
                                 let renderedSnippet = TextExpander.shared.expand(template: matchedRule.replacement)
