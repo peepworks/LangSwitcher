@@ -277,6 +277,7 @@ class SettingsManager: ObservableObject {
         snapshotQueue.sync { _snapshot }
     }
         
+    @MainActor
     func updateSnapshot() {
         let payload = activeProfile.payload
         
@@ -433,7 +434,7 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // 🌟 프로필 전체 데이터 가져오기 (Import)
+    // 🌟 프로필 전체 데이터 가져오기 (Import) - 완벽한 에러 핸들링 적용
     func importProfiles() {
         let openPanel = NSOpenPanel()
         openPanel.allowedContentTypes = [.json]
@@ -449,17 +450,48 @@ class SettingsManager: ObservableObject {
                     let decoder = JSONDecoder()
                     let importedProfiles = try decoder.decode([SettingsProfile].self, from: data)
                     
-                    guard !importedProfiles.isEmpty else { return }
+                    // 🌟 [수정 1] 빈 파일(빈 배열)일 경우 무시하지 않고 사용자에게 경고창 띄우기
+                    guard !importedProfiles.isEmpty else {
+                        DispatchQueue.main.async {
+                            let alert = NSAlert()
+                            alert.messageText = String(localized: "Import Failed")
+                            alert.informativeText = String(localized: "The selected backup file is empty or contains no valid profiles.")
+                            alert.alertStyle = .warning
+                            NSApp.activate(ignoringOtherApps: true)
+                            alert.runModal()
+                        }
+                        return
+                    }
                     
                     DispatchQueue.main.async {
                         self.profiles = importedProfiles
                         if let firstProfile = importedProfiles.first {
                             self.activeProfileID = firstProfile.id
                         }
+                        
+                        // 🌟 성공 알림창 띄우기
+                        let alert = NSAlert()
+                        alert.messageText = String(localized: "Profiles Restore Successful")
+                        alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
+                        if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                            alert.icon = appIcon
+                        }
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
                     }
                     print("✅ Profiles successfully imported from \(url.lastPathComponent)")
+                    
                 } catch {
+                    // 🌟 [수정 2] 파싱 실패(에러) 시 콘솔에만 찍지 않고 크리티컬 에러창 띄우기
                     print("❌ Failed to import profiles: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        let alert = NSAlert()
+                        alert.messageText = String(localized: "Import Failed")
+                        alert.informativeText = String(localized: "Failed to read the backup file. It might be corrupted or in an unsupported format.\n\nError: \(error.localizedDescription)")
+                        alert.alertStyle = .critical // 빨간색 X 아이콘 표시
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
+                    }
                 }
             }
         }

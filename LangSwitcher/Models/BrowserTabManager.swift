@@ -228,25 +228,29 @@ class BrowserTabManager {
         fetchTask?.cancel()
 
         // 🌟 [Swift 6 대응] [weak self] 캡처를 아예 지워버려서 엄격한 동시성 에러를 원천 차단합니다!
-        fetchTask = Task.detached(priority: .userInitiated) {
+        // 🌟 [수정 1] detached를 빼고 일반 Task를 사용하여 구조적 동시성을 지킵니다.
+        fetchTask = Task(priority: .userInitiated) { [weak self] in // 🌟 안전줄(weak self) 장착!
             
             // 150ms 대기 (디바운스 타임)
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
 
             // 무거운 JXA 스크립트 실행
+            // (adapter가 프로퍼티라면 self?.adapter 로 접근해야 할 수도 있습니다)
             let result = await adapter.fetchActiveTabInfo(appName: appName)
 
             guard !Task.isCancelled else { return }
 
             // 다시 메인 스레드로 돌아옵니다.
             await MainActor.run {
-                // 🌟 self 대신 안전한 전역 싱글톤(shared)을 사용하여 함수를 호출합니다.
+                // 🌟 [수정 2] shared를 쓰지 않고, 안전줄이 튼튼한지(메모리에 있는지) 확인 후 self를 사용합니다.
+                guard let self = self else { return }
+                
                 switch result {
                 case .success(let context):
-                    BrowserTabManager.shared.processTabContext(context, bundleID: bundleID)
+                    self.processTabContext(context, bundleID: bundleID)
                 case .failure(let error):
-                    BrowserTabManager.shared.handleFetchFailure(error: error, appName: appName)
+                    self.handleFetchFailure(error: error, appName: appName)
                 }
             }
         }

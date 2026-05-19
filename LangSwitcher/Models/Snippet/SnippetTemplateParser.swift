@@ -19,33 +19,37 @@
 import Foundation
 
 struct SnippetTemplateParser {
-    /// 템플릿 문자열을 분석하여 토큰 배열로 변환합니다.
+    
+    // 🌟 [핵심 수정] 정규식 객체를 구조체 내부에 'static 상수'로 딱 한 번만 생성합니다.
+    // 패턴이 고정된 문자열이므로 문법 오류가 날 확률이 0%입니다. 따라서 try!를 써도 100% 안전합니다.
+    private static let snippetRegex = try! NSRegularExpression(pattern: "\\{\\{(.+?)\\}\\}", options: [])
+    
     static func parse(template: String) -> [SnippetToken] {
         var tokens: [SnippetToken] = []
         
-        // 정규식: {{ 와 }} 사이의 내용을 캡처 (최소 일치 탐색)
-        let pattern = "\\{\\{(.*?)\\}\\}"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            return [.text(template)]
-        }
+        let nsTemplate = template as NSString
+        let fullRange = NSRange(location: 0, length: nsTemplate.length)
         
-        let nsString = template as NSString
-        let results = regex.matches(in: template, options: [], range: NSRange(location: 0, length: nsString.length))
-        
+        // 🌟 [핵심 수정] 매번 새로 만들지 않고, 위에 만들어둔 snippetRegex를 재사용합니다.
+        let matches = snippetRegex.matches(in: template, options: [], range: fullRange)
+       
         var lastIndex = 0
         
-        for match in results {
+        // 🌟 변수명 수정: results -> matches
+        for match in matches {
             let matchRange = match.range
             
             // 1. 태그 이전의 일반 텍스트 추가
             if matchRange.location > lastIndex {
-                let textStr = nsString.substring(with: NSRange(location: lastIndex, length: matchRange.location - lastIndex))
+                // 🌟 변수명 수정: nsString -> nsTemplate
+                let textStr = nsTemplate.substring(with: NSRange(location: lastIndex, length: matchRange.location - lastIndex))
                 tokens.append(.text(textStr))
             }
             
             // 2. 캡처된 내용(태그 내부) 분석
             let contentRange = match.range(at: 1)
-            let content = nsString.substring(with: contentRange).trimmingCharacters(in: .whitespaces)
+            // 🌟 변수명 수정: nsString -> nsTemplate
+            let content = nsTemplate.substring(with: contentRange).trimmingCharacters(in: .whitespaces)
             
             if content.hasPrefix("date:") {
                 let format = String(content.dropFirst(5)).trimmingCharacters(in: .whitespaces)
@@ -66,8 +70,9 @@ struct SnippetTemplateParser {
         }
         
         // 3. 마지막 태그 이후의 남은 텍스트 추가
-        if lastIndex < nsString.length {
-            let textStr = nsString.substring(from: lastIndex)
+        // 🌟 변수명 수정: nsString -> nsTemplate
+        if lastIndex < nsTemplate.length {
+            let textStr = nsTemplate.substring(from: lastIndex)
             tokens.append(.text(textStr))
         }
         

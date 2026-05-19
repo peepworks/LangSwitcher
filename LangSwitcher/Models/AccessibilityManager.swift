@@ -98,6 +98,10 @@ class AccessibilityManager: ObservableObject {
     }
 
     func startMonitoring() {
+        // 🌟 [핵심 추가] 타이머를 만들기 전에, 이미 필수 권한(접근성)이 있는지 먼저 확인합니다.
+        // 권한이 이미 있다면 타이머를 생성조차 하지 않고 즉시 종료합니다.
+        guard !checkPermission(prompt: false) else { return }
+        
         // 이미 타이머가 존재하면 중복 생성하지 않고 무시합니다.
         guard timer == nil else { return }
         

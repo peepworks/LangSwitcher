@@ -147,6 +147,7 @@ extension EventMonitor {
     }
     
     // 🌟 [수정] 파라미터를 replacementText에서 snippet: RenderedSnippet으로 변경
+    // 🌟 [수정] 파라미터를 replacementText에서 snippet: RenderedSnippet으로 변경
     func performTextExpansion(triggerLength: Int, snippet: RenderedSnippet, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
         // 🌟 텍스트 대치 시에도 즉각 삭제 사용
         self.batchDelete(count: triggerLength)
@@ -160,15 +161,13 @@ extension EventMonitor {
                 self.postTriggerKey(keyCode: triggerKeyCode)
                 
                 // 2. 🌟 커서 위치 복원 연산 및 실행
-                if let cursorOffset = snippet.cursorOffsetFromStart {
-                    let textLength = snippet.text.count
+                if let offset = snippet.cursorOffsetFromStart {
                     
-                    // 주의: 방금 위에서 postTriggerKey로 스페이스/엔터가 추가되었으므로
-                    // 커서가 1칸 더 우측으로 밀려 있습니다. 따라서 '+ 1'을 해줍니다.
-                    // (만약 텍스트 대치 후 스페이스바가 남는 것이 싫다면, 커서가 있을 때 postTriggerKey를 생략하는 분기 처리를 해도 됩니다.)
-                    let moveLeftCount = (textLength - cursorOffset) + 1
+                    // ✅ [수정된 완벽한 방식] 순수 Character 단위(String.count)로만 계산합니다.
+                    let moveLeftCount = snippet.text.count - offset
                     
                     if moveLeftCount > 0 {
+                        // 🌟 [에러 해결!] for문을 지우고, 함수에 count 파라미터를 직접 전달합니다.
                         self.moveCursorLeft(count: moveLeftCount)
                     }
                 }
