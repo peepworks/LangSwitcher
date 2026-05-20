@@ -136,12 +136,21 @@ class WindowMonitor {
     @objc private func inputSourceChanged() {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element),
               let latestID = self.getCurrentInputSourceID() else { return }
-        let pid = self.currentPID
+        
+        // ❌ 기존에 바깥에 있던 let pid = self.currentPID 삭제 완료
+        
         stateQueue.async(flags: .barrier) { [weak self] in
+            // 🌟 옵셔널 체이닝(self?) 대신 캡처된 self를 확실하게 풀어줍니다.
+            guard let self = self else { return }
+            
+            // 🌟 [핵심 수정] 배리어 블록(안전 구역) 안으로 들어온 직후에,
+            // 가장 최신의 _currentPID 값을 직접 읽어옵니다! (TOCTOU 경합 완벽 차단)
+            let currentPID = self._currentPID
+            
             // 🌟 [핵심 변경 6] 언어가 변경되었을 때 캐시의 값만 덮어쓰기 (O(1))
-            // (getLanguage를 통해 존재하는지 확인 후 세팅)
-            if self?.windowMemory.getLanguage(for: windowID) != nil {
-                self?.windowMemory.setLanguage(latestID, pid: pid, for: windowID)
+            if self.windowMemory.getLanguage(for: windowID) != nil {
+                // 방금 읽어온 가장 신선한 currentPID를 사용하여 캐시를 업데이트합니다.
+                self.windowMemory.setLanguage(latestID, pid: currentPID, for: windowID)
             }
         }
     }

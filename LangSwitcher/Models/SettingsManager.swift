@@ -326,7 +326,13 @@ class SettingsManager: ObservableObject {
     func addLog(_ log: ActionLog) {
         DispatchQueue.main.async {
             self.recentLogs.insert(log, at: 0)
-            while self.recentLogs.count > 50 { self.recentLogs.removeLast() }
+            // 🌟 [핵심 개선] 앱 장기 사용 시 메모리 폭발과 Stats 화면 로딩 지연 방지
+            // 로그 최대 보관 개수를 5,000개(또는 적절한 수치)로 상한 설정!
+            let maxLogCount = 5000
+            if self.recentLogs.count > maxLogCount {
+                // 가장 오래된 뒤쪽 데이터들을 한꺼번에 잘라냅니다.
+                self.recentLogs.removeLast(self.recentLogs.count - maxLogCount)
+            }
         }
     }
     

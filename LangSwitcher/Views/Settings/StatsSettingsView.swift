@@ -45,6 +45,7 @@ struct StatsSettingsView: View {
     @State private var selectedDateString: String? = nil
     @State private var animateChart = false
     
+    // 🌟 [핵심 개선] 데이터가 아무리 커져도 렉이 걸리지 않도록 최적화된 필터링 로직
     var filteredStats: [DailyStat] {
         var result: [DailyStat] = []
         let calendar = Calendar.current
@@ -57,18 +58,24 @@ struct StatsSettingsView: View {
         case .week: daysToFetch = 7
         case .month: daysToFetch = 30
         case .all:
-            let sorted = statsManager.dailyStats.sorted { $0.dateString < $1.dateString }
-            if let first = sorted.first, let firstDate = formatter.date(from: first.dateString) {
+            // 🌟 1. 전체 검색 시 lazy를 적용하여 연산 비용을 줄입니다.
+            let sortedDates = statsManager.dailyStats.lazy.map { $0.dateString }.sorted()
+            if let first = sortedDates.first, let firstDate = formatter.date(from: first) {
                 daysToFetch = max(1, calendar.dateComponents([.day], from: firstDate, to: today).day ?? 1) + 1
             } else {
                 daysToFetch = 7
             }
         }
         
+        // 🌟 2. O(N) 탐색인 .first(where:)의 반복 호출을 막기 위해
+        // 배열을 딕셔너리로 변환하여 룩업(Lookup) 속도를 O(1)로 극대화합니다!
+        let statsDict = Dictionary(uniqueKeysWithValues: statsManager.dailyStats.map { ($0.dateString, $0) })
+        
         for i in (0..<daysToFetch).reversed() {
             if let date = calendar.date(byAdding: .day, value: -i, to: today) {
                 let dateString = formatter.string(from: date)
-                if let existingStat = statsManager.dailyStats.first(where: { $0.dateString == dateString }) {
+                // 🌟 3. 배열 전체를 뒤지지 않고 딕셔너리에서 한 번에 쏙 뽑아옵니다.
+                if let existingStat = statsDict[dateString] {
                     result.append(existingStat)
                 } else {
                     result.append(DailyStat(dateString: dateString, languageSwitches: 0, typoCorrections: 0))

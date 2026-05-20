@@ -50,23 +50,25 @@ class TextExpander {
     
     // 🌟 딕셔너리(dict)를 받아 O(1) 속도로 탐색하는 함수
     func findMatch(for buffer: String, dict: [String: TextExpansionRule], maxLength: Int) -> TextExpansionRule? {
-        guard maxLength > 0, !buffer.isEmpty else { return nil }
-
+        // 버퍼가 비어있거나 찾을 길이가 없으면 즉시 종료
+        guard !buffer.isEmpty, maxLength > 0 else { return nil }
+        
         let checkLength = min(buffer.count, maxLength)
         
-        // 🌟 [핵심 개선] 거대한 buffer에서 딱 필요한 길이만큼의 꼬리(Substring)를 한 번만 잘라냅니다.
-        // 이 tail은 원본 buffer의 메모리를 공유하므로 생성 비용이 0(Zero)에 가깝습니다.
+        // 🌟 [핵심 개선] 거대한 원본 buffer 대신, 끝에서부터 필요한 만큼만
+        // 메모리를 공유하는 투명한 창문(Substring)을 딱 한 번만 만듭니다. (비용 0)
         let tail = buffer.suffix(checkLength)
         
         for length in stride(from: checkLength, through: 1, by: -1) {
-            // 거대한 buffer 대신, 이미 짧아진 tail 안에서 자르므로 CPU 연산이 비약적으로 빠릅니다.
+            // 이미 짧아진 tail 안에서 자르므로 CPU와 메모리 소모가 거의 없습니다.
             let suffix = String(tail.suffix(length))
             
-            // O(1) 딕셔너리 룩업
-            if let rule = dict[suffix] {
+            // 🌟 [추가됨] 딕셔너리에서 규칙을 찾고, 그 규칙이 '켜져 있을 때(isEnabled)'만 반환합니다.
+            if let rule = dict[suffix], rule.isEnabled {
                 return rule
             }
         }
+        
         return nil
     }
 }
