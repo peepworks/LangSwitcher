@@ -71,6 +71,16 @@
 		12F1EF5D2F67BDD3003B94B0 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 12F1EF5C2F67BDD3003B94B0 /* InfoPlist.xcstrings */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		12FA98D12FBD3DF2007698BE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 129E05182F657B5200F34ABE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 129E051F2F657B5200F34ABE;
+			remoteInfo = LangSwitcher;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		1214453E2FB1863300BAD265 /* State.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = State.swift; sourceTree = "<group>"; };
 		121445402FB1864900BAD265 /* Handlers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Handlers.swift; sourceTree = "<group>"; };
@@ -137,7 +147,16 @@
 		12F080512F67942F005A8424 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 		12F1EF5A2F67B98A003B94B0 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		12F1EF5C2F67BDD3003B94B0 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
+		12FA98CD2FBD3DF2007698BE /* LangSwitcherTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangSwitcherTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		12FA98CE2FBD3DF2007698BE /* LangSwitcherTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = LangSwitcherTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		129E051D2F657B5200F34ABE /* Frameworks */ = {
@@ -146,6 +165,13 @@
 			files = (
 				12F080522F67942F005A8424 /* Carbon.framework in Frameworks */,
 				12F080502F679423005A8424 /* ServiceManagement.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		12FA98CA2FBD3DF2007698BE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -296,6 +322,7 @@
 			isa = PBXGroup;
 			children = (
 				129E05312F657B6A00F34ABE /* LangSwitcher */,
+				12FA98CE2FBD3DF2007698BE /* LangSwitcherTests */,
 				12F0804E2F679423005A8424 /* Frameworks */,
 				129E05212F657B5200F34ABE /* Products */,
 			);
@@ -305,6 +332,7 @@
 			isa = PBXGroup;
 			children = (
 				129E05202F657B5200F34ABE /* LangSwitcher.app */,
+				12FA98CD2FBD3DF2007698BE /* LangSwitcherTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -381,6 +409,29 @@
 			productReference = 129E05202F657B5200F34ABE /* LangSwitcher.app */;
 			productType = "com.apple.product-type.application";
 		};
+		12FA98CC2FBD3DF2007698BE /* LangSwitcherTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 12FA98D32FBD3DF2007698BE /* Build configuration list for PBXNativeTarget "LangSwitcherTests" */;
+			buildPhases = (
+				12FA98C92FBD3DF2007698BE /* Sources */,
+				12FA98CA2FBD3DF2007698BE /* Frameworks */,
+				12FA98CB2FBD3DF2007698BE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				12FA98D22FBD3DF2007698BE /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				12FA98CE2FBD3DF2007698BE /* LangSwitcherTests */,
+			);
+			name = LangSwitcherTests;
+			packageProductDependencies = (
+			);
+			productName = LangSwitcherTests;
+			productReference = 12FA98CD2FBD3DF2007698BE /* LangSwitcherTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -388,12 +439,16 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2630;
+				LastSwiftUpdateCheck = 2650;
 				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					129E051F2F657B5200F34ABE = {
 						CreatedOnToolsVersion = 26.3;
 						LastSwiftMigration = 2630;
+					};
+					12FA98CC2FBD3DF2007698BE = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 129E051F2F657B5200F34ABE;
 					};
 				};
 			};
@@ -413,6 +468,7 @@
 			projectRoot = "";
 			targets = (
 				129E051F2F657B5200F34ABE /* LangSwitcher */,
+				12FA98CC2FBD3DF2007698BE /* LangSwitcherTests */,
 			);
 		};
 /* End PBXProject section */
@@ -427,6 +483,13 @@
 				125FF5242F6599E0005DAB0C /* Assets.xcassets in Resources */,
 				122AA3F12F9DA544006297F4 /* ClickHigh.mp3 in Resources */,
 				122AA3F22F9DA544006297F4 /* ClickLow.mp3 in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		12FA98CB2FBD3DF2007698BE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -495,7 +558,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		12FA98C92FBD3DF2007698BE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		12FA98D22FBD3DF2007698BE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 129E051F2F657B5200F34ABE /* LangSwitcher */;
+			targetProxy = 12FA98D12FBD3DF2007698BE /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		129E05292F657B5400F34ABE /* Debug */ = {
@@ -710,6 +788,48 @@
 			};
 			name = Release;
 		};
+		12FA98D42FBD3DF2007698BE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8P729AC286;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = peepboy.LangSwitcherTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LangSwitcher.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LangSwitcher";
+			};
+			name = Debug;
+		};
+		12FA98D52FBD3DF2007698BE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8P729AC286;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = peepboy.LangSwitcherTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LangSwitcher.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LangSwitcher";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -727,6 +847,15 @@
 			buildConfigurations = (
 				129E052C2F657B5400F34ABE /* Debug */,
 				129E052D2F657B5400F34ABE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		12FA98D32FBD3DF2007698BE /* Build configuration list for PBXNativeTarget "LangSwitcherTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				12FA98D42FBD3DF2007698BE /* Debug */,
+				12FA98D52FBD3DF2007698BE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -111,19 +111,23 @@ class EdgeGlowManager {
         }
         
         // 🌟 [핵심 4] 타자를 칠 때마다 이 '꺼짐 예약'이 계속 새로 세팅됩니다.
-        // 0.8초 동안 아무 입력이 없어야 비로소 애니메이션이 실행되며 꺼집니다.
-        // 🌟 [핵심 4] 타자를 칠 때마다 이 '꺼짐 예약'이 계속 새로 세팅됩니다.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+        // Swift 6의 최신 동시성 문법인 Task를 사용하면 코드가 훨씬 안전해집니다.
+        Task { @MainActor in
+            // 0.8초 대기 (800,000,000 나노초)
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            
+            // 대기 후, 다른 입력이 들어와서 내 ID가 바뀌었다면 무시
             guard self.currentGlowID == myID else { return }
             
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
                 window.animator().alphaValue = 0
-            } completionHandler: {
-                // 🌟 [수정됨] 컴파일러의 Strict Concurrency 에러를 해결하기 위해
-                // 메인 큐로 다시 한번 확실하게 감싸줍니다!
-                DispatchQueue.main.async {
-                    guard self.currentGlowID == myID else { return }
+            } completionHandler: { [weak self] in
+                // 🌟 리뷰어 요구: "비동기 딜레이(async) 없이 즉시 실행해!"
+                // 🌟 컴파일러 요구: "지금 메인 스레드인지 증명해!"
+                // 이 두 가지를 완벽하게 만족하는 Swift 6 정답 코드입니다.
+                MainActor.assumeIsolated {
+                    guard let self = self, self.currentGlowID == myID else { return }
                     self.isCurrentlyGlowing = false
                     window.orderOut(nil)
                 }

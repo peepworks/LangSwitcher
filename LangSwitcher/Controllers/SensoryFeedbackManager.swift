@@ -43,18 +43,19 @@ class SensoryFeedbackManager {
                 let baseSound = isKorean ? self.soundKorean : self.soundEnglish
                 
                 // 🌟 [핵심 수정] 원본을 멈추지 않고 복제본(clone)을 생성하여 재생합니다.
-                // 이렇게 하면 빠르게 연타해도 소리가 뚝뚝 끊기지 않고 자연스럽게 겹쳐서(Overlapping) 들립니다.
-                // 1. 사운드 복사를 시도하고 성공하면 재생합니다.
-                if let soundClone = baseSound?.copy() as? NSSound {
-                    soundClone.play()
+                // 1순위: 복사본을 만든다. (빠르게 연타해도 소리가 겹치도록)
+                // 2순위: 시스템 리소스 부족 등으로 복사에 실패하면(??), 원본(baseSound)을 대신 쓴다.
+                let soundToPlay = (baseSound?.copy() as? NSSound) ?? baseSound
+                
+                // 찾아낸 소리(복사본 혹은 원본)를 재생한다.
+                soundToPlay?.play()
+                
+                // 만약 baseSound 자체가 아예 없다면(파일 유실 등) 디버그 로그 출력
+                #if DEBUG
+                if soundToPlay == nil {
+                    print("⚠️ [SensoryFeedbackManager] 사운드 재생 실패: baseSound 파일 자체를 찾을 수 없습니다.")
                 }
-                // 2. 만약 복사에 실패했다면?
-                else {
-                    // 🌟 개발 모드에서만 실행되는 경고 로그
-                    #if DEBUG
-                    print("⚠️ [SensoryFeedbackManager] 사운드 재생 실패: NSSound.copy()에 실패했거나 baseSound가 없습니다.")
-                    #endif
-                }
+                #endif
             }
         }
     }

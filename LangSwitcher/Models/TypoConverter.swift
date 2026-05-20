@@ -222,7 +222,7 @@ class TypoConverter {
     }
 
     // MARK: - 한/영 변환 오토마타 로직
-    private func convertToKo(_ englishText: String) -> String {
+    func convertToKo(_ englishText: String) -> String {
         let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
         let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
         let jongs = Array(" ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
@@ -230,47 +230,95 @@ class TypoConverter {
         let doubleJungs: [String: String] = ["ㅗㅏ":"ㅘ", "ㅗㅐ":"ㅙ", "ㅗㅣ":"ㅚ", "ㅜㅓ":"ㅝ", "ㅜㅔ":"ㅞ", "ㅜㅣ":"ㅟ", "ㅡㅣ":"ㅢ"]
         let engToKor: [Character: Character] = ["q":"ㅂ","w":"ㅈ","e":"ㄷ","r":"ㄱ","t":"ㅅ","y":"ㅛ","u":"ㅕ","i":"ㅑ","o":"ㅐ","p":"ㅔ","a":"ㅁ","s":"ㄴ","d":"ㅇ","f":"ㄹ","g":"ㅎ","h":"ㅗ","j":"ㅓ","k":"ㅏ","l":"ㅣ","z":"ㅋ","x":"ㅌ","c":"ㅊ","v":"ㅍ","b":"ㅠ","n":"ㅜ","m":"ㅡ","Q":"ㅃ","W":"ㅉ","E":"ㄸ","R":"ㄲ","T":"ㅆ","O":"ㅒ","P":"ㅖ"]
 
-        var result = ""; var cho = ""; var jung = ""; var jong = ""
-        func commit() {
-            if !cho.isEmpty && !jung.isEmpty {
-                let cIdx = chos.firstIndex(of: Character(cho)) ?? 0; let juIdx = jungs.firstIndex(of: Character(jung)) ?? 0; let joIdx = jong.isEmpty ? 0 : (jongs.firstIndex(of: Character(jong)) ?? 0)
+        var result = ""
+        var cho = ""
+        var jung = ""
+        var jong = ""
+        
+        // 🌟 [핵심 1] 외부 변수(cho, jung, jong)를 건드리지 않고, 파라미터(c, ju, jo)로 받아서 결과만 result에 붙입니다.
+        func commit(c: String, ju: String, jo: String) {
+            if !c.isEmpty && !ju.isEmpty {
+                let cIdx = chos.firstIndex(of: Character(c)) ?? 0
+                let juIdx = jungs.firstIndex(of: Character(ju)) ?? 0
+                let joIdx = jo.isEmpty ? 0 : (jongs.firstIndex(of: Character(jo)) ?? 0)
                 let uni = ((cIdx * 21) + juIdx) * 28 + joIdx + 0xAC00
                 if let scalar = UnicodeScalar(uni) { result.append(Character(scalar)) }
-            } else { result += cho + jung + jong }
-            cho = ""; jung = ""; jong = ""
+            } else {
+                result += c + ju + jo
+            }
         }
 
-        let chars = Array(englishText); var i = 0
+        let chars = Array(englishText)
+        var i = 0
+        
         while i < chars.count {
-            let c = chars[i]; guard let korChar = engToKor[c] else { commit(); result.append(c); i += 1; continue }
-            let kor = String(korChar); let isVowel = jungs.contains(korChar)
+            let c = chars[i]
+            guard let korChar = engToKor[c] else {
+                // 🌟 [핵심 2] 현재 상태를 commit에 넘기고, 밖에서 변수들을 초기화합니다.
+                commit(c: cho, ju: jung, jo: jong)
+                cho = ""; jung = ""; jong = ""
+                
+                result.append(c)
+                i += 1
+                continue
+            }
+            
+            let kor = String(korChar)
+            let isVowel = jungs.contains(korChar)
+            
             if !isVowel {
                 if cho.isEmpty { cho = kor }
-                else if jung.isEmpty { commit(); cho = kor }
+                else if jung.isEmpty {
+                    commit(c: cho, ju: jung, jo: jong)
+                    cho = kor; jung = ""; jong = ""
+                }
                 else {
                     var nextIsVowel = false
                     if i + 1 < chars.count, let n = engToKor[chars[i+1]], jungs.contains(n) { nextIsVowel = true }
-                    if nextIsVowel { commit(); cho = kor }
+                    
+                    if nextIsVowel {
+                        commit(c: cho, ju: jung, jo: jong)
+                        cho = kor; jung = ""; jong = ""
+                    }
                     else {
                         if jong.isEmpty { jong = kor }
                         else if let combined = doubleJongs[jong + kor] { jong = combined }
-                        else { commit(); cho = kor }
+                        else {
+                            commit(c: cho, ju: jung, jo: jong)
+                            cho = kor; jung = ""; jong = ""
+                        }
                     }
                 }
             } else {
                 if cho.isEmpty || jong.isEmpty {
                     if jung.isEmpty { jung = kor }
                     else if let combined = doubleJungs[jung + kor] { jung = combined }
-                    else { commit(); jung = kor }
+                    else {
+                        commit(c: cho, ju: jung, jo: jong)
+                        cho = ""; jung = kor; jong = ""
+                    }
                 } else {
                     let splitJongs: [String: (String, String)] = ["ㄳ":("ㄱ","ㅅ"), "ㄵ":("ㄴ","ㅈ"), "ㄶ":("ㄴ","ㅎ"), "ㄺ":("ㄹ","ㄱ"), "ㄻ":("ㄹ","ㅁ"), "ㄼ":("ㄹ","ㅂ"), "ㄽ":("ㄹ","ㅅ"), "ㄾ":("ㄹ","ㅌ"), "ㄿ":("ㄹ","ㅍ"), "ㅀ":("ㄹ","ㅎ"), "ㅄ":("ㅂ","ㅅ")]
-                    if let split = splitJongs[jong] { jong = split.0; commit(); cho = split.1; jung = kor }
-                    else { let nCho = jong; jong = ""; commit(); cho = nCho; jung = kor }
+                    
+                    // 🌟 [핵심 3] 리뷰어가 지적한 겹받침 분리(splitJongs) 구간의 위험성 제거!
+                    // 이전 글자를 조립할 때 쪼개진 앞부분(split.0)을 파라미터로 안전하게 꽂아 넣습니다.
+                    if let split = splitJongs[jong] {
+                        commit(c: cho, ju: jung, jo: split.0)
+                        cho = split.1; jung = kor; jong = ""
+                    }
+                    else {
+                        commit(c: cho, ju: jung, jo: "")
+                        cho = jong; jung = kor; jong = ""
+                    }
                 }
             }
             i += 1
         }
-        commit(); return result
+        
+        // 마지막 남은 글자 처리
+        commit(c: cho, ju: jung, jo: jong)
+        
+        return result
     }
 
     private func convertToEn(_ koreanText: String) -> String {

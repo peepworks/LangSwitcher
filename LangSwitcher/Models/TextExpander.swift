@@ -48,19 +48,21 @@ class TextExpander {
         return SnippetVariableRenderer.render(tokens: tokens)
     }
     
-    // 🌟 [핵심] 배열(rules) 대신 딕셔너리(dict)를 받아 O(1) 속도로 탐색합니다.
+    // 🌟 딕셔너리(dict)를 받아 O(1) 속도로 탐색하는 함수
     func findMatch(for buffer: String, dict: [String: TextExpansionRule], maxLength: Int) -> TextExpansionRule? {
-        // 최대 트리거 길이와 버퍼가 비어있지 않은지 안전 검사
         guard maxLength > 0, !buffer.isEmpty else { return nil }
 
-        // 버퍼 길이와 최대 트리거 길이 중 작은 값을 시작점으로 잡습니다.
         let checkLength = min(buffer.count, maxLength)
         
-        // 예: maxLength가 5라면, 버퍼의 끝 5글자 -> 4글자 -> 3글자 순으로 잘라내며 딕셔너리에서 찾습니다.
+        // 🌟 [핵심 개선] 거대한 buffer에서 딱 필요한 길이만큼의 꼬리(Substring)를 한 번만 잘라냅니다.
+        // 이 tail은 원본 buffer의 메모리를 공유하므로 생성 비용이 0(Zero)에 가깝습니다.
+        let tail = buffer.suffix(checkLength)
+        
         for length in stride(from: checkLength, through: 1, by: -1) {
-            let suffix = String(buffer.suffix(length))
+            // 거대한 buffer 대신, 이미 짧아진 tail 안에서 자르므로 CPU 연산이 비약적으로 빠릅니다.
+            let suffix = String(tail.suffix(length))
             
-            // 딕셔너리 룩업은 규칙이 몇 개든 O(1) 즉시 탐색입니다.
+            // O(1) 딕셔너리 룩업
             if let rule = dict[suffix] {
                 return rule
             }
