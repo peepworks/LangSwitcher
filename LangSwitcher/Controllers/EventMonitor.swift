@@ -248,4 +248,14 @@ class EventMonitor {
         if let source = runLoopSource, let rl = eventRunLoop { CFRunLoopRemoveSource(rl, source, .commonModes) }
         eventTap = nil; runLoopSource = nil; eventRunLoop = nil
     }
+    
+    func targetLangIfPressed(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> String? {
+        let snapshot = SettingsManager.shared.snapshot
+        if keyCode == 49 { // Spacebar
+            if flags == .control && snapshot.isCtrlActive { return snapshot.ctrlLang }
+            if flags == .command && snapshot.isCmdActive { return snapshot.cmdLang }
+            if flags == .option && snapshot.isOptActive { return snapshot.optLang }
+        }
+        return nil
+    }
 }

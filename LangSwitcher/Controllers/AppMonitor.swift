@@ -64,7 +64,7 @@ class AppMonitor {
         }
         
         // ----------------------------------------------------
-        // 🌟 2. [핵심 2] 앱 비활성화(Deactivate) 감지 추가!
+        // 2. 앱 비활성화(Deactivate) 감지
         // ----------------------------------------------------
         deactivateObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didDeactivateApplicationNotification,
@@ -74,13 +74,14 @@ class AppMonitor {
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   let bundleID = app.bundleIdentifier else { return }
 
-            // 🌟 브라우저에서 다른 앱으로 빠져나가는 순간인지 확인합니다.
+            // 🌟 [추가됨] 앱이 비활성화되는 순간 미니 플래그를 즉시 숨깁니다.
+            HUDManager.shared.hideCursorMiniHUD()
+
+            // 브라우저에서 다른 앱으로 빠져나가는 순간인지 확인
             let browserIDs = ["com.apple.Safari", "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"]
             
             if browserIDs.contains(bundleID) {
                 Task { @MainActor in
-                    // 🌟 브라우저 매니저에게 "현재 탭 정보를 저장하고 머릿속을 비워!" 라고 명령합니다.
-                    // 이렇게 해야 다음에 다시 브라우저로 돌아왔을 때 규칙을 100% 재검사합니다.
                     BrowserTabManager.shared.handleBrowserDeactivated()
                 }
             }

@@ -143,4 +143,13 @@ class InputSourceManager: ObservableObject {
         // 해당 입력 소스로 전환
         TISSelectInputSource(source)
     }
+    // 클래스 내부의 가장 아래쪽 } 바로 위에 추가
+    var currentInputSourceName: String {
+        // 현재 선택된 소스의 이름 반환
+        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let namePtr = TISGetInputSourceProperty(currentSource, kTISPropertyLocalizedName) else {
+            return "Unknown"
+        }
+        return Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
+    }
 }

@@ -49,22 +49,24 @@ struct GeneralSettingsView: View {
                         
                         Divider().padding(.horizontal, 15)
                         
-                        // 시각적 피드백 (HUD)
-                        SettingToggleRow(title: String(localized: "Show visual feedback"), isOn: $settings.showVisualFeedback)
+                        // 시각적 피드백 (화면 중앙 큰 알림)
+                        SettingToggleRow(
+                            title: String(localized: "Show visual feedback on center"),
+                            isOn: $settings.showVisualFeedback
+                        )
                         
-                        // 시각 피드백이 켜져 있을 때만 미니 플래그 옵션 표시
-                        if settings.showVisualFeedback {
-                            SettingToggleRow(
-                                title: String(localized: "Show mini flag near text cursor"),
-                                isOn: $settings.isCursorHUDEnabled
-                            )
-                            .padding(.leading, 20) // 하위 옵션 느낌을 주기 위한 들여쓰기
-                        }
-                        
-                        // 🌟 [핵심 수정] if문 밖으로 꺼내어 독립적인 구분선 추가
                         Divider().padding(.horizontal, 15)
-                                                    
-                        // 🌟 [핵심 수정] 노치 엣지 글로우 옵션 (들여쓰기 제거 및 독립 레벨 배치)
+                        
+                        // 🌟 [수정] if문을 제거하고 완전히 독립적인 옵션으로 승격!
+                        // 커서 위치 미니 플래그
+                        SettingToggleRow(
+                            title: String(localized: "Show mini flag near text cursor"),
+                            isOn: $settings.isCursorHUDEnabled
+                        )
+                        
+                        Divider().padding(.horizontal, 15)
+                        
+                        // 노치 엣지 글로우 옵션
                         SettingToggleRow(
                             title: String(localized: "Enable Notch Edge Glow"),
                             isOn: $settings.isEdgeGlowEnabled

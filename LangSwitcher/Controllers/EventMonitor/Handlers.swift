@@ -175,16 +175,24 @@ extension EventMonitor {
             else if flags == .option && snapshot.isOptActive { targetLang = snapshot.optLang; appliedRule = "Default Shortcut" }
         }
 
-        if isToggle || targetAppBundleID != nil || targetLang != nil {
-            EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-            
-            if isToggle { return nil } // 토글 동작시 차단
-            
-            // 🌟 [요청사항 반영] 오직 '앱 실행 단축키'일 때만 시스템 이벤트 무효화
-            if targetAppBundleID != nil { return nil }
-            
-            return Unmanaged.passUnretained(event) // 커스텀 단축키 및 기본 단축키는 그대로 통과
-        }
-        return Unmanaged.passUnretained(event)
+         // [수정된 코드]
+         // 1. 실제 언어 전환이 일어나는 경우
+         if isToggle || targetAppBundleID != nil || targetLang != nil {
+             EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+             
+             if isToggle { return nil }
+             if targetAppBundleID != nil { return nil }
+             return Unmanaged.passUnretained(event)
+         }
+         // 2. 🌟 [신규] 언어 전환은 없지만, 단축키 입력은 감지된 경우 (이미 같은 언어인 상황)
+         else if let _ = targetLangIfPressed(keyCode: keyCode, flags: flags),
+                   SettingsManager.shared.snapshot.isCursorHUDEnabled {
+             
+             // InputSourceManager에서 현재 사용 중인 이름을 가져와 사용합니다.
+             let langName = InputSourceManager.shared.currentInputSourceName
+             HUDManager.shared.showHUD(languageName: langName)
+         }
+
+         return Unmanaged.passUnretained(event)
     }
 }
