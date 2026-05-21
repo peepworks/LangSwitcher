@@ -20,9 +20,11 @@ import Cocoa
 
 class AppMonitor {
     static let shared = AppMonitor()
-    private var observer: NSObjectProtocol?
     
-    // 🌟 EventMonitor 등 외부에서 안전하게 읽을 수 있도록 동시성 큐와 공유 상태 추가
+    private var observer: NSObjectProtocol?
+    // 🌟 [핵심 1] 앱이 백그라운드로 밀려나는 것을 감지할 새로운 옵저버
+    private var deactivateObserver: NSObjectProtocol?
+    
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.appmonitor", attributes: .concurrent)
     private var _activeAppBundleID: String = ""
     var activeAppBundleID: String {
@@ -35,10 +37,11 @@ class AppMonitor {
     func start() {
         if observer != nil { return }
         
-        // 시작 시점의 현재 활성 앱 정보 초기화
         activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         
-        // 🌟 시스템 전체에서 오직 AppMonitor만 이 알림을 단일 구독합니다.
+        // ----------------------------------------------------
+        // 1. 앱 활성화(Activate) 감지 - (기존 코드 유지)
+        // ----------------------------------------------------
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -47,12 +50,40 @@ class AppMonitor {
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   let bundleID = app.bundleIdentifier else { return }
 
-            // 공유 상태 업데이트
             AppMonitor.shared.activeAppBundleID = bundleID
             
-            // 🌟 [핵심] 불안정한 0.1초 하드코딩 딜레이를 모두 삭제하고,
-            // 가장 정확한 타이밍을 아는 WindowMonitor에게 윈도우 감지 및 언어 전환 역할을 전적으로 위임합니다.
-            WindowMonitor.shared.observeApp(pid: app.processIdentifier)
+            let appDelay = SettingsManager.shared.snapshot.appDelays.first(where: { $0.bundleIdentifier == bundleID })?.delay ?? 0.3
+            
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(appDelay * 1_000_000_000))
+                guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID else { return }
+                
+                // Swift 6: await 키워드를 통한 비동기 위임
+                await WindowMonitor.shared.observeApp(pid: app.processIdentifier)
+            }
+        }
+        
+        // ----------------------------------------------------
+        // 🌟 2. [핵심 2] 앱 비활성화(Deactivate) 감지 추가!
+        // ----------------------------------------------------
+        deactivateObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didDeactivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bundleID = app.bundleIdentifier else { return }
+
+            // 🌟 브라우저에서 다른 앱으로 빠져나가는 순간인지 확인합니다.
+            let browserIDs = ["com.apple.Safari", "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"]
+            
+            if browserIDs.contains(bundleID) {
+                Task { @MainActor in
+                    // 🌟 브라우저 매니저에게 "현재 탭 정보를 저장하고 머릿속을 비워!" 라고 명령합니다.
+                    // 이렇게 해야 다음에 다시 브라우저로 돌아왔을 때 규칙을 100% 재검사합니다.
+                    BrowserTabManager.shared.handleBrowserDeactivated()
+                }
+            }
         }
     }
 
@@ -60,6 +91,11 @@ class AppMonitor {
         if let obs = observer {
             NSWorkspace.shared.notificationCenter.removeObserver(obs)
             observer = nil
+        }
+        // 🌟 [핵심 3] 종료 시 deactivateObserver도 함께 메모리에서 해제합니다.
+        if let deactObs = deactivateObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(deactObs)
+            deactivateObserver = nil
         }
         activeAppBundleID = ""
     }

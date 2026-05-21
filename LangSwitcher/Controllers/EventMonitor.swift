@@ -137,10 +137,10 @@ class EventMonitor {
 
                 // 🌟 [핵심 수정] 시뮬레이션 이벤트(가짜 입력) 필터링 및 방향키 예외 처리
                 if isSimulated {
-                    // 시뮬레이션 이벤트라도 커서 이동(←, →, ↓, ↑) 이벤트라면, 버퍼에 남은 찌꺼기를 지워줍니다.
-                    if type == .keyDown && (keyCode == 123 || keyCode == 124 || keyCode == 125 || keyCode == 126) {
-                        EventMonitor.shared.clearTypingBuffer()
-                    }
+                    // 시뮬레이션 이벤트라면 무조건 현재 모인 타자 버퍼를 깨끗이 비워버립니다.
+                    // (앱 실행 시 시스템이 발생시키는 가짜 입력에 언어 전환이 씹히는 것을 방지)
+                    EventMonitor.shared.clearTypingBuffer()
+                    
                     // 무한 루프 방지를 위해 실제 이벤트 처리는 건너뛰고 그냥 통과시킵니다.
                     return Unmanaged.passUnretained(event)
                 }
