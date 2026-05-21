@@ -88,15 +88,14 @@ class AppMonitor {
     }
 
     func stop() {
-        if let obs = observer {
-            NSWorkspace.shared.notificationCenter.removeObserver(obs)
-            observer = nil
+        // 🌟 [개선됨] 모든 옵저버를 배열로 묶어 nil을 안전하게 제거한 뒤, 한 번에 해제합니다.
+        [observer, deactivateObserver].compactMap { $0 }.forEach {
+            NSWorkspace.shared.notificationCenter.removeObserver($0)
         }
-        // 🌟 [핵심 3] 종료 시 deactivateObserver도 함께 메모리에서 해제합니다.
-        if let deactObs = deactivateObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(deactObs)
-            deactivateObserver = nil
-        }
+    
+        // 메모리에서 완전히 비워줍니다.
+        observer = nil
+        deactivateObserver = nil
         activeAppBundleID = ""
     }
 }

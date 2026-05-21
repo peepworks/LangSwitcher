@@ -47,9 +47,12 @@ struct StatsSettingsView: View {
     
     // 🌟 [핵심 개선] 데이터가 아무리 커져도 렉이 걸리지 않도록 최적화된 필터링 로직
     var filteredStats: [DailyStat] {
-        var result: [DailyStat] = []
         let calendar = Calendar.current
         let today = Date()
+        
+        // DateFormatter는 생성 비용이 꽤 비싸므로, 뷰 내부 연산 프로퍼티에서는
+        // 가급적 정적(static)이나 재사용 가능한 형태로 빼는 것이 좋지만,
+        // 여기서는 직관성을 위해 유지하되 로직을 최소화합니다.
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         
@@ -58,9 +61,7 @@ struct StatsSettingsView: View {
         case .week: daysToFetch = 7
         case .month: daysToFetch = 30
         case .all:
-            // 🌟 [핵심 개선 1] 무의미했던 lazy와 sorted를 제거.
-            // 보통 dailyStats는 시간순으로 쌓이므로(가장 앞이 옛날), 그냥 첫 번째 원소를 사용하면 됩니다.
-            // 혹시 정렬이 보장되지 않는다면 StatsManager 내부에서 정렬을 유지하는 것이 맞습니다.
+            // 가장 오래된 기록을 찾아서 오늘까지의 일수를 계산
             if let oldestStat = statsManager.dailyStats.first,
                let firstDate = formatter.date(from: oldestStat.dateString) {
                 daysToFetch = max(1, calendar.dateComponents([.day], from: firstDate, to: today).day ?? 1) + 1
@@ -69,16 +70,19 @@ struct StatsSettingsView: View {
             }
         }
         
-        // 🌟 ❌ 뷰가 렌더링될 때마다 딕셔너리를 만들던 코드(statsDict 생성) 삭제 완료!
+        var result: [DailyStat] = []
+        result.reserveCapacity(daysToFetch) // 🌟 [최적화] 메모리 재할당 방지
         
+        // 🌟 뷰가 렌더링될 때마다 전체를 map/sorted 하지 않고,
+        // 매니저가 미리 정성껏 캐싱해둔 statsDict에서 O(1)로 쏙쏙 빼오기만 합니다!
         for i in (0..<daysToFetch).reversed() {
             if let date = calendar.date(byAdding: .day, value: -i, to: today) {
                 let dateString = formatter.string(from: date)
                 
-                // 🌟 [핵심 개선 2] 매니저가 캐싱해둔 딕셔너리를 O(1)로 그냥 꺼내 쓰기만 합니다.
                 if let existingStat = statsManager.statsDict[dateString] {
                     result.append(existingStat)
                 } else {
+                    // 기록이 없는 날짜는 빈 데이터로 채워서 차트의 이빨이 빠지지 않게 유지
                     result.append(DailyStat(dateString: dateString, languageSwitches: 0, typoCorrections: 0))
                 }
             }

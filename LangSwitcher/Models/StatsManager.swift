@@ -162,21 +162,21 @@ class StatsManager: ObservableObject {
         }
     }
     
-    // 🌟 [수정됨] 메인 스레드 대기를 방지하고, 안전하게 딕셔너리를 읽어 UI로 전달합니다.
+    // 🌟 [개선됨] 정확한 시점의 데이터를 캡처하기 위해 동기(sync) 방식 적용
     private func publishUpdate() {
-        // 1. stateQueue에서 안전하게 복사본(Snapshot)을 생성합니다.
-        stateQueue.async { [weak self] in
-            guard let self = self else { return }
+        // 1. sync를 사용하여 '호출된 정확히 그 순간'의 딕셔너리를 즉시 복사해옵니다. (매우 빠름)
+        let dictSnapshot = stateQueue.sync {
+            return self.internalStatsDict
+        }
+        
+        // 2. 무거운 정렬(sorted) 작업은 메인 스레드나 백그라운드에서 별도로 진행하여 UI 병목을 막습니다.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let snapshotArray = Array(dictSnapshot.values).sorted { $0.dateString < $1.dateString }
             
-            let snapshot = Array(self.internalStatsDict.values).sorted { $0.dateString < $1.dateString }
-            
-            // 🌟 [핵심 수정 2] 스레드 안전 구역 안에서 원본 딕셔너리의 스냅샷을 복사합니다.
-            let dictSnapshot = self.internalStatsDict
-            
-            // 2. 완성된 배열과 딕셔너리를 메인 스레드로 던져 UI를 업데이트합니다.
+            // 3. 완성된 데이터를 메인 스레드로 전달합니다.
             DispatchQueue.main.async {
-                self.dailyStats = snapshot
-                self.statsDict = dictSnapshot // 🌟 캐시 업데이트!
+                self?.dailyStats = snapshotArray
+                self?.statsDict = dictSnapshot
             }
         }
     }

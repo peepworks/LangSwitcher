@@ -20,6 +20,9 @@ import Cocoa
 
 class HyperKeyManager {
     static let shared = HyperKeyManager()
+    
+    // 🌟 [핵심 개선] hidutil 명령어 실행이 절대 겹치지 않도록 교통정리를 해주는 전용 직렬 큐
+    private let hidutilQueue = DispatchQueue(label: "com.peepworks.langswitcher.hidutil", qos: .userInitiated)
 
     // 🌟 스레드 안전성을 보장하기 위한 가벼운 자물쇠(Lock)
     private let stateLock = NSLock()
@@ -51,7 +54,7 @@ class HyperKeyManager {
     // 🌟 [핵심 수정] 무작정 덮어쓰지 않고 기존 설정을 파싱하여 병합(Merge)하는 로직으로 완전히 교체되었습니다.
     private func setupHardwareMapping(enable: Bool) {
         // 백그라운드 스레드에서 실행하여 메인 UI를 절대 멈추게 하지 않습니다.
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        hidutilQueue.async { [weak self] in
             guard let self = self else { return }
 
             // 1. 현재 시스템의 UserKeyMapping 목록 읽어오기
