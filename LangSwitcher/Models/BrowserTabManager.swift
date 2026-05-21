@@ -42,6 +42,12 @@ enum BrowserFetchError: Error {
     case decodingFailed
 }
 
+// 🌟 커스텀 에러 정의 (파일 상단이나 클래스 내부에 선언)
+enum JXAError: Error {
+    case timeout
+    case scriptFailed
+}
+
 // MARK: - Adapter Protocol
 
 protocol BrowserAdapter: Sendable {
@@ -52,64 +58,51 @@ protocol BrowserAdapter: Sendable {
 // 🌟 [추가] JXA 실행이 절대 겹치지 않도록 교통정리를 해주는 전용 직렬(Serial) 큐
 private let jxaExecutionQueue = DispatchQueue(label: "com.peepboy.LangSwitcher.JXAQueue", qos: .userInitiated)
 
-// 🌟 [수정된 함수] 충돌 방지와 타임아웃이 완벽하게 결합된 JXA 실행 엔진
-private func executeJXAWithTimeout(script: String) async -> Result<String, BrowserFetchError> {
-    return await withCheckedContinuation { continuation in
-        // 타임아웃(1초)을 재기 위한 글로벌 백그라운드 큐
-        DispatchQueue.global(qos: .userInitiated).async {
-            let dispatchGroup = DispatchGroup()
-            dispatchGroup.enter()
-
-            var scriptResult: NSAppleEventDescriptor?
-            var errorInfo: NSDictionary?
-
-            // 🌟 [핵심 방어] JXA 엔진 접근은 반드시 직렬 큐(jxaExecutionQueue) 안에서만 순서대로 실행됩니다.
-            jxaExecutionQueue.async {
-                autoreleasepool {
-                    // 🌟 매번 독립적인 언어 인스턴스를 생성하여 스레드 충돌 완벽 차단!
-                    if let language = OSALanguage(forName: "JavaScript") {
-                        let osaScript = OSAScript(source: script, language: language)
-                        scriptResult = osaScript.executeAndReturnError(&errorInfo)
+// 🌟 [핵심 개선] TaskGroup을 이용한 완벽한 타임아웃 처리
+func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 3.0) async throws -> String? {
+    
+    // 두 개의 작업을 동시에 실행하고, 먼저 완료된 결과를 반환하는 그룹
+    return try await withThrowingTaskGroup(of: String?.self) { group in
+        
+        // 작업 1: 실제 JXA 스크립트 실행
+        group.addTask {
+            try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    var errorInfo: NSDictionary?
+                    if let appleScript = NSAppleScript(source: script) {
+                        let result = appleScript.executeAndReturnError(&errorInfo)
+                        
+                        // 에러가 발생했거나 스크립트가 실패해도 반드시 resume(throwing:)을 호출!
+                        if errorInfo != nil {
+                            continuation.resume(throwing: JXAError.scriptFailed)
+                        } else {
+                            continuation.resume(returning: result.stringValue)
+                        }
                     } else {
-                        errorInfo = ["NSLocalizedDescription": "OSALanguage Init Failed"] as NSDictionary
+                        continuation.resume(throwing: JXAError.scriptFailed)
                     }
-                    dispatchGroup.leave()
                 }
-            }
-
-            // 🌟 1.0초 타임아웃 설정 (무한 대기 방지)
-            let result = dispatchGroup.wait(timeout: .now() + 1.0)
-
-            if result == .timedOut {
-                continuation.resume(returning: .failure(.timeout))
-                return
-            }
-
-            if let error = errorInfo {
-                continuation.resume(returning: .failure(.executionFailed(error.description)))
-                return
-            }
-
-            let output = scriptResult?.stringValue ?? ""
-
-            // 스크립트에서 반환한 커스텀 에러 파싱
-            if output.hasPrefix("ERROR:") {
-                let errType = output.replacingOccurrences(of: "ERROR:", with: "")
-                switch errType {
-                case "NO_WINDOW": continuation.resume(returning: .failure(.noWindow))
-                case "PERMISSION": continuation.resume(returning: .failure(.permissionDenied))
-                case "UNSUPPORTED": continuation.resume(returning: .failure(.unsupportedBrowser))
-                default: continuation.resume(returning: .failure(.executionFailed(errType)))
-                }
-            } else if !output.isEmpty {
-                continuation.resume(returning: .success(output))
-            } else {
-                continuation.resume(returning: .failure(.executionFailed("Empty Result")))
             }
         }
+        
+        // 작업 2: 타임아웃 타이머
+        group.addTask {
+            // 지정된 시간만큼 대기 (나노초 단위)
+            try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+            // 시간이 다 지나면 무자비하게 타임아웃 에러를 던짐
+            throw JXAError.timeout
+        }
+        
+        // 🌟 둘 중 먼저 완료되는 작업의 결과를 가져옵니다!
+        // 3초 안에 스크립트가 끝나면 결과를 받고, 3초가 넘으면 타이머가 에러를 던집니다.
+        let result = try await group.next()!
+        
+        // 승자가 결정되었으니 남아있는 패자(느려진 스크립트 or 아직 안 끝난 타이머)는 즉시 취소시킵니다.
+        group.cancelAll()
+        
+        return result
     }
 }
-
 // MARK: - Chromium Adapter
 
 class ChromiumAdapter: BrowserAdapter {
@@ -130,17 +123,32 @@ class ChromiumAdapter: BrowserAdapter {
         }
         """
         
-        let result = await executeJXAWithTimeout(script: script)
-        
-        switch result {
-        case .success(let jsonString):
+        do {
+            // 🌟 1. try await로 호출합니다. (에러가 발생하면 catch 블록으로 던져집니다)
+            guard let jsonString = try await executeJXAWithTimeout(script: script) else {
+                return .failure(.executionFailed("No result from JXA"))
+            }
+            
+            // 🌟 2. JXA 스크립트가 뱉어낸 문자열 에러를 정확하게 스위프트 에러로 변환 (텔레메트리 최적화)
+            if jsonString.hasPrefix("ERROR:") {
+                if jsonString.contains("NO_WINDOW") { return .failure(.noWindow) }
+                if jsonString.contains("PERMISSION") { return .failure(.permissionDenied) }
+                return .failure(.executionFailed(jsonString))
+            }
+            
+            // 🌟 3. 정상적인 JSON 응답일 경우 파싱
             guard let data = jsonString.data(using: .utf8),
                   let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
                 return .failure(.decodingFailed)
             }
             return .success(context)
-        case .failure(let err):
-            return .failure(err)
+            
+        } catch JXAError.timeout {
+            // 🌟 타임아웃 에러를 감지하여 정확한 에러 타입으로 반환
+            return .failure(.timeout)
+        } catch {
+            // 그 외의 스크립트 실패 등
+            return .failure(.executionFailed(error.localizedDescription))
         }
     }
 }
@@ -165,17 +173,30 @@ class SafariAdapter: BrowserAdapter {
         }
         """
         
-        let result = await executeJXAWithTimeout(script: script)
-        
-        switch result {
-        case .success(let jsonString):
+        do {
+            // 🌟 1. try await 적용
+            guard let jsonString = try await executeJXAWithTimeout(script: script) else {
+                return .failure(.executionFailed("No result from JXA"))
+            }
+            
+            // 🌟 2. Safari JXA 문자열 에러 매핑
+            if jsonString.hasPrefix("ERROR:") {
+                if jsonString.contains("NO_WINDOW") { return .failure(.noWindow) }
+                if jsonString.contains("PERMISSION") { return .failure(.permissionDenied) }
+                return .failure(.executionFailed(jsonString))
+            }
+            
+            // 🌟 3. 정상 파싱
             guard let data = jsonString.data(using: .utf8),
                   let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
                 return .failure(.decodingFailed)
             }
             return .success(context)
-        case .failure(let err):
-            return .failure(err)
+            
+        } catch JXAError.timeout {
+            return .failure(.timeout) // 🌟 영구 정지 방지용 타임아웃 캡치
+        } catch {
+            return .failure(.executionFailed(error.localizedDescription))
         }
     }
 }

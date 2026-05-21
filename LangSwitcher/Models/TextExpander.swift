@@ -30,18 +30,6 @@ class TextExpander {
         return formatter
     }()
     
-    // 1. 버퍼에서 트리거 매칭 확인
-    // 🌟 [수정] 파라미터로 스레드 세이프한 규칙 배열(rules)을 받도록 변경
-    func findMatch(for buffer: String, rules: [TextExpansionRule]) -> TextExpansionRule? {
-        // 외부에서 이미 정렬 및 필터링된 배열을 받으므로 즉시 순회합니다.
-        for rule in rules {
-            if buffer.hasSuffix(rule.trigger) {
-                return rule
-            }
-        }
-        return nil
-    }
-    
     // 🌟 [수정/추가] 기존 parseDynamicVariables를 대체하는 새로운 확장 진입점
     func expand(template: String) -> RenderedSnippet {
         let tokens = SnippetTemplateParser.parse(template: template)

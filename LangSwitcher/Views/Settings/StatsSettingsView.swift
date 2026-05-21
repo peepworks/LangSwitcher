@@ -58,24 +58,25 @@ struct StatsSettingsView: View {
         case .week: daysToFetch = 7
         case .month: daysToFetch = 30
         case .all:
-            // 🌟 1. 전체 검색 시 lazy를 적용하여 연산 비용을 줄입니다.
-            let sortedDates = statsManager.dailyStats.lazy.map { $0.dateString }.sorted()
-            if let first = sortedDates.first, let firstDate = formatter.date(from: first) {
+            // 🌟 [핵심 개선 1] 무의미했던 lazy와 sorted를 제거.
+            // 보통 dailyStats는 시간순으로 쌓이므로(가장 앞이 옛날), 그냥 첫 번째 원소를 사용하면 됩니다.
+            // 혹시 정렬이 보장되지 않는다면 StatsManager 내부에서 정렬을 유지하는 것이 맞습니다.
+            if let oldestStat = statsManager.dailyStats.first,
+               let firstDate = formatter.date(from: oldestStat.dateString) {
                 daysToFetch = max(1, calendar.dateComponents([.day], from: firstDate, to: today).day ?? 1) + 1
             } else {
                 daysToFetch = 7
             }
         }
         
-        // 🌟 2. O(N) 탐색인 .first(where:)의 반복 호출을 막기 위해
-        // 배열을 딕셔너리로 변환하여 룩업(Lookup) 속도를 O(1)로 극대화합니다!
-        let statsDict = Dictionary(uniqueKeysWithValues: statsManager.dailyStats.map { ($0.dateString, $0) })
+        // 🌟 ❌ 뷰가 렌더링될 때마다 딕셔너리를 만들던 코드(statsDict 생성) 삭제 완료!
         
         for i in (0..<daysToFetch).reversed() {
             if let date = calendar.date(byAdding: .day, value: -i, to: today) {
                 let dateString = formatter.string(from: date)
-                // 🌟 3. 배열 전체를 뒤지지 않고 딕셔너리에서 한 번에 쏙 뽑아옵니다.
-                if let existingStat = statsDict[dateString] {
+                
+                // 🌟 [핵심 개선 2] 매니저가 캐싱해둔 딕셔너리를 O(1)로 그냥 꺼내 쓰기만 합니다.
+                if let existingStat = statsManager.statsDict[dateString] {
                     result.append(existingStat)
                 } else {
                     result.append(DailyStat(dateString: dateString, languageSwitches: 0, typoCorrections: 0))

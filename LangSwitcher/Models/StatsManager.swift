@@ -38,8 +38,11 @@ class StatsManager: ObservableObject {
     // 🌟 UI 바인딩용 데이터 (메인 스레드에서만 업데이트)
     @Published var dailyStats: [DailyStat] = []
     
+    // 🌟 [핵심 수정 1] 뷰(View)가 매번 딕셔너리를 생성하지 않고 O(1)로 바로 꺼내 쓸 수 있도록 공개하는 캐시 변수
+    @Published private(set) var statsDict: [String: DailyStat] = [:]
+    
     // 인메모리 누적 딕셔너리
-    private var _statsDict: [String: DailyStat] = [:]
+    private var internalStatsDict: [String: DailyStat] = [:]
     
     private var saveTimer: Timer?
     private let defaultsKey = "LangSwitcher_DailyStats"
@@ -69,13 +72,13 @@ class StatsManager: ObservableObject {
         stateQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
             
-            // 🌟 [수정됨] self._statsDict 사용 및 DailyStat 초기화 파라미터 이름 매칭
-            var stat = self._statsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
+            // 🌟 [수정됨] self.internalStatsDict 사용 및 DailyStat 초기화 파라미터 이름 매칭
+            var stat = self.internalStatsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
             
             // 🌟 [수정됨] switchCount 대신 languageSwitches 사용
             stat.languageSwitches += 1
             
-            self._statsDict[dateKey] = stat
+            self.internalStatsDict[dateKey] = stat
             self.isDirty = true
         } // 🚪 여기서 독방 문이 열립니다!
         
@@ -92,9 +95,9 @@ class StatsManager: ObservableObject {
         stateQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
             
-            var stat = self._statsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
+            var stat = self.internalStatsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
             stat.typoCorrections += 1
-            self._statsDict[dateKey] = stat
+            self.internalStatsDict[dateKey] = stat
             self.isDirty = true
         } // 🚪 독방 문 개방
         
@@ -124,7 +127,7 @@ class StatsManager: ObservableObject {
         stateQueue.sync(flags: .barrier) {
             if self.isDirty {
                 shouldSave = true
-                snapshot = self._statsDict
+                snapshot = self.internalStatsDict
                 self.isDirty = false // 쓰기 작업이 이제 완벽하게 안전해졌습니다.
             }
         }
@@ -146,10 +149,16 @@ class StatsManager: ObservableObject {
     private func loadStats() {
         if let data = UserDefaults.standard.data(forKey: defaultsKey),
            let decoded = try? JSONDecoder().decode([DailyStat].self, from: data) {
+            
+            var tempDict: [String: DailyStat] = [:]
             for stat in decoded {
-                _statsDict[stat.dateString] = stat
+                internalStatsDict[stat.dateString] = stat
+                tempDict[stat.dateString] = stat // 🌟 임시 딕셔너리에 수집
             }
             self.dailyStats = decoded.sorted { $0.dateString < $1.dateString }
+            
+            // 🌟 [핵심 수정 3] 최초 로드 시점에도 뷰를 위한 캐시 데이터를 주입합니다.
+            self.statsDict = tempDict
         }
     }
     
@@ -159,11 +168,15 @@ class StatsManager: ObservableObject {
         stateQueue.async { [weak self] in
             guard let self = self else { return }
             
-            let snapshot = Array(self._statsDict.values).sorted { $0.dateString < $1.dateString }
+            let snapshot = Array(self.internalStatsDict.values).sorted { $0.dateString < $1.dateString }
             
-            // 2. 완성된 배열만 메인 스레드로 던져 UI를 업데이트합니다.
+            // 🌟 [핵심 수정 2] 스레드 안전 구역 안에서 원본 딕셔너리의 스냅샷을 복사합니다.
+            let dictSnapshot = self.internalStatsDict
+            
+            // 2. 완성된 배열과 딕셔너리를 메인 스레드로 던져 UI를 업데이트합니다.
             DispatchQueue.main.async {
                 self.dailyStats = snapshot
+                self.statsDict = dictSnapshot // 🌟 캐시 업데이트!
             }
         }
     }
@@ -188,7 +201,7 @@ class StatsManager: ObservableObject {
         stateQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
             
-            self._statsDict.removeAll()
+            self.internalStatsDict.removeAll()
             self.isDirty = false
             UserDefaults.standard.removeObject(forKey: self.defaultsKey)
         } // 🚪 여기서 독방 문이 열립니다!
@@ -202,7 +215,7 @@ class StatsManager: ObservableObject {
     func exportToCSV(to url: URL, completion: @escaping (Bool, Error?) -> Void) {
         
         let snapshot = stateQueue.sync {
-            return self._statsDict
+            return self.internalStatsDict
         }
         
         DispatchQueue.global(qos: .userInitiated).async {
