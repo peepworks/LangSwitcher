@@ -242,4 +242,48 @@ class StatsManager: ObservableObject {
             }
         }
     }
+    
+    // 🌟 [추가] 필터링/정렬된 데이터를 보관할 캐시 프로퍼티
+    @Published private(set) var filteredStatsCache: [DailyStat] = []
+    
+    // 🌟 [추가] 뷰에서 호출할 최적화된 데이터 가공 메서드
+    func updateFilteredStats(for range: TimeRange) {
+        let calendar = Calendar.current
+        let today = Date()
+        
+        // 🌟 저장된 internalStatsDict를 활용하여 효율적으로 계산
+        let daysToFetch: Int
+        switch range {
+        case .week: daysToFetch = 7
+        case .month: daysToFetch = 30
+        case .all:
+            // internalStatsDict의 모든 키(날짜) 중 가장 오래된 날짜를 추출
+            let dates = internalStatsDict.keys.compactMap { Self.todayFormatter.date(from: $0) }
+            if let firstDate = dates.min() {
+                daysToFetch = max(1, calendar.dateComponents([.day], from: firstDate, to: today).day ?? 1) + 1
+            } else { daysToFetch = 7 }
+        }
+        
+        var result: [DailyStat] = []
+        result.reserveCapacity(daysToFetch)
+        
+        // 🌟 stateQueue.sync를 사용하여 가장 최신 스냅샷에서 데이터를 안전하게 가져옴
+        let snapshot = stateQueue.sync { internalStatsDict }
+        
+        for i in (0..<daysToFetch).reversed() {
+            if let date = calendar.date(byAdding: .day, value: -i, to: today) {
+                let dateString = Self.todayFormatter.string(from: date)
+                if let existingStat = snapshot[dateString] {
+                    result.append(existingStat)
+                } else {
+                    result.append(DailyStat(dateString: dateString, languageSwitches: 0, typoCorrections: 0))
+                }
+            }
+        }
+        
+        // 메인 스레드에 최종 결과 전달 (UI 갱신 트리거)
+        DispatchQueue.main.async {
+            self.filteredStatsCache = result
+        }
+    }
 }

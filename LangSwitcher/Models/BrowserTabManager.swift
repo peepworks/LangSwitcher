@@ -101,8 +101,8 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
             }
         }
         
-        // 작업 2: 타임아웃 타이머
-        group.addTask {
+        // 🌟 [핵심 수정] 작업 2: 클로저의 반환 타입을 '-> String? in'으로 명시!
+        group.addTask { () -> String? in
             // 지정된 시간만큼 대기
             try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
             // 시간이 다 지나면 무자비하게 타임아웃 에러를 던짐

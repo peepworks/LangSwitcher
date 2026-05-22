@@ -37,57 +37,17 @@ enum TimeRange: String, CaseIterable, Identifiable {
 
 struct StatsSettingsView: View {
     @ObservedObject private var statsManager = StatsManager.shared
-    
     @State private var selectedRange: TimeRange = .week
+
     @State private var showSwitches: Bool = true
     @State private var showTypos: Bool = true
-    // 🌟 [수정됨] Date 객체 대신 String을 사용하여 카테고리 매칭에 사용합니다.
     @State private var selectedDateString: String? = nil
     @State private var animateChart = false
     
-    // 🌟 [핵심 개선] 데이터가 아무리 커져도 렉이 걸리지 않도록 최적화된 필터링 로직
-    var filteredStats: [DailyStat] {
-        let calendar = Calendar.current
-        let today = Date()
-        
-        // DateFormatter는 생성 비용이 꽤 비싸므로, 뷰 내부 연산 프로퍼티에서는
-        // 가급적 정적(static)이나 재사용 가능한 형태로 빼는 것이 좋지만,
-        // 여기서는 직관성을 위해 유지하되 로직을 최소화합니다.
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        
-        let daysToFetch: Int
-        switch selectedRange {
-        case .week: daysToFetch = 7
-        case .month: daysToFetch = 30
-        case .all:
-            // 가장 오래된 기록을 찾아서 오늘까지의 일수를 계산
-            if let oldestStat = statsManager.dailyStats.first,
-               let firstDate = formatter.date(from: oldestStat.dateString) {
-                daysToFetch = max(1, calendar.dateComponents([.day], from: firstDate, to: today).day ?? 1) + 1
-            } else {
-                daysToFetch = 7
-            }
-        }
-        
-        var result: [DailyStat] = []
-        result.reserveCapacity(daysToFetch) // 🌟 [최적화] 메모리 재할당 방지
-        
-        // 🌟 뷰가 렌더링될 때마다 전체를 map/sorted 하지 않고,
-        // 매니저가 미리 정성껏 캐싱해둔 statsDict에서 O(1)로 쏙쏙 빼오기만 합니다!
-        for i in (0..<daysToFetch).reversed() {
-            if let date = calendar.date(byAdding: .day, value: -i, to: today) {
-                let dateString = formatter.string(from: date)
-                
-                if let existingStat = statsManager.statsDict[dateString] {
-                    result.append(existingStat)
-                } else {
-                    // 기록이 없는 날짜는 빈 데이터로 채워서 차트의 이빨이 빠지지 않게 유지
-                    result.append(DailyStat(dateString: dateString, languageSwitches: 0, typoCorrections: 0))
-                }
-            }
-        }
-        return result
+    // 🌟 [핵심 개선] computed property 연산을 완전히 제거하고,
+    // StatsManager가 계산해둔 캐시를 즉시 참조합니다.
+    private var filteredStats: [DailyStat] {
+        return statsManager.filteredStatsCache
     }
     
     var todayStats: DailyStat { filteredStats.last ?? DailyStat(dateString: "", languageSwitches: 0, typoCorrections: 0) }
@@ -180,12 +140,21 @@ struct StatsSettingsView: View {
         }
         .padding(30)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // 🌟 [추가] 뷰 라이프사이클 및 상태 변경 시 캐시 업데이트 트리거
+        .onAppear {
+            statsManager.updateFilteredStats(for: selectedRange)
+        }
+        .onChange(of: selectedRange) { newValue in
+            statsManager.updateFilteredStats(for: newValue)
+        }
+        .onChange(of: statsManager.dailyStats) { _ in
+            statsManager.updateFilteredStats(for: selectedRange)
+        }
     }
     
     // MARK: - 차트 렌더링 뷰
     private var chartView: some View {
         Chart(filteredStats) { stat in
-            // 🌟 [핵심 1] Date 대신 String(stat.dateString)을 카테고리로 사용하여 막대 정중앙 정렬 완벽 보장
             if showSwitches {
                 BarMark(
                     x: .value(String(localized: "Date"), stat.dateString),
@@ -206,7 +175,6 @@ struct StatsSettingsView: View {
                 .cornerRadius(4)
             }
             
-            // 🌟 [핵심 2] 마우스 오버 시 표시할 점선 (annotation 삭제됨)
             if let selectedDateString, stat.dateString == selectedDateString {
                 RuleMark(x: .value(String(localized: "Date"), stat.dateString))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
@@ -217,25 +185,20 @@ struct StatsSettingsView: View {
             String(localized: "Switches"): Color.blue.gradient,
             String(localized: "Typos"): Color.green.gradient
         ])
-        .chartXScale(domain: .automatic) // 텍스트 스케일 자동 정렬 유지
+        .chartXScale(domain: .automatic)
         .chartYScale(domain: 0...yDomainMax)
         .chartXAxis {
-            // 🌟 [핵심 수정] 데이터 개수에 따라 X축 라벨을 그릴 간격(step)을 동적으로 계산합니다.
             let step = selectedRange == .week ? 1 : (selectedRange == .month ? 5 : max(1, filteredStats.count / 6))
-            
-            // 항상 오늘(마지막 인덱스)을 기준으로 역순으로 계산하여 최신 날짜가 라벨에서 누락되지 않게 합니다.
             let xValues: [String] = stride(from: filteredStats.count - 1, through: 0, by: -step)
                 .map { filteredStats[$0].dateString }
                 .reversed()
             
-            // 명시적으로 계산된 xValues만 AxisMarks에 전달하여 겹침을 방지합니다.
             AxisMarks(values: xValues) { value in
                 AxisGridLine()
                 AxisValueLabel {
                     if let str = value.as(String.self) {
                         Text(formatAxisDate(parseDate(str)))
-                            .font(.caption2) // 🌟 좁은 공간에서도 예쁘게 보이도록 폰트 크기를 한 단계 낮춥니다.
-                            // 🌟 [핵심 수정 1] 공간이 좁아도 "..."으로 생략되지 않도록 실제 크기를 강제로 보장합니다.
+                            .font(.caption2)
                             .fixedSize(horizontal: true, vertical: false)
                     }
                 }
@@ -255,13 +218,10 @@ struct StatsSettingsView: View {
         .chartLegend(.hidden)
         .frame(height: 250)
         .padding(.top, 50)
-        // 🌟 [핵심 수정 2] 차트 우측 끝에 10pt의 여백을 주어 마지막 날짜 라벨이 숨 쉴 공간을 확보합니다.
         .padding(.trailing, 10)
-        // 🌟 [핵심 3] 툴팁을 차트 시스템과 완전히 분리된 오버레이(Overlay)에 그려서 흔들림 원천 차단
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 ZStack(alignment: .topLeading) {
-                    // 1. 마우스 이벤트 감지용 투명 패널
                     Rectangle()
                         .fill(Color.clear)
                         .contentShape(Rectangle())
@@ -277,14 +237,12 @@ struct StatsSettingsView: View {
                             }
                         }
                     
-                    // 2. 커스텀 툴팁 뷰 렌더링
                     if let selectedDateString,
                        let stat = filteredStats.first(where: { $0.dateString == selectedDateString }),
                        let xPosition = proxy.position(forX: selectedDateString) {
                         
                         let tooltipWidth: CGFloat = 120
                         let plotWidth = geometry[proxy.plotAreaFrame].width
-                        // 툴팁이 차트 밖으로 잘리지 않도록 X 좌표 안전 영역 계산
                         let adjustedX = min(max(xPosition, tooltipWidth / 2), plotWidth - tooltipWidth / 2)
                         
                         VStack(alignment: .leading, spacing: 4) {
@@ -298,7 +256,6 @@ struct StatsSettingsView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
                         .shadow(radius: 3)
-                        // 차트 바깥(Top Padding 영역)으로 띄워 올림
                         .position(x: adjustedX, y: -20)
                     }
                 }
@@ -318,17 +275,26 @@ struct StatsSettingsView: View {
     
     // MARK: - Actions
     
-    private func formatAxisDate(_ date: Date) -> String {
+    // 🌟 [최적화] 매 렌더링마다 생성되던 무거운 DateFormatter를 정적 변수로 빼내어 재사용합니다.
+    private static let axisDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "M/d"
-        return formatter.string(from: date)
-    }
-
-    private func parseDate(_ dateString: String) -> Date {
+        return formatter
+    }()
+    
+    private static let parseDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.timeZone = TimeZone.current
-        return formatter.date(from: dateString) ?? Date()
+        return formatter
+    }()
+    
+    private func formatAxisDate(_ date: Date) -> String {
+        return Self.axisDateFormatter.string(from: date)
+    }
+
+    private func parseDate(_ dateString: String) -> Date {
+        return Self.parseDateFormatter.date(from: dateString) ?? Date()
     }
     
     private func exportData() {
@@ -353,12 +319,10 @@ struct StatsSettingsView: View {
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.alertStyle = .warning
         
-        // 🌟 핵심: 알림창에 앱 아이콘을 강제로 지정합니다.
         if let appIcon = NSImage(named: NSImage.applicationIconName) {
             alert.icon = appIcon
         }
         
-        // 🌟 [추가됨] 알림창이 다른 앱 화면 뒤로 숨지 않도록 강제로 최상단으로 끌어올립니다.
         NSApp.activate(ignoringOtherApps: true)
         
         if alert.runModal() == .alertFirstButtonReturn {

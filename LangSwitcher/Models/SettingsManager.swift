@@ -240,8 +240,12 @@ class SettingsManager: ObservableObject {
     }
     
     func saveAll() {
-        let d = UserDefaults.standard
-        if let e = try? JSONEncoder().encode(profiles) { d.set(e, forKey: "profiles") }
+        let profilesToSave = self.profiles
+        DispatchQueue.global(qos: .background).async {
+            if let e = try? JSONEncoder().encode(profilesToSave) {
+                UserDefaults.standard.set(e, forKey: "profiles")
+            }
+        }
         #if DEBUG
         print("SettingsManager: 프로필 데이터가 디스크에 저장되었습니다.")
         #endif
@@ -271,6 +275,10 @@ class SettingsManager: ObservableObject {
         // 5. 프로필 전환 로그 기록 (디버거 연동용)
         let log = ActionLog(timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Profile Switched", finalInputSource: "Active Profile: \(activeProfile.name)", result: .success, failureReason: .none)
         addLog(log)
+            
+        #if DEBUG
+        print("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
+        #endif
     }
     
     var snapshot: SettingsSnapshot {

@@ -28,6 +28,10 @@ final class CursorHUDModel: ObservableObject {
     @Published var name: String = ""
 }
 
+final class CenterHUDModel: ObservableObject {
+    @Published var languageName: String = ""
+}
+
 
 // MARK: - HUDManager
 
@@ -48,6 +52,10 @@ class HUDManager {
 
     // ✅ 타이머 completionHandler 경쟁 방지용 세대 카운터
     private var hideGeneration: UInt = 0
+    
+    // 중앙 HUD용 뷰 및 모델 인스턴스 (최초 1회만 생성)
+    private let centerHUDModel = CenterHUDModel()
+    private var centerHUDHostingView: NSHostingView<HUDView>?
 
 
     // MARK: - 진입점
@@ -55,10 +63,14 @@ class HUDManager {
     func showHUD(languageName: String) {
         let snapshot = SettingsManager.shared.snapshot
 
+        #if DEBUG
         print("📍 HUD Debug: 호출됨! [HUDEnabled: \(snapshot.showVisualFeedback)] [MiniEnabled: \(snapshot.isCursorHUDEnabled)]")
+        #endif
 
         guard snapshot.showVisualFeedback else {
+            #if DEBUG
             print("📍 HUD Debug: 시각적 피드백 옵션이 꺼져있어 종료합니다.")
+            #endif
             return
         }
 
@@ -81,6 +93,10 @@ class HUDManager {
     // MARK: - 중앙 HUD
 
     private func showCenterHUD(languageName: String) {
+        // 1. 모델 데이터만 업데이트 (SwiftUI가 알아서 화면 갱신)
+        centerHUDModel.languageName = languageName
+
+        // 2. 윈도우 및 HostingView가 없는 경우에만 최초 1회 생성
         if self.centerHUDWindow == nil {
             let panel = NSPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
@@ -88,17 +104,22 @@ class HUDManager {
                 backing: .buffered,
                 defer: false
             )
+            // ... (패널 설정 유지) ...
             panel.level = .statusBar
             panel.backgroundColor = .clear
             panel.isOpaque = false
             panel.hasShadow = false
             panel.ignoresMouseEvents = true
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            
+            // 뷰 생성 및 저장
+            let hostingView = NSHostingView(rootView: HUDView(model: centerHUDModel))
+            panel.contentView = hostingView
+            self.centerHUDHostingView = hostingView
             self.centerHUDWindow = panel
         }
 
-        self.centerHUDWindow?.contentView = NSHostingView(rootView: HUDView(languageName: languageName))
-
+        // 3. 위치 계산 및 표시 로직 (기존 유지)
         if let screen = NSScreen.main {
             let x = screen.frame.midX - 100
             let y = screen.frame.midY - 100
@@ -113,6 +134,7 @@ class HUDManager {
             self.centerHUDWindow?.animator().alphaValue = 1.0
         }
 
+        // 타이머 (기존 유지)
         self.centerHideTimer?.invalidate()
         self.centerHideTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
             self.hideCenterHUD()
@@ -130,23 +152,22 @@ class HUDManager {
 
 
     // MARK: - 커서 위치 추적 (AX API)
-
     private func getCursorRect() -> CGRect? {
         let systemWideElement = AXUIElementCreateSystemWide()
         var focusedElement: CFTypeRef?
 
         let error = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
         if error != .success {
-            print("📍 HUD Debug: [실패] 포커스된 텍스트 입력창을 찾을 수 없음 (Error: \(error.rawValue))")
-            return nil
+            return getMouseFallbackRect("포커스된 텍스트 입력창 찾을 수 없음")
         }
-        guard let element = focusedElement as! AXUIElement? else { return nil }
+        guard let element = focusedElement as! AXUIElement? else {
+            return getMouseFallbackRect("AXUIElement 형변환 실패")
+        }
 
         var selectedRangeValue: CFTypeRef?
         let rangeError = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRangeValue)
         if rangeError != .success {
-            print("📍 HUD Debug: [실패] 텍스트 커서(SelectedRange)를 찾을 수 없음.")
-            return nil
+            return getMouseFallbackRect("텍스트 커서(SelectedRange) 속성 없음")
         }
 
         var boundsValue: CFTypeRef?
@@ -158,31 +179,42 @@ class HUDManager {
         )
 
         guard boundsError == .success, let unwrappedBounds = boundsValue else {
-            print("📍 HUD Debug: [실패] 커서의 화면 좌표(Bounds)를 계산할 수 없음.")
-            return nil
+            return getMouseFallbackRect("화면 좌표(Bounds) 계산 실패")
         }
 
         var bounds: CGRect = .zero
         let axValue = unwrappedBounds as! AXValue
         guard AXValueGetValue(axValue, .cgRect, &bounds) else {
-            print("📍 HUD Debug: [실패] 좌표값 형변환 실패")
-            return nil
+            return getMouseFallbackRect("좌표값(AXValue) 형변환 실패")
         }
 
-        if bounds.height <= 0 || bounds.width > 100 {
-            print("📍 HUD Debug: [무시됨] 커서 크기가 비정상적임 (width: \(bounds.width), height: \(bounds.height))")
-            return nil
+        // 🌟 [핵심 보정] 크롬 등에서 크기가 0이거나 비정상적인 값을 반환할 때
+        if bounds.height <= 0 || bounds.width > 200 {
+            return getMouseFallbackRect("앱이 비정상적인 커서 크기를 반환함 (w: \(bounds.width), h: \(bounds.height))")
         }
 
-        print("📍 HUD Debug: [성공!] 커서 좌표 획득 완료 -> \(bounds)")
+        print("📍 HUD Debug: [성공] 텍스트 커서 좌표 획득 -> \(bounds)")
         return bounds
     }
 
+    // 🌟 텍스트 커서 위치 획득 실패 시 '마우스 포인터' 위치를 반환하는 최후의 방어선
+    private func getMouseFallbackRect(_ reason: String) -> CGRect {
+        print("📍 HUD Debug: [마우스 Fallback 발동] \(reason)")
+        let mouseLoc = NSEvent.mouseLocation
+        let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
+        
+        // NSEvent는 화면 좌측 하단(Bottom-Left) 기준이고,
+        // AX API는 좌측 상단(Top-Left) 기준이므로 Y축을 뒤집어 줍니다.
+        let flippedY = screenHeight - mouseLoc.y
+        
+        // 마우스 포인터 바로 옆(우측 하단)에 위치하도록 가상의 커서 Rect 생성
+        return CGRect(x: mouseLoc.x + 2, y: flippedY - 18, width: 1.0, height: 18.0)
+    }
 
     // MARK: - 커서 미니 HUD
 
     private func showCursorMiniHUD(text: String, at rect: CGRect) {
-        // 1. 심볼 계산
+        // 1. 심볼 계산 (로직 유지)
         let lowerText = text.lowercased()
         let shortText: String
         if lowerText.contains("u.s.") || lowerText.contains("abc") || lowerText.contains("english") {
@@ -193,11 +225,11 @@ class HUDManager {
             shortText = String(text.prefix(1)).uppercased()
         }
 
-        // 2. 모델 업데이트 (뷰 재생성 없이 텍스트만 교체)
+        // 2. 모델 업데이트 (데이터만 변경 -> SwiftUI가 알아서 리렌더링)
         cursorHUDModel.symbol = shortText
         cursorHUDModel.name = text
 
-        // 3. 창 및 HostingView 최초 1회 생성
+        // 3. 창 및 HostingView 최초 1회 생성 (이미 구현하신 부분)
         if cursorHUDWindow == nil {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 50, height: 30),
@@ -207,36 +239,33 @@ class HUDManager {
             )
             window.isOpaque = false
             window.backgroundColor = .clear
-            window.level = .screenSaver
+            window.level = .screenSaver // 또는 .floating
             window.ignoresMouseEvents = true
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-            // ✅ NSHostingView 1회 생성 후 재사용
             let hostingView = NSHostingView(rootView: CursorHUDView(model: cursorHUDModel))
             window.contentView = hostingView
             cursorHUDHostingView = hostingView
             cursorHUDWindow = window
         }
 
-        // 4. 위치 계산
-        // intrinsicContentSize: 이미 렌더된 경우 정확한 크기 반환.
-        // 최초 호출 시엔 0일 수 있으므로 최솟값으로 보호.
+        // 4. 위치 계산 (이제 뷰 재생성 없이 intrinsicContentSize 활용)
         let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
-        let viewSize = cursorHUDHostingView?.intrinsicContentSize ?? NSSize(width: 120, height: 36)
-        let finalWidth  = max(viewSize.width,  80)
-        let finalHeight = max(viewSize.height, 30)
-
+        
+        // 🌟 데이터가 바뀐 후 뷰가 레이아웃을 다시 잡을 시간을 줍니다.
+        cursorHUDHostingView?.layoutSubtreeIfNeeded()
+        let viewSize = cursorHUDHostingView?.intrinsicContentSize ?? NSSize(width: 80, height: 30)
+        
         let windowX = rect.maxX + 6
-        let windowY = screenHeight - rect.maxY - finalHeight - 2
+        let windowY = screenHeight - rect.maxY - viewSize.height - 2
 
-        // ✅ setFrame 먼저, contentView 교체는 하지 않음 (이미 hostingView 재사용 중)
+        // 5. 프레임 설정 (애니메이션 루프 방지를 위해 display: false)
         cursorHUDWindow?.setFrame(
-            NSRect(x: windowX, y: windowY, width: finalWidth, height: finalHeight),
+            NSRect(x: windowX, y: windowY, width: viewSize.width, height: viewSize.height),
             display: false
         )
 
-        // 5. 표시 — makeKeyAndOrderFront 사용 금지
-        // borderless + ignoresMouseEvents 창은 canBecomeKeyWindow == false
+        // 6. 표시 및 애니메이션 로직 유지...
         cursorHUDWindow?.alphaValue = 0
         cursorHUDWindow?.orderFrontRegardless()
 
@@ -245,7 +274,7 @@ class HUDManager {
             self.cursorHUDWindow?.animator().alphaValue = 1.0
         }
 
-        // 6. 타이머 — 세대(generation) 카운터로 completionHandler 경쟁 방지
+        // 7. 타이머 — 세대(generation) 카운터로 completionHandler 경쟁 방지
         let currentGeneration = hideGeneration &+ 1
         hideGeneration = currentGeneration
 
@@ -282,7 +311,7 @@ class HUDManager {
 // MARK: - SwiftUI Views
 
 struct HUDView: View {
-    var languageName: String
+    @ObservedObject var model: CenterHUDModel // 텍스트 대신 모델 구독
 
     var body: some View {
         VStack(spacing: 20) {
@@ -291,7 +320,7 @@ struct HUDView: View {
                 .foregroundColor(Color.primary.opacity(0.8))
                 .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
 
-            Text(languageName)
+            Text(model.languageName) // 모델의 데이터 출력
                 .font(.title2.bold())
                 .foregroundColor(Color.primary.opacity(0.9))
                 .lineLimit(1)
@@ -301,7 +330,6 @@ struct HUDView: View {
         .background(VisualEffectView().clipShape(RoundedRectangle(cornerRadius: 18)))
     }
 }
-
 
 struct CursorHUDView: View {
     @ObservedObject var model: CursorHUDModel
@@ -320,9 +348,9 @@ struct CursorHUDView: View {
                 .font(.system(size: 15, weight: .semibold, design: .default))
                 .foregroundColor(.white)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        // ✅ 원래의 디자인으로 복구: 반투명한 어두운 배경 + 그림자 + 테두리
+        // 🌟 바로 여기 패딩 수치를 줄여줍니다! (원래 10, 8 이었음)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(white: 0.1, opacity: 0.85))
