@@ -133,6 +133,7 @@ struct SettingsSnapshot {
     var excludedApps: [ExcludedApp] = []
     var customShortcuts: [CustomShortcut] = []
     var domainRules: [DomainRule] = []
+    var enabledDomainRules: [DomainRule] = []
     var appDelays: [AppDelay] = [] // 🌟 스냅샷용 앱 딜레이
     
     var isTextExpansionEnabled: Bool
@@ -170,6 +171,7 @@ struct SettingsSnapshot {
                 maxTriggerLength = rule.trigger.count
             }
         }
+        self.enabledDomainRules = self.domainRules.filter { $0.isEnabled }
     }
 }
 

@@ -31,21 +31,24 @@ class DomainRuleManager {
     /// 예: "https://www.naver.com/search" -> "naver.com"
     /// 예: "www.github.com" -> "github.com"
     static func normalize(urlOrDomain: String) -> String? {
+        // 1. 앞뒤 공백 제거 및 소문자 변환
         var stringToParse = urlOrDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
-        // URLComponents가 host를 정확히 파싱하려면 스킴(http://)이 필요합니다.
+        // 2. 스킴(http:// 또는 https://)이 없다면 강제로 붙여줌
+        // (이렇게 해야 URLComponents가 슬래시(/) 뒤의 문자열을 경로(path)로 올바르게 분리하고 host를 찾아냄)
         if !stringToParse.hasPrefix("http://") && !stringToParse.hasPrefix("https://") {
             stringToParse = "https://" + stringToParse
         }
         
+        // 3. 파싱 및 host 추출
         guard let components = URLComponents(string: stringToParse),
-              let host = components.host else {
+              var host = components.host, !host.isEmpty else {
             return nil
         }
         
-        // "www." 접두사가 있으면 제거하여 순수 도메인만 남깁니다.
+        // 4. (선택 사항) 사용자가 "www.github.com"이라고 쳤을 때 "github.com"으로 통일하고 싶다면
         if host.hasPrefix("www.") {
-            return String(host.dropFirst(4))
+            host = String(host.dropFirst(4))
         }
         
         return host
@@ -57,8 +60,8 @@ class DomainRuleManager {
         // 1. 현재 브라우저의 URL을 순수 호스트로 정규화
         guard let currentHost = Self.normalize(urlOrDomain: urlString) else { return nil }
         
-        // 2. 활성화된 규칙만 필터링
-        let activeRules = SettingsManager.shared.snapshot.domainRules.filter { $0.isEnabled }
+        // 🌟 [핵심 개선] 매번 filter 배열을 생성하지 않고, 스냅샷이 이미 구워둔 활성화 규칙 캐시를 그대로 가져옵니다.
+        let activeRules = SettingsManager.shared.snapshot.enabledDomainRules
         
         for rule in activeRules {
             // 브라우저 제한이 걸려있는데 현재 브라우저와 다르면 패스

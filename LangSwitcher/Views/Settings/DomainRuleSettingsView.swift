@@ -180,6 +180,7 @@ struct DomainRuleRowView: View {
 }
 
 // MARK: - Edit Sheet (팝업)
+// MARK: - Edit Sheet (팝업)
 struct DomainRuleEditSheet: View {
     @Environment(\.dismiss) var dismiss
     
@@ -192,6 +193,11 @@ struct DomainRuleEditSheet: View {
     
     // 라벨 너비 고정 (좌측 정렬선 완벽 일치용)
     private let labelWidth: CGFloat = 140
+    
+    // 🌟 [추가] 유효성 검사 프로퍼티: 도메인에 경로(/)가 포함되어 있는지 실시간 확인
+    private var hasInvalidPath: Bool {
+        return domain.contains("/")
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -214,13 +220,20 @@ struct DomainRuleEditSheet: View {
                                 .textFieldStyle(.roundedBorder)
                                 .disableAutocorrection(true)
                                 .labelsHidden()
-                                .frame(maxWidth: .infinity) // 🌟 핵심 1: 텍스트 필드를 오른쪽 끝까지 쫙 늘림
+                                .frame(maxWidth: .infinity)
                             
-                            Text(String(localized: "e.g., github.com"))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            // 🌟 [핵심 개선] 입력값에 따라 안내 문구 또는 에러 문구 동적 표시
+                            if hasInvalidPath {
+                                Text(String(localized: "Paths (/) are not allowed. Please enter only the root domain."))
+                                    .font(.caption)
+                                    .foregroundColor(.red) // 에러는 빨간색으로 시선 집중!
+                            } else {
+                                Text(String(localized: "e.g., github.com"))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                        .frame(maxWidth: .infinity) // 🌟 핵심 2: VStack 자체도 꽉 채우도록 허용
+                        .frame(maxWidth: .infinity)
                     }
                     .padding(.vertical, 4)
                     
@@ -254,7 +267,7 @@ struct DomainRuleEditSheet: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading) // 🌟 핵심 3: Picker 영역도 자연스럽게 확장
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.vertical, 4)
                     
@@ -278,7 +291,7 @@ struct DomainRuleEditSheet: View {
                     let cleanDomain = DomainRuleManager.normalize(urlOrDomain: domain) ?? domain
                     let newRule = DomainRule(
                         id: ruleToEdit?.id ?? UUID(),
-                        browserBundleID: nil,
+                        browserBundleID: nil, // 전체 브라우저 적용으로 수정됨
                         domain: cleanDomain,
                         includeSubdomains: includeSubdomains,
                         targetInputSourceID: selectedLanguageID,
@@ -289,7 +302,8 @@ struct DomainRuleEditSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
-                .disabled(domain.trimmingCharacters(in: .whitespaces).isEmpty || selectedLanguageID.isEmpty)
+                // 🌟 [핵심 개선] 슬래시(/)가 포함되어 있으면 강제로 저장(Save) 버튼을 비활성화
+                .disabled(domain.trimmingCharacters(in: .whitespaces).isEmpty || selectedLanguageID.isEmpty || hasInvalidPath)
             }
             .padding(20)
             .background(Color(NSColor.windowBackgroundColor))
