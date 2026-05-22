@@ -265,7 +265,7 @@ struct AboutSettingsView: View {
                 // 🌟 위에서 에러가 풀리면 .utf8 에러도 자연스럽게 사라집니다. (명시적으로 String.Encoding.utf8로 적어도 무방합니다)
                 try fullLogContent.write(to: url, atomically: true, encoding: String.Encoding.utf8)
             } catch {
-                print("Failed to save debug logs: \(error)")
+                dprint("Failed to save debug logs: \(error)")
             }
         }
     }

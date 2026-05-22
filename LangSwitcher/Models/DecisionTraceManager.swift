@@ -51,9 +51,7 @@ final class DecisionTraceManager: ObservableObject {
             }
         }
         
-        #if DEBUG
-        print("🔍 [Trace] \(trace.eventType.rawValue): \(trace.reasonMessage)")
-        #endif
+        dprint("🔍 [Trace] \(trace.eventType.rawValue): \(trace.reasonMessage)")
     }
 
     /// 모든 기록을 삭제합니다.

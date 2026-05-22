@@ -63,7 +63,7 @@ class UpdateManager: ObservableObject {
     
     // 🌟 [추가됨] 앱이 닫힐 때 시스템이 이 함수를 호출하여 안전하게 타이머를 멈춥니다.
     @objc private func appWillTerminate() {
-        // print("UpdateManager is stopping before app termination") // 필요하다면 주석 해제
+        dprint("UpdateManager is stopping before app termination") // 필요하다면 주석 해제
         stopAutoUpdateCheck()
     }
 
@@ -81,7 +81,7 @@ class UpdateManager: ObservableObject {
     func stopAutoUpdateCheck() {
         timer?.invalidate()
         timer = nil
-        print("✅ [UpdateManager] Auto update timer invalidated.")
+        dprint("✅ [UpdateManager] Auto update timer invalidated.")
     }
 
     private func checkIfAutoUpdateNeeded() {
@@ -121,7 +121,7 @@ class UpdateManager: ObservableObject {
                 self?.isChecking = false
 
                 if let error = error {
-                    print("Update check failed: \(error.localizedDescription)")
+                    dprint("Update check failed: \(error.localizedDescription)")
                     if !isAutomatic { self?.activeAlert = .error(error.localizedDescription) }
                     return
                 }

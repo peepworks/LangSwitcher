@@ -122,8 +122,6 @@ class AccessibilityManager: ObservableObject {
     private func stopMonitoring() {
         timer?.invalidate()
         timer = nil
-        #if DEBUG
-        print("AccessibilityManager: 권한 모니터링 타이머가 안전하게 종료되었습니다.")
-        #endif
+        dprint("AccessibilityManager: 권한 모니터링 타이머가 안전하게 종료되었습니다.")
     }
 }

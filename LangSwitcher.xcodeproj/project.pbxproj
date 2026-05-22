@@ -32,6 +32,7 @@
 		125FF5242F6599E0005DAB0C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 129E052E2F657B6A00F34ABE /* Assets.xcassets */; };
 		126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */; };
 		126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */; };
+		127329252FBFFEBE00D85255 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127329242FBFFEB900D85255 /* Logger.swift */; };
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
 		1283B3592FB2F3FC00E04E2B /* RulePriorityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */; };
 		128CF91E2FB439C600B9672C /* DecisionTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128CF91D2FB439C200B9672C /* DecisionTrace.swift */; };
@@ -107,6 +108,7 @@
 		125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityManager.swift; sourceTree = "<group>"; };
 		126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HyperKeyManager.swift; sourceTree = "<group>"; };
 		126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeGlowManager.swift; sourceTree = "<group>"; };
+		127329242FBFFEB900D85255 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		12744D562F89E66A0033C06A /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RulePriorityView.swift; sourceTree = "<group>"; };
 		128CF91D2FB439C200B9672C /* DecisionTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionTrace.swift; sourceTree = "<group>"; };
@@ -123,7 +125,7 @@
 		129D74D32FA4329100227AD9 /* StatsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsManager.swift; sourceTree = "<group>"; };
 		129E05202F657B5200F34ABE /* LangSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		129E052E2F657B6A00F34ABE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		129E05322F657E1600F34ABE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		129E05322F657E1600F34ABE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		12A6DB382FB190ED0000A927 /* TextExpansionRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextExpansionRule.swift; sourceTree = "<group>"; };
 		12A6DB3A2FB191030000A927 /* TextExpander.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextExpander.swift; sourceTree = "<group>"; };
 		12B3CA852FB2C78E00C5F49A /* AboutSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutSettingsView.swift; sourceTree = "<group>"; };
@@ -280,6 +282,14 @@
 			path = TextExpander;
 			sourceTree = "<group>";
 		};
+		127329232FBFFE8100D85255 /* Utils */ = {
+			isa = PBXGroup;
+			children = (
+				127329242FBFFEB900D85255 /* Logger.swift */,
+			);
+			path = Utils;
+			sourceTree = "<group>";
+		};
 		1280BFF12FA1AFA6007FE696 /* Assets */ = {
 			isa = PBXGroup;
 			children = (
@@ -340,16 +350,17 @@
 		129E05312F657B6A00F34ABE /* LangSwitcher */ = {
 			isa = PBXGroup;
 			children = (
-				1239486B2F9C990D00980FAF /* LangSwitcher.entitlements */,
 				129E05322F657E1600F34ABE /* Info.plist */,
-				129E052E2F657B6A00F34ABE /* Assets.xcassets */,
 				12F1EF5C2F67BDD3003B94B0 /* InfoPlist.xcstrings */,
+				1239486B2F9C990D00980FAF /* LangSwitcher.entitlements */,
 				12F1EF5A2F67B98A003B94B0 /* Localizable.xcstrings */,
 				125FF4C92F657EFF005DAB0C /* App */,
 				1280BFF12FA1AFA6007FE696 /* Assets */,
+				129E052E2F657B6A00F34ABE /* Assets.xcassets */,
 				125FF4CB2F657F1A005DAB0C /* Controllers */,
 				1220DB532FB15E6F00D8CEAD /* Intents */,
 				125FF4CA2F657F10005DAB0C /* Models */,
+				127329232FBFFE8100D85255 /* Utils */,
 				125FF4CC2F657F22005DAB0C /* Views */,
 			);
 			path = LangSwitcher;
@@ -539,6 +550,7 @@
 				12B3CA9C2FB2C78E00C5F49A /* TypoCorrectionSettingsView.swift in Sources */,
 				125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */,
 				126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */,
+				127329252FBFFEBE00D85255 /* Logger.swift in Sources */,
 				1220DB592FB15EF100D8CEAD /* LangSwitcherShortcuts.swift in Sources */,
 				128CF9222FB43A2900B9672C /* TraceFactory.swift in Sources */,
 				1241A8C02FAEEC1E0078CD5F /* SettingsModels.swift in Sources */,

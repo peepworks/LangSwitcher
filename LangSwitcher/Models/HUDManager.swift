@@ -63,15 +63,11 @@ class HUDManager {
     func showHUD(languageName: String) {
         let snapshot = SettingsManager.shared.snapshot
 
-        #if DEBUG
-        print("📍 HUD Debug: 호출됨! [CenterEnabled: \(snapshot.showVisualFeedback)] [MiniEnabled: \(snapshot.isCursorHUDEnabled)]")
-        #endif
+        dprint("📍 HUD Debug: 호출됨! [CenterEnabled: \(snapshot.showVisualFeedback)] [MiniEnabled: \(snapshot.isCursorHUDEnabled)]")
 
         // 두 옵션이 모두 꺼져 있다면 아무것도 그리지 않고 즉시 종료합니다.
         guard snapshot.showVisualFeedback || snapshot.isCursorHUDEnabled else {
-            #if DEBUG
-            print("📍 HUD Debug: 모든 시각적 피드백 옵션이 꺼져있어 종료합니다.")
-            #endif
+            dprint("📍 HUD Debug: 모든 시각적 피드백 옵션이 꺼져있어 종료합니다.")
             return
         }
 
@@ -89,7 +85,7 @@ class HUDManager {
                     // 미니 플래그를 그려야 하는데 좌표 획득에 완전히 실패한 경우의 방어 로직
                     // (단, 중앙 HUD가 이미 켜져 있다면 중복해서 호출하지 않음)
                     if !snapshot.showVisualFeedback {
-                        print("📍 HUD Debug: [Fallback] 미니 플래그 실패로 중앙 HUD를 대체 표시합니다.")
+                        dprint("📍 HUD Debug: [Fallback] 미니 플래그 실패로 중앙 HUD를 대체 표시합니다.")
                         self.showCenterHUD(languageName: languageName)
                     }
                 }
@@ -165,6 +161,7 @@ class HUDManager {
 
         let error = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
         if error != .success {
+            dprint("📍 HUD Debug: [실패] 포커스된 텍스트 입력창을 찾을 수 없음")
             return getMouseFallbackRect("포커스된 텍스트 입력창 찾을 수 없음")
         }
         guard let element = focusedElement as! AXUIElement? else {
@@ -174,6 +171,7 @@ class HUDManager {
         var selectedRangeValue: CFTypeRef?
         let rangeError = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRangeValue)
         if rangeError != .success {
+            dprint("📍 HUD Debug: [실패] 텍스트 커서(SelectedRange)를 찾을 수 없음.")
             return getMouseFallbackRect("텍스트 커서(SelectedRange) 속성 없음")
         }
 
@@ -186,34 +184,47 @@ class HUDManager {
         )
 
         guard boundsError == .success, let unwrappedBounds = boundsValue else {
+            dprint("📍 HUD Debug: [실패] 커서의 화면 좌표(Bounds)를 계산할 수 없음.")
             return getMouseFallbackRect("화면 좌표(Bounds) 계산 실패")
         }
 
         var bounds: CGRect = .zero
         let axValue = unwrappedBounds as! AXValue
         guard AXValueGetValue(axValue, .cgRect, &bounds) else {
+            dprint("📍 HUD Debug: [실패] 좌표값 형변환 실패")
             return getMouseFallbackRect("좌표값(AXValue) 형변환 실패")
         }
 
-        // 🌟 [핵심 보정] 크롬 등에서 크기가 0이거나 비정상적인 값을 반환할 때
-        if bounds.height <= 0 || bounds.width > 200 {
-            return getMouseFallbackRect("앱이 비정상적인 커서 크기를 반환함 (w: \(bounds.width), h: \(bounds.height))")
+        // 🌟 크기가 0이더라도 X, Y 좌표가 정상적이면 강제로 높이를 부여해서 살려냅니다.
+        if bounds.height <= 0 {
+            if bounds.origin.x > 0 || bounds.origin.y > 0 {
+                dprint("📍 HUD Debug: [보정됨] 커서 크기가 0이지만 좌표가 유효하여 강제 보정합니다. (origin: \(bounds.origin))")
+                bounds.size.height = 18.0
+                bounds.size.width = 1.0
+            } else {
+                dprint("📍 HUD Debug: [실패] 커서 크기와 좌표가 모두 0입니다 -> \(bounds)")
+                return getMouseFallbackRect("커서 크기와 좌표가 모두 0")
+            }
+        } else if bounds.width > 200 {
+            dprint("📍 HUD Debug: [무시됨] 커서 폭이 비정상적으로 큼 -> \(bounds)")
+            return getMouseFallbackRect("비정상적인 커서 크기 (width > 200)")
         }
 
-        print("📍 HUD Debug: [성공] 텍스트 커서 좌표 획득 -> \(bounds)")
+        dprint("📍 HUD Debug: [성공] 텍스트 커서 좌표 획득 -> \(bounds)")
         return bounds
     }
 
     // 🌟 텍스트 커서 위치 획득 실패 시 '마우스 포인터' 위치를 반환하는 최후의 방어선
     private func getMouseFallbackRect(_ reason: String) -> CGRect {
-        print("📍 HUD Debug: [마우스 Fallback 발동] \(reason)")
+        dprint("📍 HUD Debug: [마우스 Fallback 발동] \(reason)")
+
         let mouseLoc = NSEvent.mouseLocation
         let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
-        
+
         // NSEvent는 화면 좌측 하단(Bottom-Left) 기준이고,
         // AX API는 좌측 상단(Top-Left) 기준이므로 Y축을 뒤집어 줍니다.
         let flippedY = screenHeight - mouseLoc.y
-        
+
         // 마우스 포인터 바로 옆(우측 하단)에 위치하도록 가상의 커서 Rect 생성
         return CGRect(x: mouseLoc.x + 2, y: flippedY - 18, width: 1.0, height: 18.0)
     }

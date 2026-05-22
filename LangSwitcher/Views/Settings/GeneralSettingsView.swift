@@ -39,7 +39,7 @@ struct GeneralSettingsView: View {
                                 do {
                                     if newValue { try SMAppService.mainApp.register() }
                                     else { try SMAppService.mainApp.unregister() }
-                                } catch { print("Auto-launch error: \(error)") }
+                                } catch { dprint("Auto-launch error: \(error)") }
                             }
                         
                         Divider().padding(.horizontal, 15)

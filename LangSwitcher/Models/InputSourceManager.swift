@@ -75,9 +75,7 @@ class InputSourceManager: ObservableObject {
             let currentID = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
             
             if currentID == id {
-                #if DEBUG
-                print("💡 이미 해당 언어(\(id))를 사용 중입니다. 전환 및 HUD 표시를 생략합니다.")
-                #endif
+                dprint("💡 이미 해당 언어(\(id))를 사용 중입니다. 전환 및 HUD 표시를 생략합니다.")
                 return
             }
         }

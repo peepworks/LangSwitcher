@@ -305,7 +305,7 @@ struct StatsSettingsView: View {
         if panel.runModal() == .OK, let url = panel.url {
             statsManager.exportToCSV(to: url) { success, error in
                 if !success, let err = error {
-                    print("CSV Export Failed: \(err)")
+                    dprint("CSV Export Failed: \(err)")
                 }
             }
         }

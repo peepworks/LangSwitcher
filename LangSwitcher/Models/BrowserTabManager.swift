@@ -383,15 +383,15 @@ class BrowserTabManager {
         )
         SettingsManager.shared.addLog(log)
 
-        #if DEBUG
-        print("Tab Memory Failed (\(logMessage)). Fallback to Window Memory for \(appName).")
-        #endif
+        dprint("Tab Memory Failed (\(logMessage)). Fallback to Window Memory for \(appName).")
     }
 
     // MARK: - LRU Cache Management
     
     private func touchTabMemory(key: String) {
-        if currentTick == Int.max { rebuildTicksFromScratch() }
+        if currentTick > 1_000_000 {
+            rebuildTicksFromScratch()
+        }
         currentTick += 1
         tabAccessTicks[key] = currentTick
 

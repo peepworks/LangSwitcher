@@ -139,9 +139,7 @@ class StatsManager: ObservableObject {
             if let data = try? JSONEncoder().encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: self.defaultsKey)
                 
-                #if DEBUG
-                print("StatsManager: 변경된 통계 데이터가 백그라운드에서 저장되었습니다.")
-                #endif
+                dprint("StatsManager: 변경된 통계 데이터가 백그라운드에서 저장되었습니다.")
             }
         }
     }

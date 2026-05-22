@@ -136,7 +136,7 @@ class SettingsManager: ObservableObject {
                 }
             }
             
-            print("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
+            dprint("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
         }
     }
     
@@ -246,9 +246,7 @@ class SettingsManager: ObservableObject {
                 UserDefaults.standard.set(e, forKey: "profiles")
             }
         }
-        #if DEBUG
-        print("SettingsManager: 프로필 데이터가 디스크에 저장되었습니다.")
-        #endif
+        dprint("SettingsManager: 프로필 데이터가 디스크에 저장되었습니다.")
     }
     
     // 🌟 [핵심] 프로필이 전환될 때 호출되는 통합 업데이트 메서드 (최적화 완료)
@@ -276,9 +274,7 @@ class SettingsManager: ObservableObject {
         let log = ActionLog(timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Profile Switched", finalInputSource: "Active Profile: \(activeProfile.name)", result: .success, failureReason: .none)
         addLog(log)
             
-        #if DEBUG
-        print("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
-        #endif
+        dprint("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
     }
     
     var snapshot: SettingsSnapshot {
@@ -440,9 +436,9 @@ class SettingsManager: ObservableObject {
                     let data = try encoder.encode(self.profiles)
                     
                     try data.write(to: url)
-                    print("✅ Profiles successfully exported to \(url.lastPathComponent)")
+                    dprint("✅ Profiles successfully exported to \(url.lastPathComponent)")
                 } catch {
-                    print("❌ Failed to export profiles: \(error.localizedDescription)")
+                    dprint("❌ Failed to export profiles: \(error.localizedDescription)")
                 }
             }
         }
@@ -493,11 +489,11 @@ class SettingsManager: ObservableObject {
                         NSApp.activate(ignoringOtherApps: true)
                         alert.runModal()
                     }
-                    print("✅ Profiles successfully imported from \(url.lastPathComponent)")
+                    dprint("✅ Profiles successfully imported from \(url.lastPathComponent)")
                     
                 } catch {
                     // 🌟 [수정 2] 파싱 실패(에러) 시 콘솔에만 찍지 않고 크리티컬 에러창 띄우기
-                    print("❌ Failed to import profiles: \(error.localizedDescription)")
+                    dprint("❌ Failed to import profiles: \(error.localizedDescription)")
                     DispatchQueue.main.async {
                         let alert = NSAlert()
                         alert.messageText = String(localized: "Import Failed")

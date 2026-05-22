@@ -37,9 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         Task {
             LangSwitcherShortcuts.updateAppShortcutParameters()
-            #if DEBUG
-            print("단축어(App Intents) 강제 업데이트 완료!")
-            #endif
+            dprint("단축어(App Intents) 강제 업데이트 완료!")
         }
 
         AppMonitor.shared.start()

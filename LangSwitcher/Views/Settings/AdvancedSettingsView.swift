@@ -269,7 +269,7 @@ struct AdvancedSettingsView: View {
                         alert.runModal()
                     }
                 } else if let error = error {
-                    print("Export failed: \(error.localizedDescription)")
+                    dprint("Export failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -295,7 +295,7 @@ struct AdvancedSettingsView: View {
                         alert.runModal()
                     }
                 } else if let error = error {
-                    print("Import failed: \(error.localizedDescription)")
+                    dprint("Import failed: \(error.localizedDescription)")
                 }
             }
         }

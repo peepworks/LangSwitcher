@@ -51,11 +51,9 @@ class SensoryFeedbackManager {
                 soundToPlay?.play()
                 
                 // 만약 baseSound 자체가 아예 없다면(파일 유실 등) 디버그 로그 출력
-                #if DEBUG
                 if soundToPlay == nil {
-                    print("⚠️ [SensoryFeedbackManager] 사운드 재생 실패: baseSound 파일 자체를 찾을 수 없습니다.")
+                    dprint("⚠️ [SensoryFeedbackManager] 사운드 재생 실패: baseSound 파일 자체를 찾을 수 없습니다.")
                 }
-                #endif
             }
         }
     }

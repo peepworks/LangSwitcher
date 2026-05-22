@@ -92,7 +92,7 @@ class HyperKeyManager {
                         mappings = parsed
                     }
                 } catch {
-                    print("HyperKeyManager: 기존 hidutil 맵핑을 파싱하는데 실패했습니다.")
+                    dprint("HyperKeyManager: 기존 hidutil 맵핑을 파싱하는데 실패했습니다.")
                 }
             }
 
@@ -132,14 +132,14 @@ class HyperKeyManager {
                             failureReason: .unknown
                         ))
                     }
-                    print("hidutil 실행 실패: code \(proc.terminationStatus)")
+                    dprint("hidutil 실행 실패: code \(proc.terminationStatus)")
                 }
             }
 
             do {
                 try setTask.run()
             } catch {
-                print("hidutil set 실행 자체를 실패함: \(error)")
+                dprint("hidutil set 실행 자체를 실패함: \(error)")
             }
         }
     }
@@ -255,7 +255,8 @@ class HyperKeyManager {
         task.terminationHandler = { proc in
             if proc.terminationStatus != 0 {
                 DispatchQueue.main.async {
-                    print("Caps Lock 토글 스크립트 실패 (종료 코드: \(proc.terminationStatus))")
+                    dprint("Caps Lock 토글 스크립트 실패 (종료 코드: \(proc.terminationStatus))")
+                    
                     SettingsManager.shared.addLog(ActionLog(
                         timestamp: Date(),
                         targetApp: "System",
@@ -271,7 +272,7 @@ class HyperKeyManager {
         do {
             try task.run()
         } catch {
-            print("Caps Lock toggle 실행 자체를 실패함: \(error)")
+            dprint("Caps Lock toggle 실행 자체를 실패함: \(error)")
         }
     }
 }

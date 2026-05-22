@@ -18,16 +18,11 @@
 
 import Foundation
 
-extension SettingsManager {
-    @MainActor
-    func clearAllAppCaches() {
-        BrowserTabManager.shared.clearMemory()
-        WindowMonitor.shared.clearMemory()
-        EventMonitor.shared.clearTypingBuffer()
-        
-        let statusMessage = String(localized: "✨ All Memories Cleared")
-        HUDManager.shared.showHUD(languageName: statusMessage)
-        
-        dprint("LangSwitcher: All caches and memory records have been manually cleared.")
-    }
+/// 디버그 모드에서만 출력되는 커스텀 프린트 함수
+func dprint(_ items: Any..., file: String = #file, line: Int = #line) {
+    #if DEBUG
+    let fileName = (file as NSString).lastPathComponent
+    let output = items.map { "\($0)" }.joined(separator: " ")
+    print("🐞 [\(fileName):\(line)] \(output)")
+    #endif
 }
