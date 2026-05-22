@@ -17,6 +17,7 @@
 //
 
 import Cocoa
+import Foundation
 
 class AppMonitor {
     static let shared = AppMonitor()
@@ -36,6 +37,9 @@ class AppMonitor {
 
     func start() {
         if observer != nil { return }
+        
+        // 🌟 앱 모니터가 시작될 때 메모리 모니터도 함께 백그라운드에서 돌기 시작하도록 호출해 줍니다.
+        MemoryMonitor.shared.startMonitoring()
         
         activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         
@@ -98,5 +102,58 @@ class AppMonitor {
         observer = nil
         deactivateObserver = nil
         activeAppBundleID = ""
+    }
+}
+
+class MemoryMonitor {
+    static let shared = MemoryMonitor()
+    private var timer: Timer?
+    
+    // 임계값 설정 (예: 150MB = 150 * 1024 * 1024)
+    private let thresholdInBytes: UInt64 = 150_000_000
+    
+    func startMonitoring() {
+        // 60초마다 가볍게 체크 (UI 스레드에 부담을 주지 않도록 백그라운드 권장)
+        timer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            self?.checkMemoryUsage()
+        }
+    }
+    
+    private func checkMemoryUsage() {
+        guard let currentMemory = reportMemoryUsage() else { return }
+        
+        if currentMemory > thresholdInBytes {
+            let memoryInMB = currentMemory / 1024 / 1024
+            
+            dprint("🚨 [경고] 메모리 사용량 비정상: \(memoryInMB) MB")
+            
+            // 🌟 주석을 풀고 실제로 로그에 기록하도록 수정합니다.
+            let log = ActionLog(
+                timestamp: Date(),
+                targetApp: "LangSwitcher System",
+                appliedRule: "Memory Alert", // 로그에서 이 키워드로 메모리 경고를 쉽게 찾을 수 있습니다.
+                finalInputSource: "\(memoryInMB) MB",
+                result: .failure,
+                failureReason: .unknown
+            )
+            SettingsManager.shared.addLog(log)
+        }
+    }
+    
+    // 현재 앱의 실제 사용 메모리를 가져오는 저수준 C API 함수
+    private func reportMemoryUsage() -> UInt64? {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        
+        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        
+        if kerr == KERN_SUCCESS {
+            return info.resident_size // 바이트 단위 반환
+        }
+        return nil
     }
 }

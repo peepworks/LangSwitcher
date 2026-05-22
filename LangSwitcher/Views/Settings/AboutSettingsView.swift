@@ -249,24 +249,54 @@ struct AboutSettingsView: View {
         NSApp.activate(ignoringOtherApps: true)
 
         if savePanel.runModal() == .OK, let url = savePanel.url {
-            let logHeader = "LangSwitcher Debug Log\nGenerated: \(Date().description)\nApp Version: \(appVersion)\n----------------------------------\n\n"
+            // 🌟 1. 현재 OS 버전과 메모리 사용량을 가져옵니다.
+            let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+            let memoryUsage = getCurrentMemoryUsageMB()
+            let memoryString = memoryUsage != nil ? String(format: "%.2f MB", memoryUsage!) : "Unknown"
+
+            // 🌟 2. 파일 상단 헤더에 시스템 진단 정보를 상세히 추가합니다.
+            let logHeader = """
+            ==================================
+            LangSwitcher Debug Log
+            ==================================
+            Generated     : \(Date().description)
+            App Version   : \(appVersion)
+            macOS Version : \(osVersion)
+            Memory Usage  : \(memoryString)
+            ==================================\n\n
+            """
 
             let logEntries = settings.recentLogs.map { log in
                 let timeStr = Self.debugLogFormatter.string(from: log.timestamp)
                 let resultMark = log.result == .success ? "✅" : "❌"
                 
-                // 🌟 [수정됨] log.failureReason?.rawValue 에서 물음표(?)와 대체값(??)을 제거했습니다.
                 return "[\(timeStr)] \(resultMark) Rule: \(log.appliedRule) | Target: \(log.targetApp) | Output: \(log.finalInputSource) | Reason: \(log.failureReason.rawValue)"
             }.joined(separator: "\n")
 
             let fullLogContent = logHeader + logEntries
 
             do {
-                // 🌟 위에서 에러가 풀리면 .utf8 에러도 자연스럽게 사라집니다. (명시적으로 String.Encoding.utf8로 적어도 무방합니다)
                 try fullLogContent.write(to: url, atomically: true, encoding: String.Encoding.utf8)
             } catch {
                 dprint("Failed to save debug logs: \(error)")
             }
         }
+    }
+
+    // 🌟 [새로 추가] C API를 이용해 현재 앱의 실제 메모리(Resident Size)를 MB 단위로 반환하는 헬퍼 함수
+    private func getCurrentMemoryUsageMB() -> Double? {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        
+        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        
+        if kerr == KERN_SUCCESS {
+            return Double(info.resident_size) / (1024 * 1024)
+        }
+        return nil
     }
 }
