@@ -64,31 +64,38 @@ class HUDManager {
         let snapshot = SettingsManager.shared.snapshot
 
         #if DEBUG
-        print("📍 HUD Debug: 호출됨! [HUDEnabled: \(snapshot.showVisualFeedback)] [MiniEnabled: \(snapshot.isCursorHUDEnabled)]")
+        print("📍 HUD Debug: 호출됨! [CenterEnabled: \(snapshot.showVisualFeedback)] [MiniEnabled: \(snapshot.isCursorHUDEnabled)]")
         #endif
 
-        guard snapshot.showVisualFeedback else {
+        // 두 옵션이 모두 꺼져 있다면 아무것도 그리지 않고 즉시 종료합니다.
+        guard snapshot.showVisualFeedback || snapshot.isCursorHUDEnabled else {
             #if DEBUG
-            print("📍 HUD Debug: 시각적 피드백 옵션이 꺼져있어 종료합니다.")
+            print("📍 HUD Debug: 모든 시각적 피드백 옵션이 꺼져있어 종료합니다.")
             #endif
             return
         }
 
         DispatchQueue.main.async {
+            // 1. 중앙 HUD 처리 (독립 실행)
+            if snapshot.showVisualFeedback {
+                self.showCenterHUD(languageName: languageName)
+            }
+
+            // 2. 커서 미니 HUD 처리 (독립 실행)
             if snapshot.isCursorHUDEnabled {
                 if let cursorRect = self.getCursorRect() {
                     self.showCursorMiniHUD(text: languageName, at: cursorRect)
                 } else {
-                    print("📍 HUD Debug: [실패] 커서 좌표를 구할 수 없어 중앙 HUD로 Fallback 합니다.")
-                    self.showCenterHUD(languageName: languageName)
+                    // 미니 플래그를 그려야 하는데 좌표 획득에 완전히 실패한 경우의 방어 로직
+                    // (단, 중앙 HUD가 이미 켜져 있다면 중복해서 호출하지 않음)
+                    if !snapshot.showVisualFeedback {
+                        print("📍 HUD Debug: [Fallback] 미니 플래그 실패로 중앙 HUD를 대체 표시합니다.")
+                        self.showCenterHUD(languageName: languageName)
+                    }
                 }
-            } else {
-                print("📍 HUD Debug: 미니 플래그 옵션이 꺼져있어 중앙 HUD를 표시합니다.")
-                self.showCenterHUD(languageName: languageName)
             }
         }
     }
-
 
     // MARK: - 중앙 HUD
 
