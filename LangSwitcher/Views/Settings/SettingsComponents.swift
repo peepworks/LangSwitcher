@@ -269,6 +269,7 @@ struct AppLaunchShortcutRow: View {
                     }
                     Text(shortcut.appName).lineLimit(1)
                 }
+                // ❌ 기존의 중복되고 에러 나던 .onAppear / .onDisappear 블록을 제거했습니다.
             }
 
             Spacer()
@@ -285,7 +286,6 @@ struct AppLaunchShortcutRow: View {
             .padding(.trailing, 5)
 
             Button(action: {
-                // 🌟 [수정] 삭제 타겟을 활성 프로필 페이로드 내부 목록으로 변경
                 settings.activeProfile.payload.appLaunchShortcuts.removeAll { $0.id == shortcut.id }
             }) {
                 Image(systemName: "trash").foregroundColor(.red)
@@ -294,9 +294,20 @@ struct AppLaunchShortcutRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 2)
-        .onDisappear { stopRecording() }
-        .onAppear { loadIcon() }
-        .onChange(of: shortcut.bundleIdentifier) { _ in loadIcon() }
+        .onAppear {
+            // 🌟 최초 뷰가 로드될 때 아이콘을 안전하게 비동기로 가져옵니다.
+            loadIcon()
+        }
+        .onChange(of: shortcut.bundleIdentifier) { _ in
+            // 앱이 바뀌면 새로운 아이콘으로 갱신합니다.
+            loadIcon()
+        }
+        // 🌟 [핵심 수정] 행 전체가 화면에서 사라질 때 단축키 녹음을 강제 중단하고,
+        // 무거운 고해상도 앱 아이콘 메모리(NSImage)를 완벽하게 방출합니다!
+        .onDisappear {
+            stopRecording()
+            self.appIcon = nil
+        }
     }
 
     private func loadIcon() {
@@ -309,6 +320,7 @@ struct AppLaunchShortcutRow: View {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
             let icon = NSWorkspace.shared.icon(forFile: url.path)
             DispatchQueue.main.async {
+                // 셀이 빠르게 스크롤될 때 아이콘이 뒤섞여 로드되는 현상(Race Condition) 방지
                 if self.currentIconLoadID == loadID {
                     self.appIcon = icon
                 }
@@ -324,7 +336,6 @@ struct AppLaunchShortcutRow: View {
         if panel.runModal() == .OK, let url = panel.url {
             guard let bundle = Bundle(url: url), let bundleId = bundle.bundleIdentifier else { return }
             let appName = url.deletingPathExtension().lastPathComponent
-            // 🌟 [수정] 서치 대상을 활성 프로필 페이로드 내부 배열로 우회
             if let index = settings.activeProfile.payload.appLaunchShortcuts.firstIndex(where: { $0.id == shortcut.id }) {
                 settings.activeProfile.payload.appLaunchShortcuts[index].bundleIdentifier = bundleId
                 settings.activeProfile.payload.appLaunchShortcuts[index].appName = appName
@@ -354,7 +365,6 @@ struct AppLaunchShortcutRow: View {
                 showDuplicateWarning = false
             }
         } else {
-            // 🌟 [수정] 인덱스 할당 타겟을 활성 프로필 페이로드 내부 구조로 변경
             if let index = settings.activeProfile.payload.appLaunchShortcuts.firstIndex(where: { $0.id == self.shortcut.id }) {
                 settings.activeProfile.payload.appLaunchShortcuts[index].keyCode = keyCode
                 settings.activeProfile.payload.appLaunchShortcuts[index].modifierFlags = modifiers
@@ -369,7 +379,6 @@ struct AppLaunchShortcutRow: View {
         isRecording = false
     }
     
-    // 🌟 [수정] 중복 검사 타겟을 활성 프로필 페이로드 데이터로 이관
     private func getConflictMessage(keyCode: UInt16, modifiers: UInt64) -> String? {
         let payload = settings.activeProfile.payload
         if settings.toggleKeyCode == keyCode && settings.toggleModifierFlags == modifiers { return String(localized: "Toggle Key") }

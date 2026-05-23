@@ -63,29 +63,25 @@ class StatsManager: ObservableObject {
         }
     }
     
+    private var publishWorkItem: DispatchWorkItem?
+    
     // MARK: - 비동기 이벤트 훅 (Event Hooks)
     
     func incrementLanguageSwitch() {
         let dateKey = todayKey()
         
-        // 🌟 [1단계: 쓰기] barrier 안에서는 오직 데이터 변경만 하고 잽싸게 빠져나옵니다.
+        // 1단계: 쓰기 (barrier 적용으로 스레드 안전성 확보)
         stateQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
-            
-            // 🌟 [수정됨] self.internalStatsDict 사용 및 DailyStat 초기화 파라미터 이름 매칭
             var stat = self.internalStatsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
-            
-            // 🌟 [수정됨] switchCount 대신 languageSwitches 사용
             stat.languageSwitches += 1
-            
             self.internalStatsDict[dateKey] = stat
             self.isDirty = true
-        } // 🚪 여기서 독방 문이 열립니다!
-        
-        // 🌟 [2단계: 부수 효과] 문을 열고 나온 뒤에, 독립적으로 UI 갱신을 요청합니다.
-        DispatchQueue.main.async { [weak self] in
-            self?.publishUpdate()
         }
+        
+        // 🌟 [최적화] 메인 스레드 이중 감싸기를 제거하고 직접 스케줄러를 호출합니다.
+        // schedulePublishUpdate() 내부의 asyncAfter가 메인 스레드로의 전환과 0.3초 대기를 알아서 처리합니다.
+        schedulePublishUpdate()
     }
     
     func incrementTypoCorrection() {
@@ -177,6 +173,22 @@ class StatsManager: ObservableObject {
                 self?.statsDict = dictSnapshot
             }
         }
+    }
+    
+    // 🌟 [새로 추가] UI 업데이트 요청을 0.3초 동안 모아서 한 번만 실행하는 디바운스 엔진
+    private func schedulePublishUpdate() {
+        // 이미 예약된 업데이트 작업이 있다면 쿨하게 취소합니다. (연속 요청 씹기)
+        publishWorkItem?.cancel()
+        
+        // 0.3초 뒤에 실행할 새로운 UI 갱신 작업을 만듭니다.
+        let item = DispatchWorkItem { [weak self] in
+            self?.publishUpdate()
+        }
+        
+        publishWorkItem = item
+        
+        // 메인 큐에서 0.3초 뒤에 실행하도록 예약합니다.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
 
     // 🌟 [수정됨] 멀티스레드에서 수천 번 동시에 접근해도 절대 뻗지 않는 안전한 포매터 도입!

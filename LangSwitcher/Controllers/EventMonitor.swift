@@ -51,6 +51,8 @@ class EventMonitor {
     var localSnapshot: SettingsSnapshot?
     let snapshotLock = NSLock()
     
+    var pendingInsertTasks: [DispatchWorkItem] = []
+    
     init() {}
 
     func start() {
@@ -76,7 +78,6 @@ class EventMonitor {
                             let monitor = Unmanaged<EventMonitor>.fromOpaque(refcon).takeUnretainedValue()
                             if let tap = monitor.eventTap {
                                 CGEvent.tapEnable(tap: tap, enable: true)
-                                // ... (로그 생략) ...
                             }
                         }
                         return Unmanaged.passUnretained(event)
@@ -170,10 +171,17 @@ class EventMonitor {
                                     // 🌟 2. 렌더링된 전체 결과(text, cursorOffset)를 전달
                                     EventMonitor.shared.performTextExpansion(triggerLength: matchedRule.trigger.count, snippet: renderedSnippet, triggerKeyCode: UInt16(keyCode))
                                     
-                                    // 🌟 3. 디버거 로그 기록 (reason 추가)
+                                    // 🌟 3. 디버거 로그 기록 (메모리 최적화)
                                     let cursorLog = renderedSnippet.cursorOffsetFromStart != nil ? " (Cursor Restored)" : ""
-                                    let maskedText = String(repeating: "*", count: renderedSnippet.text.count)
-                                    var log = ActionLog(timestamp: Date(), targetApp: currentAppID, appliedRule: "Text Expansion (\(matchedRule.trigger))", finalInputSource: "Expanded: \(maskedText)\(cursorLog)", result: .success, failureReason: .none)
+                                    // ✅ [개선됨] 수백 자의 치환 결과 대신, 어떤 단어(trigger)가 텍스트 확장을 발생시켰는지만 심플하게 남깁니다.
+                                    var log = ActionLog(
+                                        timestamp: Date(),
+                                        targetApp: currentAppID,
+                                        appliedRule: "Text Expansion",
+                                        finalInputSource: "Trigger: [\(matchedRule.trigger)]\(cursorLog)",
+                                        result: .success,
+                                        failureReason: .none
+                                    )
                                     log.actionType = .textExpansion
                                     SettingsManager.shared.addLog(log)
 

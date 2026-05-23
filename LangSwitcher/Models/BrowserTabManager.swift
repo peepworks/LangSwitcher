@@ -66,58 +66,68 @@ actor JXARaceManager {
     }
 }
 
-// 🌟 [핵심 개선] TaskGroup과 ThrowingContinuation을 결합한 완벽한 안전 구조
+// 🌟 [핵심 개선] OSAScript(인프로세스) 대신 Process(아웃프로세스)를 사용하여
+// 타임아웃 시 강제로 프로세스를 죽여 메모리와 스레드 누수를 완벽히 차단합니다.
 func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async throws -> String? {
-    
-    // 두 개의 작업을 동시에 실행하고, 먼저 완료된 결과를 반환하는 그룹
     return try await withThrowingTaskGroup(of: String?.self) { group in
-        
-        // 작업 1: 실제 JXA 스크립트 실행
+        let process = Process()
+        process.launchPath = "/usr/bin/osascript"
+        process.arguments = ["-l", "JavaScript", "-e", script]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+
+        // 작업 1: 별도의 프로세스로 JXA 실행
         group.addTask {
             return try await withCheckedThrowingContinuation { continuation in
-                // 백그라운드 큐로 보내어 메인 스레드나 액터가 멈추는 것을 방지
-                DispatchQueue.global(qos: .userInitiated).async {
-                    guard let jsLanguage = OSALanguage(forName: "JavaScript") else {
-                        // 🚨 실패 경로 1: 엔진 초기화 실패 시 반드시 resume(throwing:) 호출
-                        continuation.resume(throwing: JXAError.scriptFailed("JS 엔진 초기화 실패"))
-                        return
+                process.terminationHandler = { [weak process] p in
+                    defer {
+                        // 🌟 파이프 자원 명시적 반납 (메모리 누수 원천 차단)
+                        pipe.fileHandleForReading.closeFile()
+                        errorPipe.fileHandleForReading.closeFile()
+                        process?.terminationHandler = nil
                     }
-                    
-                    let osaScript = OSAScript(source: script, language: jsLanguage)
-                    var errorInfo: NSDictionary?
-                    
-                    // JXA 실행 (동기 블로킹 발생 가능 구간)
-                    let result = osaScript.executeAndReturnError(&errorInfo)
-                    
-                    if let errorInfo = errorInfo {
-                        // 🚨 실패 경로 2: 스크립트 실행 중 에러 발생 시 반드시 resume(throwing:) 호출
-                        let errorMsg = errorInfo[OSAScriptErrorMessageKey] as? String ?? "알 수 없는 JXA 에러"
-                        continuation.resume(throwing: JXAError.scriptFailed(errorMsg))
+
+                    if p.terminationStatus == 0 {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        continuation.resume(returning: output)
                     } else {
-                        // ✅ 성공 경로: 정상적으로 완료 시 resume(returning:) 호출
-                        continuation.resume(returning: result?.stringValue)
+                        // 강제 종료(terminate) 당했거나 스크립트 에러인 경우
+                        continuation.resume(throwing: JXAError.scriptFailed("Process terminated or failed"))
                     }
+                }
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
                 }
             }
         }
-        
-        // 🌟 [핵심 수정] 작업 2: 클로저의 반환 타입을 '-> String? in'으로 명시!
+
+        // 작업 2: 타임아웃 타이머
         group.addTask { () -> String? in
-            // 지정된 시간만큼 대기
             try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-            // 시간이 다 지나면 무자비하게 타임아웃 에러를 던짐
             throw JXAError.timeout
         }
-        
-        // 🌟 둘 중 먼저 완료되는 작업의 결과를 가져옴 (스크립트 완료 vs 타임아웃)
-        guard let firstResult = try await group.next() else {
-            throw JXAError.scriptFailed("실행 결과를 가져오지 못했습니다.")
+
+        do {
+            // 승자(먼저 끝난 작업) 확인
+            let firstResult = try await group.next()
+            group.cancelAll()
+            return firstResult ?? nil
+        } catch {
+            // 🚨 [핵심] 타임아웃 발생 시, 멈춰있는 osascript 프로세스를 강제 종료시켜
+            // 시스템 자원과 메모리를 즉시 회수(Self-Healing)합니다.
+            group.cancelAll()
+            if process.isRunning {
+                process.terminate()
+            }
+            throw error
         }
-        
-        // 승자가 결정되었으니 남아있는 패자(느려진 스크립트 or 아직 안 끝난 타이머)는 즉시 취소시킴
-        group.cancelAll()
-        
-        return firstResult
     }
 }
 

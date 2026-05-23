@@ -120,15 +120,15 @@ class HyperKeyManager {
             setTask.arguments = ["property", "--set", finalJsonString]
             
             // 🌟 4. [weak setTask]로 순환 참조 방지
-            setTask.terminationHandler = { [weak setTask] proc in
+            // ✅ [완벽한 패턴] 캡처 목록([weak setTask])을 지우고, 인자로 넘어온 proc을 직접 nil 처리합니다.
+            setTask.terminationHandler = { proc in
                 if proc.terminationStatus != 0 {
                     DispatchQueue.main.async {
-                        // ... 기존 에러 로그 남기는 부분 그대로 ...
                         dprint("hidutil 실행 실패")
                     }
                 }
-                // 🌟 5. 프로세스가 끝나면 강제로 할당 해제
-                setTask?.terminationHandler = nil
+                // 🌟 종료 처리가 끝나는 순간, 프로세스가 쥐고 있던 핸들러를 물리적으로 완전 파괴합니다.
+                proc.terminationHandler = nil
             }
 
             do {
@@ -248,15 +248,15 @@ class HyperKeyManager {
         task.arguments = ["-l", "JavaScript", "-e", script]
         
         // 🌟 [수정] 순환 참조의 고리를 끊고, 콜백이 끝난 뒤 깔끔하게 날려버립니다.
-        task.terminationHandler = { [weak task] proc in
+        // ✅ [완벽한 패턴] 메모리 고리를 단칼에 자르는 인자 직접 해제 방식
+        task.terminationHandler = { proc in
             if proc.terminationStatus != 0 {
                 DispatchQueue.main.async {
                     dprint("Caps Lock 토글 스크립트 실패 (종료 코드: \(proc.terminationStatus))")
-                    // ... 기존 로그 남기는 부분 그대로 ...
                 }
             }
-            // 🌟 메모리 해제
-            task?.terminationHandler = nil
+            // 🌟 메모리 연결을 완전 차단하여 즉시 해제되도록 만듭니다.
+            proc.terminationHandler = nil
         }
 
         do {

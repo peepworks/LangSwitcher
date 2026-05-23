@@ -250,18 +250,27 @@ struct AppDelayRow: View {
     @Binding var appDelay: AppDelay
     @ObservedObject private var settings = SettingsManager.shared
     @State private var appIcon: NSImage? = nil
+    // 🌟 [추가] 빠른 스크롤 시 아이콘 뒤섞임 방지를 위한 로드 트래킹 ID
+    @State private var currentIconLoadID = UUID()
 
     var body: some View {
         HStack(spacing: 12) {
             if let icon = appIcon {
-                Image(nsImage: icon).resizable().frame(width: 20, height: 20)
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 20, height: 20)
             } else {
-                Image(systemName: "app.dashed").resizable().frame(width: 20, height: 20).foregroundColor(.secondary)
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .frame(width: 20, height: 20)
+                    .foregroundColor(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(appDelay.appName).lineLimit(1)
-                Text(String(format: "%.2f sec", appDelay.delay)).font(.caption).foregroundColor(.secondary)
+                Text(String(format: "%.2f sec", appDelay.delay))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             .frame(width: 120, alignment: .leading)
 
@@ -276,15 +285,36 @@ struct AppDelayRow: View {
             .buttonStyle(.plain)
             .padding(.leading, 5)
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .onAppear { loadIcon() }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .onAppear {
+            loadIcon()
+        }
+        // 🌟 [핵심 추가] 행 전체가 화면에서 사라질 때(스크롤 아웃, 창 닫힘)
+        // 무거운 고해상도 앱 아이콘 메모리(NSImage)를 완벽하게 방출합니다!
+        .onDisappear {
+            self.appIcon = nil
+        }
     }
 
     private func loadIcon() {
+        let bundleID = appDelay.bundleIdentifier
+        guard !bundleID.isEmpty else { return }
+        
+        // 🌟 고유 로드 ID 생성 및 할당
+        let loadID = UUID()
+        self.currentIconLoadID = loadID
+        
         DispatchQueue.global(qos: .userInitiated).async {
-            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appDelay.bundleIdentifier) else { return }
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
             let icon = NSWorkspace.shared.icon(forFile: url.path)
-            DispatchQueue.main.async { self.appIcon = icon }
+            
+            DispatchQueue.main.async {
+                // 🌟 백그라운드 작업이 끝난 시점에 내가 여전히 이 셀의 주인인지 검사
+                if self.currentIconLoadID == loadID {
+                    self.appIcon = icon
+                }
+            }
         }
     }
 }

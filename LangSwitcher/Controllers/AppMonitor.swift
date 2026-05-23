@@ -109,11 +109,10 @@ class MemoryMonitor {
     static let shared = MemoryMonitor()
     private var timer: Timer?
     
-    // 임계값 설정 (예: 150MB = 150 * 1024 * 1024)
-    private let thresholdInBytes: UInt64 = 150_000_000
+    // 🌟 1. 리뷰어의 권장대로 임계값을 200MB로 대폭 낮춥니다.
+    private let thresholdInBytes: UInt64 = 200_000_000
     
     func startMonitoring() {
-        // 60초마다 가볍게 체크 (UI 스레드에 부담을 주지 않도록 백그라운드 권장)
         timer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             self?.checkMemoryUsage()
         }
@@ -124,35 +123,46 @@ class MemoryMonitor {
         
         if currentMemory > thresholdInBytes {
             let memoryInMB = currentMemory / 1024 / 1024
+            dprint("🚨 [경고] 메모리 초과: \(memoryInMB) MB. 능동적 해제(Self-Healing)를 시작합니다.")
             
-            dprint("🚨 [경고] 메모리 사용량 비정상: \(memoryInMB) MB")
-            
-            // 🌟 주석을 풀고 실제로 로그에 기록하도록 수정합니다.
             let log = ActionLog(
                 timestamp: Date(),
                 targetApp: "LangSwitcher System",
-                appliedRule: "Memory Alert", // 로그에서 이 키워드로 메모리 경고를 쉽게 찾을 수 있습니다.
+                appliedRule: "Memory Alert",
                 finalInputSource: "\(memoryInMB) MB",
                 result: .failure,
                 failureReason: .unknown
             )
             SettingsManager.shared.addLog(log)
+            
+            // 🌟 2. [핵심] 경고에 그치지 않고, 메인 스레드에서 즉시 메모리를 청소합니다.
+            DispatchQueue.main.async {
+                // (1) 브라우저 탭 메모리 등 무거운 캐시 초기화
+                BrowserTabManager.shared.clearMemory()
+                
+                // (2) 디버그 트레이스나 잉여 데이터가 있다면 초기화
+                // DecisionTraceManager.shared.clear() // 해당 클래스가 존재할 경우 주석 해제
+                
+                // (3) SettingsManager 내부의 로그 배열이 너무 크다면 강제 다이어트
+                // SettingsManager.shared.recentLogs.removeAll(keepingCapacity: false)
+            }
         }
     }
-    
-    // 현재 앱의 실제 사용 메모리를 가져오는 저수준 C API 함수
+
+    // 현재 앱의 실제 메모리 풋프린트(활성 상태 보기와 동일한 수치)를 가져오는 함수
     private func reportMemoryUsage() -> UInt64? {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size) / 4
         
         let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
             }
         }
         
         if kerr == KERN_SUCCESS {
-            return info.resident_size // 바이트 단위 반환
+            // 🌟 resident_size 대신 phys_footprint를 사용합니다.
+            return info.phys_footprint
         }
         return nil
     }

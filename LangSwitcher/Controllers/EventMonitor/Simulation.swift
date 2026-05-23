@@ -91,24 +91,14 @@ extension EventMonitor {
         }
     }
     
-    // 🌟 [핵심 변경 1] 순서 최적화 및 딜레이 제거
     func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
-        // 1. 가장 먼저 한글 전환을 OS에 던져놓아 물리적 딜레이 시간을 법니다.
         self.safeSwitchToKorean()
-        
-        // 2. 딜레이(async) 없이 빛의 속도로 백스페이스를 쏟아냅니다.
         self.batchDelete(count: originalLength)
-        
-        // 3. 딜레이 없이 즉각 교정 텍스트 삽입
         self.postUnicodeString(correctedText)
-        
-        // 4. 스페이스바 즉각 전송
         self.postTriggerKey(keyCode: triggerKeyCode)
-        
         StatsManager.shared.incrementTypoCorrection()
     }
 
-    // 🌟 [핵심 변경 2] 타이머 완전 삭제. 사용자 입력과 뒤섞이는 끔찍한 버그 해결
     func batchDelete(count: Int) {
         guard count > 0 else { return }
         for _ in 0..<count {
@@ -146,28 +136,18 @@ extension EventMonitor {
         return EventMonitor.charKeyMap[keyCode]
     }
     
-    // 🌟 [수정] 파라미터를 replacementText에서 snippet: RenderedSnippet으로 변경
-    // 🌟 [수정] 파라미터를 replacementText에서 snippet: RenderedSnippet으로 변경
     func performTextExpansion(triggerLength: Int, snippet: RenderedSnippet, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
-        // 🌟 텍스트 대치 시에도 즉각 삭제 사용
         self.batchDelete(count: triggerLength)
         
-        // 🌟 교체: 단순 문자열이 아닌 snippet.text를 삽입
         self.insertLongUnicodeText(snippet.text) { [weak self] in
             guard let self = self else { return }
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-                // 1. 트리거 키(예: 스페이스바, 엔터) 전송
                 self.postTriggerKey(keyCode: triggerKeyCode)
                 
-                // 2. 🌟 커서 위치 복원 연산 및 실행
                 if let offset = snippet.cursorOffsetFromStart {
-                    
-                    // ✅ [수정된 완벽한 방식] 순수 Character 단위(String.count)로만 계산합니다.
                     let moveLeftCount = snippet.text.count - offset
-                    
                     if moveLeftCount > 0 {
-                        // 🌟 [에러 해결!] for문을 지우고, 함수에 count 파라미터를 직접 전달합니다.
                         self.moveCursorLeft(count: moveLeftCount)
                     }
                 }
@@ -178,16 +158,14 @@ extension EventMonitor {
         }
     }
     
-    // 🌟 [추가] 지정된 횟수만큼 왼쪽 방향키(←) 이벤트를 발생시키는 헬퍼 메서드
     func moveCursorLeft(count: Int) {
         guard count > 0 else { return }
-        let leftArrowKeyCode: CGKeyCode = 123 // kVK_LeftArrow
+        let leftArrowKeyCode: CGKeyCode = 123
         
         for _ in 0..<count {
             let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: leftArrowKeyCode, keyDown: true)
             let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: leftArrowKeyCode, keyDown: false)
             
-            // EventMonitor의 재귀적 루프를 막기 위해 9999 태그 부여
             keyDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
             keyUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
             
@@ -196,7 +174,12 @@ extension EventMonitor {
         }
     }
     
+    // 🌟 [완벽 리팩토링] DispatchWorkItem 추적 배열을 이용한 안전성 확보 버전
     func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
+        // 1. 새로운 텍스트 대치가 시작되기 전, 기존에 남아있는 모든 예약 태스크를 완전히 취소 및 청소합니다.
+        self.pendingInsertTasks.forEach { $0.cancel() }
+        self.pendingInsertTasks.removeAll()
+        
         let chars = Array(text.utf16)
         if chars.isEmpty { completion(); return }
         
@@ -208,9 +191,17 @@ extension EventMonitor {
         }
         
         let chunkDelay: TimeInterval = 0.015
+        
+        // 2. 각 청크별 이벤트를 DispatchWorkItem으로 감싸서 예약합니다.
         for (index, chunk) in chunks.enumerated() {
             let delay = Double(index) * chunkDelay
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            var item: DispatchWorkItem!
+            
+            // 🌟 [수정] 컴파일 경고를 지우기 위해 [weak self] 지우기
+            item = DispatchWorkItem {
+                // 실행 직전 취소 여부를 판단하여 누락 처리
+                guard !item.isCancelled else { return }
+                
                 var localChunk = chunk
                 if let eventDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
                     eventDown.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
@@ -223,10 +214,26 @@ extension EventMonitor {
                     eventUp.post(tap: .cghidEventTap)
                 }
             }
+            
+            self.pendingInsertTasks.append(item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
         
+        // 3. 모든 청크 전송이 끝난 후 실행될 최종 완료(Completion) 핸들러 역시
+        // 이전 스크립트 취소 시 같이 씹히도록 DispatchWorkItem으로 묶어 처리합니다.
         let lastChunkIndex = max(0, chunks.count - 1)
         let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.05
-        DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay) { completion() }
+        var completionItem: DispatchWorkItem!
+        
+        completionItem = DispatchWorkItem { [weak self] in
+            guard !completionItem.isCancelled else { return }
+            completion()
+        
+            // 🌟 [수정] == 대신 === (식별 연산자)를 사용하여 메모리 주소값을 비교합니다.
+            self?.pendingInsertTasks.removeAll { $0 === completionItem }
+        }
+        
+        self.pendingInsertTasks.append(completionItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay, execute: completionItem)
     }
 }

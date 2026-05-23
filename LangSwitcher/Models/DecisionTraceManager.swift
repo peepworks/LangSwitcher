@@ -20,16 +20,17 @@ import Foundation
 import Combine
 import SwiftUI
 
-// 💡 클래스 전체에 걸려있던 @MainActor를 제거하고, 필요한 곳에만 DispatchQueue를 적용합니다.
+// 🌟 [핵심] 클래스 전체를 메인 스레드에서 지켜주는 안전장치입니다. 반드시 살려두어야 합니다!
+@MainActor
 final class DecisionTraceManager: ObservableObject {
     static let shared = DecisionTraceManager()
     
+    // 🌟 변수 중복을 제거하고 하나로 깔끔하게 정리했습니다.
     @Published private(set) var recentTraces: [DecisionTrace] = []
     
     @AppStorage("isTraceLoggingEnabled") var isTraceLoggingEnabled: Bool = true
     
-    // 🌟 [수정 포인트] 리뷰어의 권장 사항에 따라 최대 로깅 개수를 200에서 50으로 줄입니다.
-    // 배열 크기가 작아지면서 insert(at: 0) 시 발생하는 메모리 이동(O(n)) 부하가 사실상 0이 됩니다.
+    // 최대 로깅 개수 최적화 (O(n) 부하 최소화)
     private let maxTraceCount = 50
 
     private init() {}
@@ -38,17 +39,12 @@ final class DecisionTraceManager: ObservableObject {
     func record(_ trace: DecisionTrace) {
         guard isTraceLoggingEnabled else { return }
         
-        // 🌟 외부에서 어떤 스레드로 호출하든 100% 안전하게 메인 스레드에서만 배열을 수정하도록 보장합니다.
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            self.recentTraces.insert(trace, at: 0)
-            
-            // 제한 개수를 넘어가면 과거 기록 삭제 (메모리 보호 및 SwiftUI 렌더링 최적화)
-            if self.recentTraces.count > self.maxTraceCount {
-                // 한 번에 하나씩만 초과하므로 removeLast()로 단일 삭제하는 것이 더 빠르고 깔끔합니다.
-                self.recentTraces.removeLast()
-            }
+        // 🌟 클래스 위에 @MainActor가 있으므로, DispatchQueue로 감쌀 필요 없이
+        // 여기서 곧바로 배열을 수정해도 SwiftUI가 100% 안전하게 UI를 업데이트합니다.
+        self.recentTraces.insert(trace, at: 0)
+                
+        if self.recentTraces.count > self.maxTraceCount {
+            self.recentTraces.removeLast()
         }
         
         dprint("🔍 [Trace] \(trace.eventType.rawValue): \(trace.reasonMessage)")
@@ -56,9 +52,7 @@ final class DecisionTraceManager: ObservableObject {
 
     /// 모든 기록을 삭제합니다.
     func clear() {
-        // 배열을 비우는 작업도 UI 업데이트를 유발하므로 메인 스레드에서 실행합니다.
-        DispatchQueue.main.async { [weak self] in
-            self?.recentTraces.removeAll()
-        }
+        // 🌟 여기도 마찬가지로 DispatchQueue.main.async를 싹 지워버려도 됩니다.
+        self.recentTraces.removeAll()
     }
 }
