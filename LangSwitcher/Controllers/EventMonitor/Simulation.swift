@@ -174,7 +174,7 @@ extension EventMonitor {
         }
     }
     
-    // 🌟 [완벽 리팩토링] DispatchWorkItem 추적 배열을 이용한 안전성 확보 버전
+    // 🌟 [완벽 리팩토링] 순환 참조(Retain Cycle)와 배열 누수를 완벽히 차단한 버전
     func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
         // 1. 새로운 텍스트 대치가 시작되기 전, 기존에 남아있는 모든 예약 태스크를 완전히 취소 및 청소합니다.
         self.pendingInsertTasks.forEach { $0.cancel() }
@@ -195,13 +195,10 @@ extension EventMonitor {
         // 2. 각 청크별 이벤트를 DispatchWorkItem으로 감싸서 예약합니다.
         for (index, chunk) in chunks.enumerated() {
             let delay = Double(index) * chunkDelay
-            var item: DispatchWorkItem!
             
-            // 🌟 [수정] 컴파일 경고를 지우기 위해 [weak self] 지우기
-            item = DispatchWorkItem {
-                // 실행 직전 취소 여부를 판단하여 누락 처리
-                guard !item.isCancelled else { return }
-                
+            // ✅ [핵심 1] 클로저 내부에서 item 자체를 호출하지 않습니다. (순환 참조 원천 차단)
+            // 취소 명령(cancel)이 들어오면 GCD 시스템이 알아서 이 블록의 실행을 스킵합니다.
+            let item = DispatchWorkItem {
                 var localChunk = chunk
                 if let eventDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
                     eventDown.keyboardSetUnicodeString(stringLength: localChunk.count, unicodeString: &localChunk)
@@ -219,18 +216,17 @@ extension EventMonitor {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
         
-        // 3. 모든 청크 전송이 끝난 후 실행될 최종 완료(Completion) 핸들러 역시
-        // 이전 스크립트 취소 시 같이 씹히도록 DispatchWorkItem으로 묶어 처리합니다.
+        // 3. 최종 완료(Completion) 핸들러
         let lastChunkIndex = max(0, chunks.count - 1)
         let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.05
-        var completionItem: DispatchWorkItem!
         
-        completionItem = DispatchWorkItem { [weak self] in
-            guard !completionItem.isCancelled else { return }
+        // ✅ [핵심 2] completionItem 역시 자기 자신을 호출하지 않게 만듭니다.
+        let completionItem = DispatchWorkItem { [weak self] in
             completion()
-        
-            // 🌟 [수정] == 대신 === (식별 연산자)를 사용하여 메모리 주소값을 비교합니다.
-            self?.pendingInsertTasks.removeAll { $0 === completionItem }
+            
+            // 이 블록이 실행되었다는 것은 앞선 모든 타이핑 작업이
+            // 취소 없이 무사히 끝났다는 뜻이므로, 안심하고 배열을 통째로 비워 메모리를 회수합니다.
+            self?.pendingInsertTasks.removeAll()
         }
         
         self.pendingInsertTasks.append(completionItem)

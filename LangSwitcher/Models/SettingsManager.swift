@@ -36,6 +36,8 @@ class SettingsManager: ObservableObject {
     private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
     private var saveWorkItem: DispatchWorkItem?
     
+    private let maxLogCount = 500
+    
     @Published var selectedTab: SettingsTab? = .general
     
     @MainActor var isBatchUpdating: Bool = false
@@ -328,15 +330,11 @@ class SettingsManager: ObservableObject {
     }
     
     func addLog(_ log: ActionLog) {
-        DispatchQueue.main.async {
-            self.recentLogs.insert(log, at: 0)
-            // 🌟 [핵심 개선] 앱 장기 사용 시 메모리 폭발과 Stats 화면 로딩 지연 방지
-            // 로그 최대 보관 개수를 5,000개(또는 적절한 수치)로 상한 설정!
-            let maxLogCount = 500
-            if self.recentLogs.count > maxLogCount {
-                // 가장 오래된 뒤쪽 데이터들을 한꺼번에 잘라냅니다.
-                self.recentLogs.removeLast(self.recentLogs.count - maxLogCount)
-            }
+        self.recentLogs.append(log)
+        
+        // 이제 스코프(Scope) 내부에서 maxLogCount를 정상적으로 인식합니다.
+        if self.recentLogs.count > maxLogCount {
+            self.recentLogs.removeFirst()
         }
     }
     
@@ -504,6 +502,13 @@ class SettingsManager: ObservableObject {
                     }
                 }
             }
+        }
+    }
+    
+    /// 외부의 스레드 환경과 무관하게 항상 메인 스레드에서 안전하게 로그를 비우는 캡슐화된 함수
+    func clearLogs() {
+        DispatchQueue.main.async { [weak self] in
+            self?.recentLogs.removeAll(keepingCapacity: false)
         }
     }
 }

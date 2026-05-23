@@ -85,7 +85,6 @@ class EdgeGlowManager {
         }
         
         // 🌟 [핵심 3] 빛이 꺼져 있을 때만 색상을 새로 정하고 페이드인을 시작합니다!
-        // (이미 켜져 있는 상태에서 타자를 칠 때는 이 블록을 건너뛰어 번쩍거림 방지)
         if !isCurrentlyGlowing {
             isCurrentlyGlowing = true
             
@@ -110,22 +109,19 @@ class EdgeGlowManager {
             }
         }
         
-        // 🌟 [핵심 4] 타자를 칠 때마다 이 '꺼짐 예약'이 계속 새로 세팅됩니다.
-        // Swift 6의 최신 동시성 문법인 Task를 사용하면 코드가 훨씬 안전해집니다.
-        Task { @MainActor in
+        // 🌟 [핵심 수정] Task 진입부에 [weak self]를 추가하여 수명 연장/메모리 고리를 원천 차단합니다.
+        Task { @MainActor [weak self] in
             // 0.8초 대기 (800,000,000 나노초)
             try? await Task.sleep(nanoseconds: 800_000_000)
             
-            // 대기 후, 다른 입력이 들어와서 내 ID가 바뀌었다면 무시
-            guard self.currentGlowID == myID else { return }
+            // 🌟 대기 후, self가 사라졌거나 다른 입력이 들어와서 내 ID가 바뀌었다면 자폭 탈출
+            guard let self = self, self.currentGlowID == myID else { return }
             
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
                 window.animator().alphaValue = 0
             } completionHandler: { [weak self] in
-                // 🌟 리뷰어 요구: "비동기 딜레이(async) 없이 즉시 실행해!"
-                // 🌟 컴파일러 요구: "지금 메인 스레드인지 증명해!"
-                // 이 두 가지를 완벽하게 만족하는 Swift 6 정답 코드입니다.
+                // 🌟 컴파일러와 리뷰어 요구를 동시에 충족하는 Swift 6 완성형 동기 실행 구역
                 MainActor.assumeIsolated {
                     guard let self = self, self.currentGlowID == myID else { return }
                     self.isCurrentlyGlowing = false

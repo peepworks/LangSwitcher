@@ -70,37 +70,33 @@ class StatsManager: ObservableObject {
     func incrementLanguageSwitch() {
         let dateKey = todayKey()
         
-        // 1단계: 쓰기 (barrier 적용으로 스레드 안전성 확보)
+        // 1. [데이터 쓰기] 독방(Barrier) 안에서는 오직 데이터만 수정하고 가장 빠르게 빠져나옵니다.
         stateQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
             var stat = self.internalStatsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
             stat.languageSwitches += 1
             self.internalStatsDict[dateKey] = stat
             self.isDirty = true
-        }
+        } // 🚪 여기서 독방 문이 열리고 Lock이 해제됩니다!
         
-        // 🌟 [최적화] 메인 스레드 이중 감싸기를 제거하고 직접 스케줄러를 호출합니다.
-        // schedulePublishUpdate() 내부의 asyncAfter가 메인 스레드로의 전환과 0.3초 대기를 알아서 처리합니다.
-        schedulePublishUpdate()
+        // 2. [UI 갱신 예약] 독방에서 완전히 빠져나온 안전한 상태에서 디바운서를 호출합니다.
+        self.schedulePublishUpdate()
     }
-    
+
     func incrementTypoCorrection() {
         let dateKey = todayKey()
         
-        // 🌟 [1단계: 쓰기] 여기도 동일하게 barrier 안에서 쓰기만 처리합니다.
+        // 1. [데이터 쓰기]
         stateQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
-            
             var stat = self.internalStatsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
             stat.typoCorrections += 1
             self.internalStatsDict[dateKey] = stat
             self.isDirty = true
-        } // 🚪 독방 문 개방
-        
-        // 🌟 [2단계: 부수 효과] 중첩 제거 및 독립적 스케줄링
-        DispatchQueue.main.async { [weak self] in
-            self?.publishUpdate()
         }
+        
+        // 2. [UI 갱신 예약] 이전의 불안전한 직접 호출을 지우고, 여기서도 통일된 디바운서를 사용합니다.
+        self.schedulePublishUpdate()
     }
     
     // MARK: - 주기적 저장 로직 (Batch Saving)

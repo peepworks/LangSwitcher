@@ -21,7 +21,7 @@ import Cocoa
 class SensoryFeedbackManager {
     static let shared = SensoryFeedbackManager()
     
-    // 🌟 원본 사운드는 메모리에 딱 한 번만 올려두고 '틀(Template)'로만 사용합니다.
+    // 원본 사운드는 메모리에 딱 한 번만 올려두고 그대로 재사용합니다.
     private let soundKorean = NSSound(named: "ClickHigh") ?? NSSound(named: "Tink")
     private let soundEnglish = NSSound(named: "ClickLow") ?? NSSound(named: "Pop")
     
@@ -42,16 +42,13 @@ class SensoryFeedbackManager {
                 
                 let baseSound = isKorean ? self.soundKorean : self.soundEnglish
                 
-                // 🌟 [핵심 수정] 원본을 멈추지 않고 복제본(clone)을 생성하여 재생합니다.
-                // 1순위: 복사본을 만든다. (빠르게 연타해도 소리가 겹치도록)
-                // 2순위: 시스템 리소스 부족 등으로 복사에 실패하면(??), 원본(baseSound)을 대신 쓴다.
-                let soundToPlay = (baseSound?.copy() as? NSSound) ?? baseSound
-                
-                // 찾아낸 소리(복사본 혹은 원본)를 재생한다.
-                soundToPlay?.play()
-                
-                // 만약 baseSound 자체가 아예 없다면(파일 유실 등) 디버그 로그 출력
-                if soundToPlay == nil {
+                // 🌟 [최적화] 무거운 copy()를 도려내고, 기존 사운드를 즉시 멈춘 후 재시작하여
+                // 메모리 할당(Alloc) 부하를 완전한 0%로 만듭니다.
+                if let sound = baseSound {
+                    sound.stop()
+                    sound.play()
+                } else {
+                    // baseSound 자체가 아예 없다면(파일 유실 등) 디버그 로그 출력
                     dprint("⚠️ [SensoryFeedbackManager] 사운드 재생 실패: baseSound 파일 자체를 찾을 수 없습니다.")
                 }
             }

@@ -56,6 +56,7 @@ class HyperKeyManager {
         hidutilQueue.async { [weak self] in
             guard let self = self else { return }
 
+            // 1. hidutil 정보 가져오기
             let getTask = Process()
             getTask.launchPath = "/usr/bin/hidutil"
             getTask.arguments = ["property", "--get", "UserKeyMapping"]
@@ -67,7 +68,7 @@ class HyperKeyManager {
             let getData = getPipe.fileHandleForReading.readDataToEndOfFile()
             let getString = String(data: getData, encoding: .utf8) ?? ""
             
-            // 🌟 1. 파이프 사용이 끝나면 무조건 닫아주어 메모리 누수 방지
+            // 🌟 [핵심 1] 읽기가 끝났으므로 즉시 파일 디스크립터를 반환합니다.
             getPipe.fileHandleForReading.closeFile()
 
             var mappings: [[String: Int]] = []
@@ -84,14 +85,19 @@ class HyperKeyManager {
                 do {
                     try plutilTask.run()
                     plutilIn.fileHandleForWriting.write(getData)
-                    plutilIn.fileHandleForWriting.closeFile() // 🌟 2. 쓰기 닫기
+                    
+                    // 🌟 [핵심 2] 쓰기가 완료되었음을 파이프를 닫아 명시적으로 알림 (EOF 전달)
+                    // 이를 통해 plutil 프로세스가 무한 대기(Hang)에 빠지는 것을 원천 차단합니다.
+                    plutilIn.fileHandleForWriting.closeFile()
+                    
                     plutilTask.waitUntilExit()
 
                     let jsonData = plutilOut.fileHandleForReading.readDataToEndOfFile()
                     if let parsed = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Int]] {
                         mappings = parsed
                     }
-                    // 🌟 3. 읽기 닫기
+                    
+                    // 🌟 [핵심 3] 결과 읽기가 끝났으므로 닫아줍니다.
                     plutilOut.fileHandleForReading.closeFile()
                 } catch {
                     dprint("HyperKeyManager: 기존 hidutil 맵핑을 파싱하는데 실패했습니다.")

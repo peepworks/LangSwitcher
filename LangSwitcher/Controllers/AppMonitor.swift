@@ -25,7 +25,10 @@ class AppMonitor {
     private var observer: NSObjectProtocol?
     // 🌟 [핵심 1] 앱이 백그라운드로 밀려나는 것을 감지할 새로운 옵저버
     private var deactivateObserver: NSObjectProtocol?
-    
+        
+    // 🌟 [핵심 추가] 현재 예약 대기 중인 앱 전환 감시 Task를 저장하고 통제할 통제관 변수
+    private var pendingObservationTask: Task<Void, Never>?
+        
     private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.appmonitor", attributes: .concurrent)
     private var _activeAppBundleID: String = ""
     var activeAppBundleID: String {
@@ -57,12 +60,21 @@ class AppMonitor {
             AppMonitor.shared.activeAppBundleID = bundleID
             
             let appDelay = SettingsManager.shared.snapshot.appDelays.first(where: { $0.bundleIdentifier == bundleID })?.delay ?? 0.3
+                        
+            // 🌟 [핵심 개선] 새로운 앱 전환이 포착되는 순간,
+            // 딜레이를 먹고 대기 중이던 이전 앱의 예약 Task를 가차 없이 원격 취소(Cancel) 시킵니다.
+            AppMonitor.shared.pendingObservationTask?.cancel()
             
-            Task {
+            AppMonitor.shared.pendingObservationTask = Task {
+                // 0.3초 대기 수면
                 try? await Task.sleep(nanoseconds: UInt64(appDelay * 1_000_000_000))
+                
+                // 🌟 [안전장치] 수면 도중 사용자가 다른 앱으로 또 전환하여 취소 명령이 떨어졌다면,
+                // 하단의 무거운 AXObserver 생성 로직을 실행하지 않고 즉시 허공에서 소각(Exit)시킵니다.
+                guard !Task.isCancelled else { return }
                 guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID else { return }
                 
-                // Swift 6: await 키워드를 통한 비동기 위임
+                // 모든 관문을 통과한 '가장 최신의 진짜 활성화된 앱' 단 하나만 무공해 상태로 등록됩니다.
                 await WindowMonitor.shared.observeApp(pid: app.processIdentifier)
             }
         }
@@ -93,12 +105,14 @@ class AppMonitor {
     }
 
     func stop() {
-        // 🌟 [개선됨] 모든 옵저버를 배열로 묶어 nil을 안전하게 제거한 뒤, 한 번에 해제합니다.
+        // 🌟 [핵심 추가] 모니터링이 중단될 때 대기 중인 비동기 Task도 깔끔하게 폭파합니다.
+        pendingObservationTask?.cancel()
+        pendingObservationTask = nil
+
         [observer, deactivateObserver].compactMap { $0 }.forEach {
             NSWorkspace.shared.notificationCenter.removeObserver($0)
         }
     
-        // 메모리에서 완전히 비워줍니다.
         observer = nil
         deactivateObserver = nil
         activeAppBundleID = ""
@@ -117,7 +131,7 @@ class MemoryMonitor {
             self?.checkMemoryUsage()
         }
     }
-    
+
     private func checkMemoryUsage() {
         guard let currentMemory = reportMemoryUsage() else { return }
         
@@ -135,16 +149,14 @@ class MemoryMonitor {
             )
             SettingsManager.shared.addLog(log)
             
-            // 🌟 2. [핵심] 경고에 그치지 않고, 메인 스레드에서 즉시 메모리를 청소합니다.
+            // 🌟 [핵심 개선] 메인 스레드의 현재 UI 작업을 방해하지 않도록(UI Blocking 방지)
+            // 청소 작업을 메인 큐의 '맨 뒤'로 미루어 비동기로 실행합니다.
             DispatchQueue.main.async {
-                // (1) 브라우저 탭 메모리 등 무거운 캐시 초기화
                 BrowserTabManager.shared.clearMemory()
+                DecisionTraceManager.shared.clear()
                 
-                // (2) 디버그 트레이스나 잉여 데이터가 있다면 초기화
-                // DecisionTraceManager.shared.clear() // 해당 클래스가 존재할 경우 주석 해제
-                
-                // (3) SettingsManager 내부의 로그 배열이 너무 크다면 강제 다이어트
-                // SettingsManager.shared.recentLogs.removeAll(keepingCapacity: false)
+                // 🌟 [핵심 개선] 변수에 직접 접근(removeAll)하지 않고, 안전하게 캡슐화된 메서드를 호출합니다.
+                SettingsManager.shared.clearLogs()
             }
         }
     }

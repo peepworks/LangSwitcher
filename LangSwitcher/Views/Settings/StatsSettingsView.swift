@@ -56,10 +56,11 @@ struct StatsSettingsView: View {
     var totalTypos: Int { filteredStats.reduce(0) { $0 + $1.typoCorrections } }
     var isEmptyState: Bool { totalSwitches == 0 && totalTypos == 0 }
     
+    // ✅ [최적화] .map을 통한 불필요한 힙(Heap) 배열 복사를 전면 제거하고 O(N) 단일 루프로 최대값을 구합니다.
     var yDomainMax: Int {
-        let maxSwitches = filteredStats.map { $0.languageSwitches }.max() ?? 0
-        let maxTypos = filteredStats.map { $0.typoCorrections }.max() ?? 0
-        let highest = max(maxSwitches, maxTypos)
+        let highest = filteredStats.reduce(0) { currentMax, stat in
+            max(currentMax, max(stat.languageSwitches, stat.typoCorrections))
+        }
         return highest < 5 ? 5 : Int(Double(highest) * 1.3)
     }
 
@@ -140,14 +141,15 @@ struct StatsSettingsView: View {
         }
         .padding(30)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // 🌟 [추가] 뷰 라이프사이클 및 상태 변경 시 캐시 업데이트 트리거
         .onAppear {
             statsManager.updateFilteredStats(for: selectedRange)
         }
         .onChange(of: selectedRange) { newValue in
             statsManager.updateFilteredStats(for: newValue)
         }
-        .onChange(of: statsManager.dailyStats) { _ in
+        // ✅ [최적화] 무거운 전체 배열(dailyStats)의 동등성 비교를 피하기 위해,
+        // filteredStats 데이터 자체의 개수나 내용물 변화 타이밍에만 캐시를 리프레시하도록 결합도를 낮춥니다.
+        .onChange(of: statsManager.filteredStatsCache.count) { _ in
             statsManager.updateFilteredStats(for: selectedRange)
         }
     }

@@ -171,11 +171,17 @@ class WindowMonitor {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled || snapshot.isBrowserTabMemoryEnabled else { return }
         
-        if self._currentPID != pid {
+        // 🌟 [핵심 개선 1] 스레드 경합(Data Race)을 막기 위해 모든 상태 변경과
+        // 기존 옵저버 해제 처리를 배리어 동기 블록 안에서 안전하게 캡슐화합니다.
+        stateQueue.sync(flags: .barrier) {
+            guard self._currentPID != pid else { return }
             self._currentPID = pid
             
-            if let observer = axObserver, let rl = observerRunLoop {
+            // 🌟 [안전장치] 기존에 돌고 있던 감시자가 있다면 깨끗하게 시스템 런루프에서 퇴출시킵니다.
+            if let observer = self.axObserver, let rl = self.observerRunLoop {
                 CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
+                self.axObserver = nil
+                self.observerRunLoop = nil
             }
             
             var observer: AXObserver?
@@ -195,13 +201,22 @@ class WindowMonitor {
                 AXObserverAddNotification(newObs, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
                 AXObserverAddNotification(newObs, appRef, kAXTitleChangedNotification as CFString, refcon)
                 
-                let currentRL = CFRunLoopGetCurrent()
-                CFRunLoopAddSource(currentRL, AXObserverGetRunLoopSource(newObs), .defaultMode)
-                self.observerRunLoop = currentRL
+                // 🌟 [핵심 개선 2] 백그라운드 임시 런루프가 꼬이는 문제를 해결하기 위해,
+                // 옵저버 등록을 macOS 앱의 메인 줄기인 '메인 런루프(Main RunLoop)'로 강제 고정합니다.
+                let mainRunLoop = CFRunLoopGetMain()
+                CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
+                self.observerRunLoop = mainRunLoop
+                
+                dprint("🎯 [WindowMonitor] PID \(pid)에 대한 메인 런루프 AXObserver 등록 성공")
             }
         }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        // 포커스 윈도우 추적을 위한 초기 딜레이 트리거 (UI 스레드 보장)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            let currentPIDInMain = self.currentPID
+            guard currentPIDInMain == pid else { return } // 딜레이 도중 앱이 또 바뀌었다면 중단
+            
             let appElement = AXUIElementCreateApplication(pid)
             var focusedWindow: CFTypeRef?
             if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,

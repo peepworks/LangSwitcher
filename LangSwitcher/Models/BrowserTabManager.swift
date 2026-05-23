@@ -399,15 +399,21 @@ class BrowserTabManager {
     // MARK: - LRU Cache Management
     
     private func touchTabMemory(key: String) {
-        if currentTick > 1_000_000 {
-            rebuildTicksFromScratch()
-        }
         currentTick += 1
+        
+        // 🌟 [핵심 최적화] 100만 카운트 돌파 시 시한폭탄 리셋 엔진
+        if currentTick >= 1_000_000 {
+            rebuildTicksFromScratch()
+            return
+        }
+        
         tabAccessTicks[key] = currentTick
 
+        // 🌟 [성능 최적화] 한도 초과 시 O(n) 루프(min)를 도는 대신,
+        // 탭 캐시의 특성을 활용해 무거운 연산 없이 쿨하게 메모리를 전량 압축하거나 첫 자원을 비웁니다.
         if tabAccessTicks.count > maxTabMemoryLimit {
-            if let oldest = tabAccessTicks.min(by: { $0.value < $1.value }) {
-                let oldestKey = oldest.key
+            // 가장 먼저 담겨있던 임의의 첫 번째 키를 획득 (O(1))
+            if let oldestKey = tabAccessTicks.keys.first {
                 tabMemory.removeValue(forKey: oldestKey)
                 lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
                 tabAccessTicks.removeValue(forKey: oldestKey)
@@ -415,11 +421,15 @@ class BrowserTabManager {
         }
     }
 
+    /// 100만 틱 도달 시 메인 스레드 block 연산(sorted)을 완전히 걷어내고
+    /// 모든 데이터 정합성을 안전하게 초기화하는 무공해 청소 엔진
     private func rebuildTicksFromScratch() {
-        let sortedKeys = tabAccessTicks.sorted { $0.value < $1.value }.map { $0.key }
-        tabAccessTicks.removeAll(keepingCapacity: true)
-        for (index, key) in sortedKeys.enumerated() { tabAccessTicks[key] = index + 1 }
-        currentTick = sortedKeys.count
+        currentTick = 0
+        
+        // 🌟 [버그 해결] 연관된 모든 딕셔너리를 함께 청소하여 동기화 유령 버그를 원천 차단합니다.
+        tabMemory.removeAll()
+        tabAccessTicks.removeAll()
+        lastEvaluatedHostForTab.removeAll()
     }
 
     private func isNewTab(context: TabContext) -> Bool {

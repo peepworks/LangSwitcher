@@ -119,19 +119,35 @@ struct ExcludedAppRow: View {
     var body: some View {
         HStack(spacing: 8) {
             if let icon = appIcon {
-                Image(nsImage: icon).resizable().frame(width: 20, height: 20)
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 20, height: 20)
             } else {
-                Image(systemName: "app.dashed").resizable().frame(width: 20, height: 20).foregroundColor(.secondary)
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .frame(width: 20, height: 20)
+                    .foregroundColor(.secondary)
             }
             Text(excludedApp.appName).lineLimit(1)
+            
             Spacer()
-            Button(action: { settings.activeProfile.payload.excludedApps.removeAll { $0.id == excludedApp.id } }) {
+            
+            Button(action: {
+                settings.activeProfile.payload.excludedApps.removeAll { $0.id == excludedApp.id }
+            }) {
                 Image(systemName: "trash").foregroundColor(.red)
-            }.buttonStyle(.plain)
+            }
+            .buttonStyle(.plain)
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .onAppear { loadIcon() }
         .onChange(of: excludedApp.bundleIdentifier) { _ in loadIcon() }
+        // 🌟 [핵심 추가] 행 전체가 화면에서 사라질 때(스크롤 아웃, 창 닫힘)
+        // 무거운 고해상도 앱 아이콘 메모리(NSImage)를 즉시 방출하여 캐시 누적을 막습니다.
+        .onDisappear {
+            self.appIcon = nil
+        }
     }
 
     private func loadIcon() {
@@ -139,10 +155,15 @@ struct ExcludedAppRow: View {
         guard !bundleID.isEmpty else { return }
         let loadID = UUID()
         self.currentIconLoadID = loadID
+        
         DispatchQueue.global(qos: .userInitiated).async {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
             let icon = NSWorkspace.shared.icon(forFile: url.path)
-            DispatchQueue.main.async { if self.currentIconLoadID == loadID { self.appIcon = icon } }
+            DispatchQueue.main.async {
+                if self.currentIconLoadID == loadID {
+                    self.appIcon = icon
+                }
+            }
         }
     }
 }
