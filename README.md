@@ -18,6 +18,9 @@
 
 ### What’s New in v0.9.0
 
+#### 🗂️ Profile Support
+v0.9.0 introduces profile support, making it easier to organize and switch between different LangSwitcher setups depending on your workflow or usage scenario.
+
 #### 🔒 Enterprise-Grade Stability & System Hardening
 LangSwitcher’s internal architecture has been reinforced to better resist long-running resource leaks and background degradation. It now reclaims Unix file descriptors from helper processes such as `hidutil` and `plutil`, and keeps accessibility observers (`AXObserver`) anchored to macOS’s native Main RunLoop for more stable long-term operation.
 
@@ -51,13 +54,14 @@ Examples:
 
 If you often launch apps or jump into search fields with keyboard shortcuts, you have probably experienced typing in the wrong language right after focusing a new app or browser tab. LangSwitcher is designed to reduce those interruptions and keep your keyboard workflow smooth.
 
-It combines direct language switching, app-specific input rules, browser tab language memory, app launch shortcuts, typo correction, and text expansion in one native macOS menu bar app.
+It combines direct language switching, profile-based setup management, app-specific input rules, browser tab language memory, app launch shortcuts, typo correction, and text expansion in one native macOS menu bar app.
 
 ---
 
 ### Core Features
 
 - Direct input source switching with custom shortcuts.
+- Profile support for managing different LangSwitcher setups.
 - App-specific keyboard rules that automatically switch language when an app becomes active.
 - Browser Tab Memory for Chrome, Safari, Edge, and Brave.
 - Typo correction for mistyped English ⇄ Korean text.
@@ -165,7 +169,7 @@ Accessibility
 
 1. Launch LangSwitcher from the menu bar.
 2. Open **Preferences**.
-3. Configure startup behavior, HUD, Hyper Key, toggle key, and text expansion rules.
+3. Configure startup behavior, HUD, Hyper Key, toggle key, profile settings, and text expansion rules.
 4. Enable Window Focus Management and Browser Tab Memory.
 5. Add custom language shortcuts.
 6. Set app-specific keyboard rules.
@@ -205,6 +209,9 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**
 
 ### v0.9.0 업데이트
 
+#### 🗂️ 프로필 기능 추가
+v0.9.0에서는 프로필 기능이 새롭게 추가되었습니다. 작업 목적이나 사용 환경에 따라 LangSwitcher 설정 구성을 더 편리하게 나누고 관리할 수 있습니다.
+
 #### 🔒 프로페셔널급 안정성 및 시스템 하드닝
 LangSwitcher의 내부 아키텍처가 장시간 구동 환경에서도 더 안정적으로 동작하도록 강화되었습니다. `hidutil`, `plutil` 같은 보조 프로세스에서 사용한 Unix 파일 디스크립터를 즉시 회수하고, 접근성 감시자(`AXObserver`)를 macOS의 Main RunLoop에 고정해 장시간 실행 시에도 리소스 누수와 백그라운드 성능 저하를 줄였습니다.
 
@@ -238,13 +245,14 @@ LangSwitcher의 내부 아키텍처가 장시간 구동 환경에서도 더 안�
 
 LangSwitcher는 단축키 중심 워크플로우에서 발생하는 입력 소스 전환 스트레스를 줄여 주는 macOS 메뉴바 앱입니다. Spotlight, ChatGPT, Terminal, 브라우저, 메신저처럼 포커스가 자주 바뀌는 환경에서 특히 유용합니다.
 
-직접 입력 언어 전환, 앱별 자동 입력 언어 규칙, 브라우저 탭별 언어 기억, 앱 실행 단축키, 오타 자동 변환, 텍스트 대치 기능을 하나의 네이티브 앱으로 제공합니다.
+직접 입력 언어 전환, 프로필 기반 설정 관리, 앱별 자동 입력 언어 규칙, 브라우저 탭별 언어 기억, 앱 실행 단축키, 오타 자동 변환, 텍스트 대치 기능을 하나의 네이티브 앱으로 제공합니다.
 
 ---
 
 ### 핵심 기능
 
 - 사용자 지정 단축키로 입력 소스를 직접 전환.
+- 여러 작업 환경을 관리할 수 있는 프로필 기능.
 - 특정 앱 활성화 시 자동으로 언어를 바꾸는 앱별 키보드 규칙.
 - Chrome, Safari, Edge, Brave용 브라우저 탭별 언어 기억.
 - 영문 ⇄ 한글 오타 자동 변환.
@@ -352,7 +360,7 @@ sudo xattr -r -d com.apple.quarantine /Applications/LangSwitcher.app
 
 1. 메뉴바에서 LangSwitcher를 실행합니다.
 2. **환경설정(Preferences)** 를 엽니다.
-3. 자동 실행, HUD, Hyper Key, 입력 전환 키, 텍스트 대치 규칙을 설정합니다.
+3. 자동 실행, HUD, Hyper Key, 입력 전환 키, 프로필 설정, 텍스트 대치 규칙을 설정합니다.
 4. 창 포커스 관리와 브라우저 탭 기억 기능을 활성화합니다.
 5. 사용자 지정 언어 단축키를 등록합니다.
 6. 앱별 키보드 규칙을 설정합니다.
