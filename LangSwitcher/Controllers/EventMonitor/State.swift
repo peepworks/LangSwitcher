@@ -19,150 +19,127 @@
 import Cocoa
 
 extension EventMonitor {
+    // 🌟 [복원] 누락되었던 필수 연산 프로퍼티를 메인 액터 격리 환경에 맞게 안착시킵니다.
     var isEnabled: Bool {
         guard let tap = eventTap else { return false }
         return CGEvent.tapIsEnabled(tap: tap)
     }
 
     var typingBuffer: String {
-        get { stateQueue.sync { _typingBuffer } }
-        set { stateQueue.async(flags: .barrier) { self._typingBuffer = newValue } }
+        get { _typingBuffer }
+        set { _typingBuffer = newValue }
     }
-    
+
     var lastKeyTime: Date {
-        get { stateQueue.sync { _lastKeyTime } }
-        set { stateQueue.async(flags: .barrier) { self._lastKeyTime = newValue } }
+        get { _lastKeyTime }
+        set { _lastKeyTime = newValue }
     }
 
     var shortcutRecordingCallback: ((NSEvent) -> Void)? {
-        get { stateQueue.sync { _shortcutRecordingCallback } }
-        set { stateQueue.async(flags: .barrier) { self._shortcutRecordingCallback = newValue } }
+        get { _shortcutRecordingCallback }
+        set { _shortcutRecordingCallback = newValue }
     }
 
     var currentModifiers: NSEvent.ModifierFlags {
-        get { stateQueue.sync { _currentModifiers } }
-        set { stateQueue.async(flags: .barrier) { self._currentModifiers = newValue } }
+        get { _currentModifiers }
+        set { _currentModifiers = newValue }
     }
 
     var maxModifiers: NSEvent.ModifierFlags {
-        get { stateQueue.sync { _maxModifiers } }
-        set { stateQueue.async(flags: .barrier) { self._maxModifiers = newValue } }
+        get { _maxModifiers }
+        set { _maxModifiers = newValue }
     }
 
     var didPressOtherKey: Bool {
-        get { stateQueue.sync { _didPressOtherKey } }
-        set { stateQueue.async(flags: .barrier) { self._didPressOtherKey = newValue } }
+        get { _didPressOtherKey }
+        set { _didPressOtherKey = newValue }
     }
 
     var singleModifierKeyCode: UInt16? {
-        get { stateQueue.sync { _singleModifierKeyCode } }
-        set { stateQueue.async(flags: .barrier) { self._singleModifierKeyCode = newValue } }
+        get { _singleModifierKeyCode }
+        set { _singleModifierKeyCode = newValue }
     }
 
     var isPaused: Bool {
-        get { stateQueue.sync { _isPaused } }
-        set { stateQueue.async(flags: .barrier) { self._isPaused = newValue } }
+        get { _isPaused }
+        set { _isPaused = newValue }
     }
 
     var lastCapsLockTime: Date {
-        get { stateQueue.sync { _lastCapsLockTime } }
-        set { stateQueue.async(flags: .barrier) { self._lastCapsLockTime = newValue } }
+        get { _lastCapsLockTime }
+        set { _lastCapsLockTime = newValue }
     }
-    
+
     func updateSettingsSnapshot(_ newSnapshot: SettingsSnapshot) {
-        snapshotLock.lock()
         self.localSnapshot = newSnapshot
-        snapshotLock.unlock()
     }
 
     func appendToTypingBuffer(_ char: Character) {
-        stateQueue.async(flags: .barrier) {
-            self._typingBuffer.append(char)
-            if self._typingBuffer.count > 15 {
-                self._typingBuffer.removeFirst()
-            }
+        self._typingBuffer.append(char)
+        if self._typingBuffer.count > 15 {
+            self._typingBuffer.removeFirst()
         }
     }
-    
+
     func clearTypingBuffer() {
-        stateQueue.async(flags: .barrier) {
+        self._typingBuffer = ""
+    }
+
+    func checkStaleAndResetBuffer() {
+        let now = Date()
+        if now.timeIntervalSince(self._lastKeyTime) > 2.0 {
             self._typingBuffer = ""
         }
+        self._lastKeyTime = now
     }
-    
-    func checkStaleAndResetBuffer() {
-        stateQueue.async(flags: .barrier) {
-            let now = Date()
-            if now.timeIntervalSince(self._lastKeyTime) > 2.0 {
-                self._typingBuffer = ""
-            }
-            self._lastKeyTime = now
-        }
-    }
-    
+
     func shouldDebounceCapsLock() -> Bool {
-        var shouldBlock = false
-        stateQueue.sync(flags: .barrier) {
-            let now = Date()
-            if now.timeIntervalSince(self._lastCapsLockTime) < 0.25 {
-                shouldBlock = true
-            } else {
-                self._lastCapsLockTime = now
-                shouldBlock = false
-            }
+        let now = Date()
+        if now.timeIntervalSince(self._lastCapsLockTime) < 0.25 {
+            return true
+        } else {
+            self._lastCapsLockTime = now
+            return false
         }
-        return shouldBlock
     }
 
     func updateModifierState(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
-        stateQueue.async(flags: .barrier) {
-            if self._currentModifiers.isEmpty {
-                self._didPressOtherKey = false
-                self._singleModifierKeyCode = keyCode
-                self._currentModifiers = flags
-                self._maxModifiers = flags
-            } else {
-                self._singleModifierKeyCode = nil
-                self._currentModifiers = flags
-                self._maxModifiers.formUnion(flags)
-            }
+        if self._currentModifiers.isEmpty {
+            self._didPressOtherKey = false
+            self._singleModifierKeyCode = keyCode
+            self._currentModifiers = flags
+            self._maxModifiers = flags
+        } else {
+            self._singleModifierKeyCode = nil
+            self._currentModifiers = flags
+            self._maxModifiers.formUnion(flags)
         }
     }
 
     func consumeModifierState() -> (didPressOtherKey: Bool, singleCode: UInt16?, maxMods: NSEvent.ModifierFlags) {
-        var snapshot: (Bool, UInt16?, NSEvent.ModifierFlags) = (false, nil, [])
-        stateQueue.sync(flags: .barrier) {
-            snapshot = (self._didPressOtherKey, self._singleModifierKeyCode, self._maxModifiers)
-            self._currentModifiers = []
-            self._maxModifiers = []
-            self._singleModifierKeyCode = nil
-        }
+        let snapshot = (self._didPressOtherKey, self._singleModifierKeyCode, self._maxModifiers)
+        self._currentModifiers = []
+        self._maxModifiers = []
+        self._singleModifierKeyCode = nil
         return snapshot
     }
 
     func markOtherKeyPressed() {
-        stateQueue.async(flags: .barrier) {
-            self._didPressOtherKey = true
-            self._singleModifierKeyCode = nil
-        }
+        self._didPressOtherKey = true
+        self._singleModifierKeyCode = nil
     }
 
     func canExecuteAction() -> Bool {
-        var allowed = false
-        stateQueue.sync(flags: .barrier) {
-            let now = Date()
-            if now.timeIntervalSince(self._lastActionTime) >= self.actionCooldown {
-                self._lastActionTime = now
-                allowed = true
-            }
+        let now = Date()
+        if now.timeIntervalSince(self._lastActionTime) >= self.actionCooldown {
+            self._lastActionTime = now
+            return true
         }
-        return allowed
+        return false
     }
-    
+
     func cancelShortcutRecording() {
-        stateQueue.async(flags: .barrier) {
-            self._shortcutRecordingCallback = nil
-            self._isPaused = false
-        }
+        self._shortcutRecordingCallback = nil
+        self._isPaused = false
     }
 }

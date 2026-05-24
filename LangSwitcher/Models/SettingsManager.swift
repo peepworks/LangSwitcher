@@ -27,12 +27,12 @@ extension Notification.Name {
     static let profileDidSwitch = Notification.Name("LangSwitcherProfileDidSwitch")
 }
 
+@MainActor
 class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     let currentSettingsVersion = "1.0.0"
     
     let icloudStore = NSUbiquitousKeyValueStore.default
-    private let snapshotQueue = DispatchQueue(label: "com.peepworks.settings.snapshot", attributes: .concurrent)
     private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
     private var saveWorkItem: DispatchWorkItem?
     
@@ -280,7 +280,7 @@ class SettingsManager: ObservableObject {
     }
     
     var snapshot: SettingsSnapshot {
-        snapshotQueue.sync { _snapshot }
+        _snapshot
     }
         
     @MainActor
@@ -324,9 +324,7 @@ class SettingsManager: ObservableObject {
         newSnapshot.buildCaches()
         
         EventMonitor.shared.updateSettingsSnapshot(newSnapshot)
-        snapshotQueue.async(flags: .barrier) {
-            self._snapshot = newSnapshot
-        }
+        self._snapshot = newSnapshot
     }
     
     func addLog(_ log: ActionLog) {
@@ -507,8 +505,8 @@ class SettingsManager: ObservableObject {
     
     /// 외부의 스레드 환경과 무관하게 항상 메인 스레드에서 안전하게 로그를 비우는 캡슐화된 함수
     func clearLogs() {
-        DispatchQueue.main.async { [weak self] in
-            self?.recentLogs.removeAll(keepingCapacity: false)
-        }
+        // 🌟 [리팩토링 완료] 클래스 자체가 @MainActor이므로, 불필요한 DispatchQueue나 Task 포장지를 전면 폐기합니다.
+        // 이제 런루프 지연 딜레이가 완전한 0%가 되며, 호출되는 즉시 동기식(Sync)으로 메모리를 전량 회수합니다.
+        self.recentLogs.removeAll(keepingCapacity: false)
     }
 }

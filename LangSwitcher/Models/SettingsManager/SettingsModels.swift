@@ -18,14 +18,15 @@
 
 import Cocoa
 
-struct CustomShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var targetLanguage: String }
-struct CustomApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String; var targetLanguage: String }
-struct AppLaunchShortcut: Identifiable, Codable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var bundleIdentifier: String; var appName: String }
-struct ExcludedApp: Identifiable, Codable { var id = UUID(); var bundleIdentifier: String; var appName: String }
+// 🌟 모든 설정 모델에 Sendable 추가
+struct CustomShortcut: Identifiable, Codable, Sendable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var targetLanguage: String }
+struct CustomApp: Identifiable, Codable, Sendable { var id = UUID(); var bundleIdentifier: String; var appName: String; var targetLanguage: String }
+struct AppLaunchShortcut: Identifiable, Codable, Sendable { var id = UUID(); var keyCode: UInt16; var modifierFlags: UInt64; var displayString: String; var bundleIdentifier: String; var appName: String }
+struct ExcludedApp: Identifiable, Codable, Sendable { var id = UUID(); var bundleIdentifier: String; var appName: String }
 
-enum LogResult: String, Codable { case success, failure }
+enum LogResult: String, Codable, Sendable { case success, failure }
 
-enum FailureReason: String, Codable {
+enum FailureReason: String, Codable, Sendable {
     case none = "None"
     case conditionMismatch = "Condition Mismatch"
     case excludedApp = "Excluded App"
@@ -33,15 +34,15 @@ enum FailureReason: String, Codable {
     case unknown = "Unknown Error"
 }
 
-// 🌟 앱별 딜레이 저장 모델
-struct AppDelay: Identifiable, Codable {
+// 🌟 앱별 딜레이 저장 모델에 Sendable 추가
+struct AppDelay: Identifiable, Codable, Sendable {
     var id = UUID()
     var bundleIdentifier: String
     var appName: String
     var delay: Double
 }
 
-enum ActionType: String, Codable {
+enum ActionType: String, Codable, Sendable {
     case textExpansion = "Text Expansion"
     case typoCorrection = "Typo Correction"
     case systemRecovery = "System Recovery"
@@ -49,7 +50,7 @@ enum ActionType: String, Codable {
     case tabMemory = "Tab Memory"
 }
 
-struct ActionLog: Identifiable, Codable {
+struct ActionLog: Identifiable, Codable, Sendable {
     var id = UUID()
     let timestamp: Date
     let targetApp: String
@@ -60,8 +61,8 @@ struct ActionLog: Identifiable, Codable {
     var actionType: ActionType? = nil
 }
 
-// 🌟 V1(구버전)과 V2(신버전: 프로필 시스템) 백업 파일을 모두 호환하기 위한 통합 구조체
-struct BackupData: Codable {
+// 🌟 통합 백업 구조체에 Sendable 추가
+struct BackupData: Codable, Sendable {
     var version: String?
     var isCtrlActive: Bool?
     var isCmdActive: Bool?
@@ -80,11 +81,11 @@ struct BackupData: Codable {
     var isEdgeGlowEnabled: Bool?
     var isBrowserTabMemoryEnabled: Bool?
     
-    // 🌟 [신규 추가] V2: 다중 프로필 시스템 데이터
+    // V2: 다중 프로필 시스템 데이터
     var profiles: [SettingsProfile]? = nil
     var activeProfileID: UUID? = nil
     
-    // 🌟 [수정] V1: 구버전 단일 프로필 데이터 (생략 가능하도록 모두 '= nil' 기본값 할당)
+    // V1: 구버전 단일 프로필 데이터
     var customShortcuts: [CustomShortcut]? = nil
     var customApps: [CustomApp]? = nil
     var appLaunchShortcuts: [AppLaunchShortcut]? = nil
@@ -103,7 +104,8 @@ struct BackupData: Codable {
     var textExpansionRules: [TextExpansionRule]? = nil
 }
 
-struct SettingsSnapshot {
+// 🌟 엔진이 참조하는 가장 중요한 스냅샷에 Sendable 추가
+struct SettingsSnapshot: Sendable {
     var isCtrlActive = false; var isCmdActive = false; var isOptActive = false
     var ctrlLang = ""; var cmdLang = ""; var optLang = ""
     var showVisualFeedback = true; var isTestMode = false
@@ -134,18 +136,17 @@ struct SettingsSnapshot {
     var customShortcuts: [CustomShortcut] = []
     var domainRules: [DomainRule] = []
     var enabledDomainRules: [DomainRule] = []
-    var appDelays: [AppDelay] = [] // 🌟 스냅샷용 앱 딜레이
+    var appDelays: [AppDelay] = []
     
     var isTextExpansionEnabled: Bool
     var textExpansionRules: [TextExpansionRule] = []
-    // 🌟 1. O(1) 검색을 위한 딕셔너리 변수 2개를 선언합니다. (기본값 빈 딕셔너리)
+    
     var customShortcutCache: [UInt64: CustomShortcut] = [:]
     var appLaunchShortcutCache: [UInt64: AppLaunchShortcut] = [:]
     
     var textExpansionDict: [String: TextExpansionRule] = [:]
     var maxTriggerLength: Int = 0
 
-    // 🌟 2. 스냅샷이 생성될 때 기존 배열(Array)을 딕셔너리(Dictionary)로 1번만 구워두는 함수입니다.
     mutating func buildCaches() {
         var tempCustom: [UInt64: CustomShortcut] = [:]
         for shortcut in customShortcuts {
@@ -175,16 +176,16 @@ struct SettingsSnapshot {
     }
 }
 
-// 🌟 [추가] 딕셔너리의 열쇠로 쓸 구조체
-struct ShortcutKey: Hashable {
+// 🌟 캐시 키 구조체에 Sendable 추가
+struct ShortcutKey: Hashable, Sendable {
     let keyCode: UInt16
     let modifiers: UInt64
 }
 
 // MARK: - Profile Management Models
 
-/// 프로필 자체의 메타데이터와 실제 설정값(Payload)을 담는 구조체
-struct SettingsProfile: Identifiable, Codable { // 🌟 Hashable 제거
+// 🌟 프로필 컨텍스트 데이터 구조체들에 Sendable 추가
+struct SettingsProfile: Identifiable, Codable, Sendable {
     var id: UUID
     var name: String
     var note: String
@@ -194,7 +195,7 @@ struct SettingsProfile: Identifiable, Codable { // 🌟 Hashable 제거
     var payload: ProfileSettingsPayload
 }
 
-struct ProfileSettingsPayload: Codable { // 🌟 Hashable, Equatable 제거
+struct ProfileSettingsPayload: Codable, Sendable {
     var customShortcuts: [CustomShortcut] = []
     var appLaunchShortcuts: [AppLaunchShortcut] = []
     var customApps: [CustomApp] = []
@@ -220,8 +221,8 @@ struct ProfileSettingsPayload: Codable { // 🌟 Hashable, Equatable 제거
     var isBrowserDomainModeEnabled: Bool = false
 }
 
-// 🌟 탭 열거형을 전역 모델로 독립 (앱 내의 모든 파일에서 접근 가능해집니다)
-enum SettingsTab: Hashable {
+// 🌟 글로벌 네비게이션 탭 열거형에 Sendable 추가
+enum SettingsTab: Hashable, Sendable {
     case profiles
     case general
     case advanced
