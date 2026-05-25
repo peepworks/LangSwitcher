@@ -50,6 +50,18 @@ class SettingsManager: ObservableObject {
     // 딕셔너리 캐시는 전역으로 관리하되, 활성 프로필 데이터를 굽습니다.
     private(set) var customShortcutCache: [ShortcutKey: CustomShortcut] = [:]
     private(set) var appLaunchShortcutCache: [ShortcutKey: AppLaunchShortcut] = [:]
+ 
+    // 🌟 [추가] Application Support 내 앱 전용 안전 폴더 경로 확보
+    private var applicationSupportDirectoryURL: URL {
+        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        // ~/Library/Application Support/LangSwitcher 폴더 지정
+        return paths[0].appendingPathComponent("LangSwitcher", isDirectory: true)
+    }
+
+    // 🌟 [추가] 최종 프로필 JSON 파일의 절대 경로
+    private var profilesFileURL: URL {
+        return applicationSupportDirectoryURL.appendingPathComponent("profiles.json")
+    }
 
     // MARK: - Global Settings (전역 설정)
     
@@ -155,21 +167,51 @@ class SettingsManager: ObservableObject {
     }
     
     private init() {
+        // 1. 연쇄 업데이트 방어막 활성화
         self.isBatchUpdating = true
         let d = UserDefaults.standard
+        let fileManager = FileManager.default
         
-        isCtrlActive = d.bool(forKey: "isCtrlActive"); isCmdActive = d.bool(forKey: "isCmdActive"); isOptActive = d.bool(forKey: "isOptActive")
-        showVisualFeedback = d.object(forKey: "showVisualFeedback") as? Bool ?? true; isTestMode = d.bool(forKey: "isTestMode")
+        // 2. 일반 저장 프로퍼티들 선제 초기화
+        isCtrlActive = d.bool(forKey: "isCtrlActive")
+        isCmdActive = d.bool(forKey: "isCmdActive")
+        isOptActive = d.bool(forKey: "isOptActive")
+        showVisualFeedback = d.object(forKey: "showVisualFeedback") as? Bool ?? true
+        isTestMode = d.bool(forKey: "isTestMode")
         toggleKeyCode = UInt16(d.integer(forKey: "toggleKeyCode"))
         toggleModifierFlags = UInt64(d.integer(forKey: "toggleModifierFlags"))
         toggleDisplayString = d.string(forKey: "toggleDisplayString") ?? ""
-        ctrlLang = d.string(forKey: "ctrlLang") ?? ""; cmdLang = d.string(forKey: "cmdLang") ?? ""; optLang = d.string(forKey: "optLang") ?? ""
+        ctrlLang = d.string(forKey: "ctrlLang") ?? ""
+        cmdLang = d.string(forKey: "cmdLang") ?? ""
+        optLang = d.string(forKey: "optLang") ?? ""
         
+        // 3. self 가 완전히 초기화되기 전이므로, 파일 경로를 안전한 '지역 변수'로 계산합니다.
+        let appSupportPaths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        let localProfilesFileURL = appSupportPaths[0]
+            .appendingPathComponent("LangSwitcher", isDirectory: true)
+            .appendingPathComponent("profiles.json")
+        
+        // 마이그레이션이 실행되어야 하는지 추적할 플래그
+        var needsMigration = false
         var tempProfiles: [SettingsProfile] = []
         
-        if let data = d.data(forKey: "profiles"), let dec = try? JSONDecoder().decode([SettingsProfile].self, from: data), !dec.isEmpty {
+        // 4. 독립된 지역 변수 풀 안에서 프로필 데이터 정산 집행
+        if fileManager.fileExists(atPath: localProfilesFileURL.path),
+           let data = try? Data(contentsOf: localProfilesFileURL),
+           let dec = try? JSONDecoder().decode([SettingsProfile].self, from: data), !dec.isEmpty {
+            
+            // [케이스 A] Application Support에 정식 파일이 이미 상주 중인 경우
             tempProfiles = dec
+            
+        } else if let legacyData = d.data(forKey: "profiles"),
+                  let dec = try? JSONDecoder().decode([SettingsProfile].self, from: legacyData), !dec.isEmpty {
+            
+            // [케이스 B] 구버전 UserDefaults 데이터가 남아있는 경우 (마이그레이션 대상)
+            tempProfiles = dec
+            needsMigration = true
+            
         } else {
+            // [케이스 C] 설정이 전혀 없는 완전 순정 최초 실행 유저
             var migratedPayload = ProfileSettingsPayload()
             
             if let data = d.data(forKey: "customShortcuts"), let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { migratedPayload.customShortcuts = dec }
@@ -179,17 +221,13 @@ class SettingsManager: ObservableObject {
             if let data = d.data(forKey: "domainRules"), let dec = try? JSONDecoder().decode([DomainRule].self, from: data) { migratedPayload.domainRules = dec }
             if let data = d.data(forKey: "appDelays"), let dec = try? JSONDecoder().decode([AppDelay].self, from: data) { migratedPayload.appDelays = dec }
             
-            if let data = d.data(forKey: "textExpansionRules"), let dec = try? JSONDecoder().decode([TextExpansionRule].self, from: data) {
-                migratedPayload.textExpansionRules = dec
-            } else {
-                migratedPayload.textExpansionRules = [
-                    TextExpansionRule(id: UUID(), trigger: ";date", replacement: "{{date:yyyy-MM-dd}}", isEnabled: true),
-                    TextExpansionRule(id: UUID(), trigger: ";time", replacement: "{{time:HH:mm}}", isEnabled: true),
-                    TextExpansionRule(id: UUID(), trigger: ";clip", replacement: "{{clipboard}}", isEnabled: true),
-                    TextExpansionRule(id: UUID(), trigger: ";info", replacement: "{{date:yyyy-MM-dd}} {{time:HH:mm}} | {{clipboard}}", isEnabled: true),
-                    TextExpansionRule(id: UUID(), trigger: ";hello", replacement: "Hello {{cursor}} World", isEnabled: true)
-                ]
-            }
+            migratedPayload.textExpansionRules = [
+                TextExpansionRule(id: UUID(), trigger: ";date", replacement: "{{date:yyyy-MM-dd}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";time", replacement: "{{time:HH:mm}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";clip", replacement: "{{clipboard}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";info", replacement: "{{date:yyyy-MM-dd}} {{time:HH:mm}} | {{clipboard}}", isEnabled: true),
+                TextExpansionRule(id: UUID(), trigger: ";hello", replacement: "Hello {{cursor}} World", isEnabled: true)
+            ]
             
             migratedPayload.isTextExpansionEnabled = d.bool(forKey: "isTextExpansionEnabled")
             migratedPayload.isTypoCorrectionEnabled = d.object(forKey: "isTypoCorrectionEnabled") as? Bool ?? false
@@ -207,17 +245,34 @@ class SettingsManager: ObservableObject {
                 isDefault: true, createdAt: Date(), updatedAt: Date(), payload: migratedPayload
             )
             tempProfiles = [defaultProfile]
+            needsMigration = true // 최초 유저도 파일 공간 확보를 위해 즉시 저장 플래그를 켭니다.
         }
         
+        // 활성 프로필 ID 가 계산될 임시 변수 확보
         var tempActiveID = tempProfiles.first!.id
-        if let savedIDString = d.string(forKey: "activeProfileID"), let savedID = UUID(uuidString: savedIDString), tempProfiles.contains(where: { $0.id == savedID }) {
+        if let savedIDString = d.string(forKey: "activeProfileID"),
+           let savedID = UUID(uuidString: savedIDString),
+           tempProfiles.contains(where: { $0.id == savedID }) {
             tempActiveID = savedID
         }
         
+        // 🌟 [핵심 수복 지점]
+        // 1단계(Phase 1) 초기화 완료! 모든 핵심 저장 프로퍼티의 장부를 완전히 채웁니다.
         self.profiles = tempProfiles
         self.activeProfileID = tempActiveID
         
-        applyActiveProfile()
+        // ── 여기서부터 2단계(Phase 2) 영역 진입: 이제 'self' 메서드를 호출해도 100% 안전합니다 ──
+        
+        self.applyActiveProfile()
+        
+        // 마이그레이션 대상이거나 신규 파일 생성이 필요한 경우 후속 안전지대에서 청소 실행
+        if needsMigration {
+            self.saveAll()
+            if d.data(forKey: "profiles") != nil {
+                d.removeObject(forKey: "profiles")
+                dprint("🧹 [Storage Engine] UserDefaults 내 레거시 무거운 profiles 배열 파괴 성공.")
+            }
+        }
         
         NotificationCenter.default.addObserver(
             self,
@@ -231,15 +286,34 @@ class SettingsManager: ObservableObject {
     private func save(_ key: String, _ value: Any) {
         UserDefaults.standard.set(value, forKey: key)
     }
-    
+
     func saveAll() {
         let profilesToSave = self.profiles
+        let directoryURL = self.applicationSupportDirectoryURL
+        let fileURL = self.profilesFileURL
+        
+        // 백그라운드 스레드에서 무거운 파일 쓰기를 처리하여 UI 스레드를 완벽하게 보호합니다.
         DispatchQueue.global(qos: .background).async {
-            if let e = try? JSONEncoder().encode(profilesToSave) {
-                UserDefaults.standard.set(e, forKey: "profiles")
+            do {
+                // 1. Application Support 내부에 앱 전용 폴더가 없다면 선제 생성
+                if !FileManager.default.fileExists(atPath: directoryURL.path) {
+                    try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+                }
+                
+                // 2. 인코딩 집행
+                let data = try JSONEncoder().encode(profilesToSave)
+                
+                // 3. .atomic 옵션을 주어 임시 파일을 만든 뒤 쓰기가 성공하면
+                // 원래 파일과 교체하는 방식을 취하므로, 저장 도중 앱이 꺼져도 파일 무결성이 깨지지 않습니다.
+                try data.write(to: fileURL, options: .atomic)
+                
+                #if DEBUG
+                dprint("✅ [Storage Engine] 프로필 데이터가 Application Support 폴더에 안전하게 저장되었습니다.")
+                #endif
+            } catch {
+                dprint("❌ [Storage Engine] 프로필 디스크 저장 실패: \(error.localizedDescription)")
             }
         }
-        dprint("SettingsManager: 프로필 데이터가 디스크에 저장되었습니다.")
     }
     
     func applyActiveProfile() {

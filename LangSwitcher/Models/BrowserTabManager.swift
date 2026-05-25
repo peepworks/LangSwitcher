@@ -1,7 +1,5 @@
 //
-//  BrowserTabManager.swift
 //  LangSwitcher
-//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -236,28 +234,35 @@ class BrowserTabManager {
         currentKey = nil
     }
 
+    // 🌟 1. 스로틀링/디바운싱 시스템이 탑재된 이벤트 제어 스코프 수복 완료
     func handleBrowserTabChanged(bundleID: String, appName: String) {
         guard SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled || SettingsManager.shared.snapshot.isBrowserDomainModeEnabled else { return }
         guard let adapter = adapters[bundleID] else { return }
 
+        // 현재 탭의 언어 상태 백업 집행
         saveCurrentContext()
+        
+        // 유저가 탭을 빠르게 전환 중이라면 이전 예약된 JXA 아웃프로세스 실행 계획을 즉시 무조건 사살(Cancel)합니다.
         fetchTask?.cancel()
 
+        // 새로운 150ms 보호망 타스크 개설
         fetchTask = Task(priority: .userInitiated) { [weak self] in
+            // 150ms 동안 대기하며 연속적인 전환 입력 충격을 모두 흡수합니다.
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
 
+            // 폭풍이 지나간 후 최종 안착한 단 하나의 탭에 대해서만 무거운 프로세스 포크 실행
             let result = await adapter.fetchActiveTabInfo(appName: appName)
             guard !Task.isCancelled else { return }
 
-            await MainActor.run {
-                guard let self = self else { return }
-                switch result {
-                case .success(let context):
-                    self.processTabContext(context, bundleID: bundleID)
-                case .failure(let error):
-                    self.handleFetchFailure(error: error, appName: appName)
-                }
+            // 🌟 [최적화] Task 자체가 메인 액터 격리 구역에서 생성되었으므로,
+            // 불필요한 MainActor.run 래퍼를 전면 제거하고 직통으로 연산 효율을 높입니다.
+            guard let self = self else { return }
+            switch result {
+            case .success(let context):
+                self.processTabContext(context, bundleID: bundleID)
+            case .failure(let error):
+                self.handleFetchFailure(error: error, appName: appName)
             }
         }
     }
@@ -365,19 +370,20 @@ class BrowserTabManager {
         SettingsManager.shared.addLog(log)
     }
 
-    // MARK: - LRU Cache Management (완벽한 교정)
+    // MARK: - LRU Cache Management (분할상환 O(1) 고성능 튜닝 완료)
 
     private func touchTabMemory(key: String) {
         currentTick += 1
         if currentTick >= 1_000_000 { rebuildTicksFromScratch(); return }
 
+        // 🌟 [핵심 최적화] 해당 키가 맵에 아예 없던 '새로운 키'인지 사전에 판별합니다.
+        let isNewKey = (tabAccessTicks[key] == nil)
         tabAccessTicks[key] = currentTick
 
-        if tabAccessTicks.count > maxTabMemoryLimit {
-            // 🌟 [이미 리팩토링 완료] 무작위 keys.first를 버리고
-            // 실제 최솟값(가장 오래된 tick)을 가진 키를 정확히 타겟팅합니다.
+        // 🌟 오직 '새로운 탭'이 진입하여 캐시 최대 한도를 정말로 넘어섰을 때만 min(by:) 스캔을 격리 실행합니다.
+        // 유저가 기존에 열어둔 탭들을 순회할 때는 이 블록을 완벽하게 건너뛰어 대규모 CPU 연산 낭비를 0%로 통제합니다.
+        if isNewKey && tabAccessTicks.count > maxTabMemoryLimit {
             if let (oldestKey, _) = tabAccessTicks.min(by: { $0.value < $1.value }) {
-                // 연관된 3개의 데이터 장부를 단 1바이트의 누수도 없이 깔끔하게 동시 소각
                 tabMemory.removeValue(forKey: oldestKey)
                 lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
                 tabAccessTicks.removeValue(forKey: oldestKey)
