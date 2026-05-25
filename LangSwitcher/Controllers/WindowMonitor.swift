@@ -1,7 +1,5 @@
 //
-//  WindowMonitor.swift
 //  LangSwitcher
-//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -49,66 +47,82 @@ class WindowMonitor {
     }
 
     func observeApp(pid: pid_t) {
-        // 1차 방어선: 메인 액터 큐 대기 도중 취소된 좀비 태스크 입구 컷
-        guard !Task.isCancelled else {
-            dprint("🛑 [WindowMonitor] 진입 전 태스크 취소 감지. (PID: \(pid))")
-            return
-        }
-        
-        let snapshot = SettingsManager.shared.snapshot
-        guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled || snapshot.isBrowserTabMemoryEnabled else { return }
-
-        guard self.currentPID != pid else { return }
-        self.currentPID = pid
-
-        // 기존 옵저버 자원이 있다면 메인 런루프에서 퇴출 및 해제
-        if let observer = self.axObserver, let rl = self.observerRunLoop {
-            CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
-            self.axObserver = nil
-            self.observerRunLoop = nil
-        }
-
-        var observer: AXObserver?
-        let callback: AXObserverCallback = { (obs, el, notif, ref) in
-            guard let ref = ref else { return }
-            MainActor.assumeIsolated {
-                let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
-                let nsNotif = notif as String
-                if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
-                else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
-                else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
-            }
-        }
-
-        if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
-            
-            // 🌟 [리뷰 반영 통과] 등록 직전 타스크 취소 및 광속 앱 스위칭 상태 최종 더블 체크 가드
-            guard !Task.isCancelled, self.currentPID == pid else {
-                dprint("⚠️ [WindowMonitor] AXObserver는 생성되었으나, 등록 직전 태스크 취소 또는 PID 스위칭 감지. 자원을 자동 소각합니다. (PID: \(pid))")
+            // 1차 방어선: 메인 액터 큐 대기 도중 취소된 좀비 태스크 입구 컷
+            guard !Task.isCancelled else {
+                dprint("🛑 [WindowMonitor] 진입 전 태스크 취소 감지. (PID: \(pid))")
                 return
             }
+            
+            let snapshot = SettingsManager.shared.snapshot
+            guard snapshot.isWindowMemoryEnabled ||
+                  snapshot.isAppSpecificEnabled ||
+                  snapshot.isBrowserTabMemoryEnabled ||
+                  snapshot.isBrowserDomainModeEnabled else { return }
 
-            self.axObserver = newObs
-            let mainRunLoop = CFRunLoopGetMain()
-            CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
-            self.observerRunLoop = mainRunLoop
+            guard self.currentPID != pid else { return }
+            self.currentPID = pid
 
-            dprint("🎯 [WindowMonitor] PID \(pid)에 대한 메인 런루프 AXObserver 최종 등록 성공")
-        }
+            // 기존 옵저버 자원이 있다면 메인 런루프에서 퇴출 및 해제 (.commonModes 규격 맞춤)
+            if let observer = self.axObserver, let rl = self.observerRunLoop {
+                CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
+                self.axObserver = nil
+                self.observerRunLoop = nil
+            }
 
-        // 포커스 윈도우 추적을 위한 초기 딜레이 트리거
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self else { return }
-            guard self.currentPID == pid else { return }
+            var observer: AXObserver?
+            let callback: AXObserverCallback = { (obs, el, notif, ref) in
+                guard let ref = ref else { return }
+                MainActor.assumeIsolated {
+                    let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
+                    let nsNotif = notif as String
+                    if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
+                    else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
+                    else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
+                }
+            }
 
-            let appElement = AXUIElementCreateApplication(pid)
-            var focusedWindow: CFTypeRef?
-            if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
-               let windowRef = focusedWindow, CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
-                self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
+            if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
+                
+                guard !Task.isCancelled, self.currentPID == pid else {
+                    dprint("⚠️ [WindowMonitor] 옵저버 생성 후 취소 감지.")
+                    return
+                }
+
+                // 🌟 [치명적 누락 원인 수복 완료!]
+                // 생성된 옵저버 엔진에 구체적으로 어떤 실시간 커널 이벤트를 가로챌지 바인딩 명세를 명시합니다.
+                // 이 세 줄이 수립되어야 비로소 브라우저의 탭 변경(Title Changed) 신호가 파이프라인을 타고 흐릅니다.
+                let appElement = AXUIElementCreateApplication(pid)
+                let refCon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+                
+                AXObserverAddNotification(newObs, appElement, kAXFocusedWindowChangedNotification as CFString, refCon)
+                AXObserverAddNotification(newObs, appElement, kAXTitleChangedNotification as CFString, refCon)
+                AXObserverAddNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString, refCon)
+
+                self.axObserver = newObs
+                let mainRunLoop = CFRunLoopGetMain()
+                
+                // 🌟 [.defaultMode ➔ .commonModes 격상]
+                // 유저가 macOS 메뉴바 팝업을 열고 있는 마우스 트래킹 순간에도
+                // 백그라운드 탭 감시 인터럽트가 멈추지 않고 100% 실행되도록 보장합니다.
+                CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
+                self.observerRunLoop = mainRunLoop
+
+                dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 commonModes 런루프 최종 등록 성공")
+            }
+
+            // 포커스 윈도우 추적을 위한 초기 딜레이 트리거
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                guard let self = self else { return }
+                guard self.currentPID == pid else { return }
+
+                let appElement = AXUIElementCreateApplication(pid)
+                var focusedWindow: CFTypeRef?
+                if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
+                   let windowRef = focusedWindow, CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
+                    self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
+                }
             }
         }
-    }
 
     // MARK: - 윈도우 메모리 & 앱 특정 규칙 제어 비즈니스 코어
 
@@ -127,7 +141,6 @@ class WindowMonitor {
         var targetLang: String? = nil
         var traceToRecord: DecisionTrace? = nil
 
-        // 🌟 [복원 완료] 유실되었던 단축 앱 매칭 및 상호 전환 로직을 정상 안착시켰습니다.
         if let data = self.windowMemory.getLanguage(for: windowID) {
             // 1. 이미 장부에 기록이 있는 창인 경우 복구 또는 앱 규칙 분기 실행
             if snapshot.isWindowMemoryEnabled {
@@ -167,7 +180,9 @@ class WindowMonitor {
     }
 
     func handleWindowTitleChanged(element: AXUIElement) {
-        if SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled {
+        let snapshot = SettingsManager.shared.snapshot
+        // 🌟 [버그 수복] 브라우저 탭 장부 메모리 혹은 도메인 모드가 켜져있을 때 모두 신호가 통과하도록 라우터를 개방합니다.
+        if snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled {
             if let app = NSRunningApplication(processIdentifier: self.currentPID),
                let bundleID = app.bundleIdentifier, let appName = app.localizedName {
                 BrowserTabManager.shared.handleBrowserTabChanged(bundleID: bundleID, appName: appName)
