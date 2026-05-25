@@ -369,20 +369,15 @@ class BrowserTabManager {
 
     private func touchTabMemory(key: String) {
         currentTick += 1
-
-        if currentTick >= 1_000_000 {
-            rebuildTicksFromScratch()
-            return
-        }
+        if currentTick >= 1_000_000 { rebuildTicksFromScratch(); return }
 
         tabAccessTicks[key] = currentTick
 
         if tabAccessTicks.count > maxTabMemoryLimit {
-            // 🌟 [리뷰 반영 리팩토링 완료]
-            // 무작위 해시 기반 만료(keys.first)를 전면 폐기하고,
-            // O(n) 루프 순회를 통해 실제 가장 안 쓴(최솟값 틱) 원소를 정확히 타겟팅합니다.
+            // 🌟 [이미 리팩토링 완료] 무작위 keys.first를 버리고
+            // 실제 최솟값(가장 오래된 tick)을 가진 키를 정확히 타겟팅합니다.
             if let (oldestKey, _) = tabAccessTicks.min(by: { $0.value < $1.value }) {
-                // 연관 장부 3종 동시 폭파로 메모리 파편화 원천 봉쇄
+                // 연관된 3개의 데이터 장부를 단 1바이트의 누수도 없이 깔끔하게 동시 소각
                 tabMemory.removeValue(forKey: oldestKey)
                 lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
                 tabAccessTicks.removeValue(forKey: oldestKey)

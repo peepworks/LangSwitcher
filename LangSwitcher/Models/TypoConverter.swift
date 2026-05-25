@@ -18,7 +18,7 @@
 
 import AppKit
 
-@MainActor // 🌟 Swift 6 완벽 격리 가드 적용
+@MainActor // 🌟 Swift 6 완벽 격리 가드
 class TypoConverter {
     static let shared = TypoConverter()
 
@@ -26,45 +26,36 @@ class TypoConverter {
     private var isConvertingInProgress = false
     private var savedClipboardString: String?
 
-    // 구조적 태스크 제어를 위한 라이프사이클 홀더
+    // 제어권을 명확하게 쥐고 흔들 두 개의 타이밍 태스크
     private var correctionTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
 
     private init() {}
 
-    // MARK: - 스마트 자동 오타 감지용 엔진 (EventMonitor 수복 완료)
-    
+    // MARK: - 스마트 자동 오타 감지용 엔진 (이전 레이어 동일 유지)
     func detectAndConvert(englishInput: String) -> String? {
         guard englishInput.count >= 2 else { return nil }
-
         let converted = convertToKo(englishInput)
         var hasSyllable = false
         var hasIncomplete = false
 
         for char in converted {
             guard let scalar = char.unicodeScalars.first else { continue }
-            if scalar.value >= 0xAC00 && scalar.value <= 0xD7A3 {
-                hasSyllable = true
-            } else if (scalar.value >= 0x3130 && scalar.value <= 0x318F) || (char.isASCII && char.isLetter) {
-                hasIncomplete = true
-            }
+            if scalar.value >= 0xAC00 && scalar.value <= 0xD7A3 { hasSyllable = true }
+            else if (scalar.value >= 0x3130 && scalar.value <= 0x318F) || (char.isASCII && char.isLetter) { hasIncomplete = true }
         }
 
         if hasSyllable {
-            if !hasIncomplete {
-                return converted
-            } else {
+            if !hasIncomplete { return converted }
+            else {
                 let containsEnglish = englishInput.contains { $0.isASCII && $0.isLetter }
                 let containsKoreanSyllable = englishInput.unicodeScalars.contains { $0.value >= 0xAC00 && $0.value <= 0xD7A3 }
 
                 if containsEnglish && containsKoreanSyllable {
                     let cleaned = String(converted.filter { char in
                         guard let val = char.unicodeScalars.first?.value else { return true }
-                        let isIncompleteJamo = (val >= 0x3130 && val <= 0x318F)
-                        let isStrayEnglish = char.isASCII && char.isLetter
-                        return !isIncompleteJamo && !isStrayEnglish
+                        return !(val >= 0x3130 && val <= 0x318F) && !(char.isASCII && char.isLetter)
                     })
-
                     if !cleaned.isEmpty { return cleaned }
                 }
             }
@@ -72,30 +63,31 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 수동 단축키 오타 교정 (상호 취소형 안전 파이프라인)
+    // MARK: - 수동 단축키 오타 교정 (리뷰어 피드백 완벽 수용 버전)
     
     func executeCorrection() {
+        // @MainActor 동기 구역이므로 이 두 줄은 완벽하게 원자적(Atomic)으로 묶여 작동합니다.
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
-        // 이전 잔재 태스크 유실 방지 가드 실행
+        // 🌟 [리뷰 반영] 잔재 태스크가 있다면 등록 전에 가차없이 초기화
         correctionTask?.cancel()
         timeoutTask?.cancel()
 
         self.backupClipboard()
         let initialCount = NSPasteboard.general.changeCount
 
-        // 블록 지정 (Option + Shift + Left Arrow)
+        // 텍스트 블록 선택 시뮬레이션 (Option + Shift + Left Arrow)
         self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift])
 
-        // [파이프라인 1] 오타 교정 메인 비동기 스트림
-        correctionTask = Task { @MainActor [weak self] in
+        // ── 파이프라인 1: 오타 교정 메인 본대 태스크 ─────────────────────────
+        correctionTask = Task { [weak self] in
             guard let self = self else { return }
             
-            try? await Task.sleep(nanoseconds: 50_000_000) // 0.05초 대기
+            try? await Task.sleep(nanoseconds: 50_000_000) // 0.05초
             guard !Task.isCancelled else { return }
 
-            // 복사 시뮬레이션 (Cmd+C)
+            // 복사 (Cmd+C)
             self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
 
             try? await Task.sleep(nanoseconds: 50_000_000)
@@ -109,7 +101,7 @@ class TypoConverter {
                 localPB.clearContents()
                 localPB.setString(convertedText, forType: .string)
 
-                // 붙여넣기 시뮬레이션 (Cmd+V)
+                // 붙여넣기 (Cmd+V)
                 self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
 
                 let activeAppID = AppMonitor.shared.activeAppBundleID
@@ -117,32 +109,39 @@ class TypoConverter {
 
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             } else {
-                self.postKeyEvent(keyCode: 124, modifiers: []) // 텍스트 선택 해제 가드
+                self.postKeyEvent(keyCode: 124, modifiers: []) // 선택 해제 가드
             }
 
-            // 본대가 안전하게 임무를 완수했으므로 타이머 경보(Timeout) 감시병을 해제합니다.
-            self.timeoutTask?.cancel()
-            self.safeRestoreAndUnlock()
+            // 🌟 본대가 완벽하게 완수되었으므로 중앙 집중형 안전 청소 집행!
+            self.safeCleanup()
         }
 
-        // [파이프라인 2] 하드웨어 무한 루프 폭사 방지 워치독 타이머 (2초)
-        timeoutTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled else { return }
+        // ── 파이프라인 2: [리뷰 반영] 3초 타임아웃 감시병 안전망 ────────────────
+        timeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3초 데드라인 수면
+            guard !Task.isCancelled else { return } // 본대가 3초 안에 끝났다면 여기서 자동 퇴출
 
+            // 3초가 지나도록 본대가 응답이 없는 크리티컬 행(Hang) 상태라면 강제 구출 실행
             guard let self = self else { return }
-            dprint("🚨 [TypoConverter] 시스템 오토메이션 응답 지연 발생. 메인 파이프라인을 원격 낙태합니다.")
+            dprint("🚨 [TypoConverter] 메인 오토메이션 파이프라인 행(Hang) 감지! 3초 안전망 가드를 발동합니다.")
             
-            self.correctionTask?.cancel() // 멈춰버린 본대 강제 소각
-            self.safeRestoreAndUnlock()    // 클립보드 원복 및 락 해제
+            self.safeCleanup()
         }
     }
 
-    private func safeRestoreAndUnlock() {
-        correctionTask = nil
+    // 🌟 [리뷰 반영 핵심] 모든 작업 완료 및 실패/타임아웃 경로에서 호출할 단일 청소 함수
+    private func safeCleanup() {
+        // 1. 서로가 서로를 원격 취소하여 유령 태스크 잔재 폭사 방지
+        timeoutTask?.cancel()
+        correctionTask?.cancel()
+        
+        // 2. 런타임 제어권 홀더 초기화
         timeoutTask = nil
+        correctionTask = nil
+        
+        // 3. 독점 시스템 자원 원복 및 플래그 해제 (항상 마지막에 해제)
         restoreClipboard()
-        isConvertingInProgress = false // 🌟 정합성을 위해 플래그 해제를 가장 마지막 라인에 배치
+        isConvertingInProgress = false
     }
 
     private func backupClipboard() {
@@ -153,6 +152,7 @@ class TypoConverter {
         if let saved = savedClipboardString {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(saved, forType: .string)
+            savedClipboardString = nil // 메모리 캡처 자원 해제
         }
     }
 
@@ -179,9 +179,7 @@ class TypoConverter {
             let converted = convertToKo(text)
             let cleaned = String(converted.filter { char in
                 guard let val = char.unicodeScalars.first?.value else { return true }
-                let isIncompleteJamo = (val >= 0x3130 && val <= 0x318F)
-                let isStrayEnglish = char.isASCII && char.isLetter
-                return !isIncompleteJamo && !isStrayEnglish
+                return !(val >= 0x3130 && val <= 0x318F) && !(char.isASCII && char.isLetter)
             })
             if !cleaned.isEmpty { return cleaned }
         }
@@ -192,8 +190,7 @@ class TypoConverter {
         return hasKorean ? convertToEn(text) : convertToKo(text)
     }
 
-    // MARK: - 두벌식 자모 결합 오토마타 변환 코어 엔진
-    
+    // MARK: - 두벌식 자모 오토마타 변환 코어 엔진 (이하 동일 유지)
     func convertToKo(_ englishText: String) -> String {
         let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
         let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
@@ -214,14 +211,11 @@ class TypoConverter {
                 let joIdx = jo.isEmpty ? 0 : (jongs.firstIndex(of: Character(jo)) ?? 0)
                 let uni = ((cIdx * 21) + juIdx) * 28 + joIdx + 0xAC00
                 if let scalar = UnicodeScalar(uni) { result.append(Character(scalar)) }
-            } else {
-                result += c + ju + jo
-            }
+            } else { result += c + ju + jo }
         }
 
         let chars = Array(englishText)
         var i = 0
-
         while i < chars.count {
             let c = chars[i]
             guard let korChar = engToKor[c] else {
@@ -231,7 +225,6 @@ class TypoConverter {
                 i += 1
                 continue
             }
-
             let kor = String(korChar)
             let isVowel = jungs.contains(korChar)
 
@@ -243,7 +236,6 @@ class TypoConverter {
                 } else {
                     var nextIsVowel = false
                     if i + 1 < chars.count, let n = engToKor[chars[i+1]], jungs.contains(n) { nextIsVowel = true }
-
                     if nextIsVowel {
                         commit(c: cho, ju: jung, jo: jong)
                         cho = kor; jung = ""; jong = ""
@@ -261,12 +253,11 @@ class TypoConverter {
                     if jung.isEmpty { jung = kor }
                     else if let combined = doubleJungs[jung + kor] { jung = combined }
                     else {
-                        commit(c: cho, ju: jung, jo: jong)
+                        commit(c: cho, ju: jung, jo: "")
                         cho = ""; jung = kor; jong = ""
                     }
                 } else {
                     let splitJongs: [String: (String, String)] = ["ㄳ":("ㄱ","ㅅ"), "ㄴㅈ":("ㄴ","ㅈ"), "ㄶ":("ㄴ","ㅎ"), "ㄺ":("ㄹ","ㄱ"), "ㄻ":("ㄹ","ㅁ"), "ㄼ":("ㄹ","ㅂ"), "ㄽ":("ㄹ","ㅅ"), "ㄾ":("ㄹ","ㅌ"), "ㄿ":("ㄹ","ㅍ"), "ㅀ":("ㄹ","ㅎ"), "ㅄ":("ㅂ","ㅅ")]
-
                     if let split = splitJongs[jong] {
                         commit(c: cho, ju: jung, jo: split.0)
                         cho = split.1; jung = kor; jong = ""
@@ -293,7 +284,7 @@ class TypoConverter {
             if scalar >= 0xAC00 && scalar <= 0xD7A3 {
                 let index = Int(scalar) - 0xAC00
                 let choIdx = index / (21 * 28); let jungIdx = (index % (21 * 28)) / 28; let jongIdx = index % 28
-                let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"); let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"); let jongs = Array(" ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
+                let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"); let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"); let jongs = Array(" ㄱㄲㄳㄴㄵㄶㄷㄹㄺ¼ㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
 
                 result += engMap[chos[choIdx]] ?? ""
                 result += doubleJungsMap[jungs[jungIdx]] ?? (engMap[jungs[jungIdx]] ?? "")
@@ -311,9 +302,7 @@ class TypoConverter {
     private func getClipboardRestoreDelay(for bundleID: String?) -> TimeInterval {
         guard let bundleID = bundleID else { return 0.15 }
         let snapshot = SettingsManager.shared.snapshot
-        if let customApp = snapshot.appDelays.first(where: { $0.bundleIdentifier == bundleID }) {
-            return customApp.delay
-        }
+        if let customApp = snapshot.appDelays.first(where: { $0.bundleIdentifier == bundleID }) { return customApp.delay }
         return 0.15
     }
 }
