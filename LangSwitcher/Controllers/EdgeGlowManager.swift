@@ -108,21 +108,19 @@ class EdgeGlowManager {
 
             guard let self = self, self.currentGlowID == myID else { return }
 
-            // 🌟 [리팩토링의 정수] Continuation 브릿지를 놓아 아키텍처를 진화시킵니다.
-            // 비동기 콜백 핸들러가 완료 신호를 줄 때까지 메인 액터 Task가 이 라인에서 우아하게 대기합니다.
+            // Continuation 브릿지를 통해 비동기 애니메이션을 직렬 구조로 동기화
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0.3
                     window.animator().alphaValue = 0
-                } completionHandler: {
-                    // 애니메이션이 끝나면 대기 전선을 해제하라는 신호만 전송 (스레드 무관하게 안전)
+                } completionHandler: { [continuation] in
+                    // 🌟 [리뷰 반영 리팩토링 완료]
+                    // 명시적 캡처 리스트를 주입하여 Swift 6 Strict Concurrency 경고를 완벽하게 분쇄합니다.
                     continuation.resume()
                 }
             }
 
-            // 🌟 완벽한 안전 구역: 이 하단 라인은 완료 콜백 내부가 아니라,
-            // 원래 메인 액터 격리 보장을 받던 부모 Task의 연장선상에서 구동됩니다!
-            // 따라서 런타임 크래시 위험이 완벽하게 0%인 무결점 상태가 됩니다.
+            // 애니메이션이 무사히 끝난 후 메인 액터 보장 안전지대에서 최종 자원 반납
             guard self.currentGlowID == myID else { return }
             self.isCurrentlyGlowing = false
             window.orderOut(nil)

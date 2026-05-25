@@ -1,5 +1,7 @@
 //
+//  WindowMonitor.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -32,7 +34,6 @@ class WindowMonitor {
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
     
-    // 🌟 [최적화] 메인 액터 보호를 받으므로 복잡한 락 변수 구조를 버리고 일반 프로퍼티로 단순화합니다.
     var currentPID: pid_t = 0
     var activeWindowElement: AXUIElement?
 
@@ -48,9 +49,9 @@ class WindowMonitor {
     }
 
     func observeApp(pid: pid_t) {
-        // [안전장치] 메인 액터 큐에서 대기하는 동안 취소 신호가 떨어졌다면 조기 소각
+        // 1차 방어선: 메인 액터 큐 대기 도중 취소된 좀비 태스크 입구 컷
         guard !Task.isCancelled else {
-            dprint("🛑 [WindowMonitor] 메인 액터 대기 중 태스크가 취소되어 의장 등록을 원천 차단합니다. (PID: \(pid))")
+            dprint("🛑 [WindowMonitor] 진입 전 태스크 취소 감지. (PID: \(pid))")
             return
         }
         
@@ -60,7 +61,7 @@ class WindowMonitor {
         guard self.currentPID != pid else { return }
         self.currentPID = pid
 
-        // 기존에 활성화되어 돌고 있던 감시자가 있다면 메인 런루프에서 퇴출
+        // 기존 옵저버 자원이 있다면 메인 런루프에서 퇴출 및 해제
         if let observer = self.axObserver, let rl = self.observerRunLoop {
             CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
             self.axObserver = nil
@@ -70,7 +71,6 @@ class WindowMonitor {
         var observer: AXObserver?
         let callback: AXObserverCallback = { (obs, el, notif, ref) in
             guard let ref = ref else { return }
-            // 비격리 OS C 콜백 내부 영역을 메인 액터 컨텍스트로 바인딩
             MainActor.assumeIsolated {
                 let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
                 let nsNotif = notif as String
@@ -81,24 +81,25 @@ class WindowMonitor {
         }
 
         if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
-            self.axObserver = newObs
-            let appRef = AXUIElementCreateApplication(pid)
-            let refcon = Unmanaged.passUnretained(self).toOpaque()
-            AXObserverAddNotification(newObs, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
-            AXObserverAddNotification(newObs, appRef, kAXTitleChangedNotification as CFString, refcon)
+            
+            // 🌟 [리뷰 반영 통과] 등록 직전 타스크 취소 및 광속 앱 스위칭 상태 최종 더블 체크 가드
+            guard !Task.isCancelled, self.currentPID == pid else {
+                dprint("⚠️ [WindowMonitor] AXObserver는 생성되었으나, 등록 직전 태스크 취소 또는 PID 스위칭 감지. 자원을 자동 소각합니다. (PID: \(pid))")
+                return
+            }
 
-            // 옵저버 등록을 macOS 메인 줄기인 '메인 런루프'로 강제 고정
+            self.axObserver = newObs
             let mainRunLoop = CFRunLoopGetMain()
             CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
             self.observerRunLoop = mainRunLoop
 
-            dprint("🎯 [WindowMonitor] PID \(pid)에 대한 메인 런루프 AXObserver 등록 성공")
+            dprint("🎯 [WindowMonitor] PID \(pid)에 대한 메인 런루프 AXObserver 최종 등록 성공")
         }
 
         // 포커스 윈도우 추적을 위한 초기 딜레이 트리거
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self = self else { return }
-            guard self.currentPID == pid else { return } // 딜레이 도중 앱이 또 바뀌었다면 중단
+            guard self.currentPID == pid else { return }
 
             let appElement = AXUIElementCreateApplication(pid)
             var focusedWindow: CFTypeRef?
@@ -109,8 +110,9 @@ class WindowMonitor {
         }
     }
 
-    // MARK: - 복원된 핵심 윈도우 메모리 비즈니스 로직 (수동 락 완전 제거 버전)
+    // MARK: - 윈도우 메모리 & 앱 특정 규칙 제어 비즈니스 코어
 
+    @MainActor
     func handleWindowFocusChanged(element: AXUIElement) {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isAppSpecificEnabled || snapshot.isWindowMemoryEnabled else { return }
@@ -125,9 +127,9 @@ class WindowMonitor {
         var targetLang: String? = nil
         var traceToRecord: DecisionTrace? = nil
 
-        // 🌟 [최적화] @MainActor 구역이므로 무겁고 불필요한 stateQueue.sync 자물쇠를 완전히 제거합니다!
+        // 🌟 [복원 완료] 유실되었던 단축 앱 매칭 및 상호 전환 로직을 정상 안착시켰습니다.
         if let data = self.windowMemory.getLanguage(for: windowID) {
-            // 1. 이미 캐시 기록이 있는 창인 경우 복구 진행
+            // 1. 이미 장부에 기록이 있는 창인 경우 복구 또는 앱 규칙 분기 실행
             if snapshot.isWindowMemoryEnabled {
                 targetLang = data.language
                 traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
@@ -137,14 +139,14 @@ class WindowMonitor {
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
         } else {
-            // 2. 처음 발견된 창인 경우 앱 특정 규칙 대입
+            // 2. 처음 발견된 새로운 창인 경우 앱 특정 규칙이 있는지 우선 대입
             if snapshot.isAppSpecificEnabled,
                let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
                 targetLang = appLang
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
 
-            // O(1) 성능 캐시 장부에 신규 기록 등록
+            // O(1) 성능 캐시 장부에 안전하게 단독 노드 신규 등록
             self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
         }
 
@@ -161,7 +163,6 @@ class WindowMonitor {
 
     func handleWindowDestroyed(element: AXUIElement) {
         guard let windowID = getWindowID(from: element) else { return }
-        // 🌟 수동 락 걷어내고 메인 액터 격리 지대에서 안전하게 단독 노드 삭제
         self.windowMemory.removeWindow(windowID)
     }
 
@@ -178,7 +179,6 @@ class WindowMonitor {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element),
               let latestID = self.getCurrentInputSourceID() else { return }
 
-        // OS 언어 전환 포착 시 가장 유연하게 장부 최신화 (TOCTOU 보호 구역)
         let currentPID = self.currentPID
         if self.windowMemory.getLanguage(for: windowID) != nil {
             self.windowMemory.setLanguage(latestID, pid: currentPID, for: windowID)
@@ -188,7 +188,6 @@ class WindowMonitor {
     @objc private func appTerminated(_ notification: Notification) {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         let terminatedPID = app.processIdentifier
-        // 앱 종료 시 해당 프로세스의 모든 연결 자식 윈도우 캐시 일괄 소각
         self.windowMemory.removeWindowsForPID(terminatedPID)
     }
 

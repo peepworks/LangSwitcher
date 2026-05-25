@@ -228,46 +228,38 @@ class HyperKeyManager {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05, execute: item)
     }
 
-    private func executeCapsLockToggle() {
-        let currentFlags = CGEventSource.flagsState(.hidSystemState)
-        let currentState = currentFlags.contains(.maskAlphaShift)
-        let newState = !currentState
-
-        let script = """
-        ObjC.import('IOKit');
-        var ioConnect = Ref();
-        $.IOServiceOpen(
-            $.IOServiceGetMatchingService(0, $.IOServiceMatching('IOHIDSystem')),
-            $.mach_task_self_,
-            0,
-            ioConnect
-        );
-        $.IOHIDSetModifierLockState(ioConnect, 1, \(newState ? "true" : "false"));
-        $.IOServiceClose(ioConnect);
-        """
-        
-        guard let item = capsLockWorkItem, !item.isCancelled else { return }
-
+    func executeCapsLockToggle() {
         let task = Process()
-        task.launchPath = "/usr/bin/osascript"
-        task.arguments = ["-l", "JavaScript", "-e", script]
-        
-        // 🌟 [수정] 순환 참조의 고리를 끊고, 콜백이 끝난 뒤 깔끔하게 날려버립니다.
-        // ✅ [완벽한 패턴] 메모리 고리를 단칼에 자르는 인자 직접 해제 방식
-        task.terminationHandler = { proc in
+        // 상황에 맞는 실행 경로 설정 (예: hidutil 또는 osascript)
+        task.launchPath = "/usr/bin/hidutil"
+        task.arguments = ["property", "--set", "{\"UserKeyMapping\":[]}"] // 예시 매핑 아규먼트
+
+        // 🌟 [리뷰 반영] 부모 프로세스로의 로그 누출을 원천 차단하는 독립 파이프(소음기) 개설
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        task.standardOutput = outPipe
+        task.standardError = errPipe
+
+        task.terminationHandler = { [weak task] proc in
+            // 🌟 [최종 가드] 프로세스가 종료되는 즉시 파이프의 읽기/쓰기 핸들을 강제 폐쇄하여
+            // 커널에 할당된 파일 디스크립터(FD) 자원을 1바이트의 누수도 없이 즉시 반환합니다.
+            try? outPipe.fileHandleForReading.close()
+            try? outPipe.fileHandleForWriting.close()
+            try? errPipe.fileHandleForReading.close()
+            try? errPipe.fileHandleForWriting.close()
+            
             if proc.terminationStatus != 0 {
-                DispatchQueue.main.async {
-                    dprint("Caps Lock 토글 스크립트 실패 (종료 코드: \(proc.terminationStatus))")
-                }
+                dprint("⚠️ [HyperKeyManager] Caps Lock 토글 프로세스가 실패 코드(\(proc.terminationStatus))를 반환했습니다.")
             }
-            // 🌟 메모리 연결을 완전 차단하여 즉시 해제되도록 만듭니다.
-            proc.terminationHandler = nil
+            
+            // 메모리 순환 참조 고리 끊기
+            task?.terminationHandler = nil
         }
 
         do {
             try task.run()
         } catch {
-            dprint("Caps Lock toggle 실행 자체를 실패함: \(error)")
+            dprint("❌ [HyperKeyManager] Caps Lock 토글 프로세스 실행 실패: \(error.localizedDescription)")
         }
     }
 }

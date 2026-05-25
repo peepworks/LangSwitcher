@@ -18,19 +18,22 @@
 
 import AppKit
 
-@MainActor // 🌟 Swift 6 완벽 격리 선언
+@MainActor // 🌟 Swift 6 완벽 격리 가드 적용
 class TypoConverter {
     static let shared = TypoConverter()
 
     private let eventSource: CGEventSource? = CGEventSource(stateID: .combinedSessionState)
-    
     private var isConvertingInProgress = false
     private var savedClipboardString: String?
-    private var watchdogTask: Task<Void, Never>?
+
+    // 구조적 태스크 제어를 위한 라이프사이클 홀더
+    private var correctionTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
 
     private init() {}
 
-    // MARK: - 스마트 자동 오타 감지용 엔진 (EventMonitor 전용 훅)
+    // MARK: - 스마트 자동 오타 감지용 엔진 (EventMonitor 수복 완료)
+    
     func detectAndConvert(englishInput: String) -> String? {
         guard englishInput.count >= 2 else { return nil }
 
@@ -69,62 +72,77 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 수동 단축키 오타 교정 (Watchdog 레이어 장착)
+    // MARK: - 수동 단축키 오타 교정 (상호 취소형 안전 파이프라인)
+    
     func executeCorrection() {
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
-        // 2초 뒤 강제 잠금 해제 세이프티 가드 발동
-        watchdogTask?.cancel()
-        watchdogTask = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        // 이전 잔재 태스크 유실 방지 가드 실행
+        correctionTask?.cancel()
+        timeoutTask?.cancel()
+
+        self.backupClipboard()
+        let initialCount = NSPasteboard.general.changeCount
+
+        // 블록 지정 (Option + Shift + Left Arrow)
+        self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift])
+
+        // [파이프라인 1] 오타 교정 메인 비동기 스트림
+        correctionTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            
+            try? await Task.sleep(nanoseconds: 50_000_000) // 0.05초 대기
             guard !Task.isCancelled else { return }
-            dprint("🚨 [TypoConverter] 비동기 오토메이션 체인 유실 감지! 강제 셀프 힐링을 집행합니다.")
+
+            // 복사 시뮬레이션 (Cmd+C)
+            self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
+
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+
+            let localPB = NSPasteboard.general
+            if localPB.changeCount != initialCount,
+               let selectedText = localPB.string(forType: .string), !selectedText.isEmpty {
+
+                let convertedText = self.convertString(selectedText)
+                localPB.clearContents()
+                localPB.setString(convertedText, forType: .string)
+
+                // 붙여넣기 시뮬레이션 (Cmd+V)
+                self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
+
+                let activeAppID = AppMonitor.shared.activeAppBundleID
+                let delay = self.getClipboardRestoreDelay(for: activeAppID)
+
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } else {
+                self.postKeyEvent(keyCode: 124, modifiers: []) // 텍스트 선택 해제 가드
+            }
+
+            // 본대가 안전하게 임무를 완수했으므로 타이머 경보(Timeout) 감시병을 해제합니다.
+            self.timeoutTask?.cancel()
             self.safeRestoreAndUnlock()
         }
 
-        self.backupClipboard()
+        // [파이프라인 2] 하드웨어 무한 루프 폭사 방지 워치독 타이머 (2초)
+        timeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
 
-        // 커서 앞 한 단어 자동 지정 블록 선택 (Option + Shift + Left Arrow)
-        self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift])
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            let localPB = NSPasteboard.general
-            let initialCount = localPB.changeCount
-
-            // 복사 명령 하드웨어 시뮬레이션 (Cmd+C)
-            self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                if localPB.changeCount != initialCount,
-                   let selectedText = localPB.string(forType: .string), !selectedText.isEmpty {
-
-                    let convertedText = self.convertString(selectedText)
-                    localPB.clearContents()
-                    localPB.setString(convertedText, forType: .string)
-
-                    // 붙여넣기 시뮬레이션 (Cmd+V)
-                    self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
-
-                    let activeAppID = AppMonitor.shared.activeAppBundleID
-                    let delay = self.getClipboardRestoreDelay(for: activeAppID)
-
-                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                        self.safeRestoreAndUnlock()
-                    }
-                } else {
-                    self.postKeyEvent(keyCode: 124, modifiers: []) // 블록 해제 예외 처리
-                    self.safeRestoreAndUnlock()
-                }
-            }
+            guard let self = self else { return }
+            dprint("🚨 [TypoConverter] 시스템 오토메이션 응답 지연 발생. 메인 파이프라인을 원격 낙태합니다.")
+            
+            self.correctionTask?.cancel() // 멈춰버린 본대 강제 소각
+            self.safeRestoreAndUnlock()    // 클립보드 원복 및 락 해제
         }
     }
 
     private func safeRestoreAndUnlock() {
-        watchdogTask?.cancel()
-        watchdogTask = nil
+        correctionTask = nil
+        timeoutTask = nil
         restoreClipboard()
-        isConvertingInProgress = false
+        isConvertingInProgress = false // 🌟 정합성을 위해 플래그 해제를 가장 마지막 라인에 배치
     }
 
     private func backupClipboard() {
@@ -174,7 +192,8 @@ class TypoConverter {
         return hasKorean ? convertToEn(text) : convertToKo(text)
     }
 
-    // MARK: - 두벌식 오토마타 엔진 코어 복원
+    // MARK: - 두벌식 자모 결합 오토마타 변환 코어 엔진
+    
     func convertToKo(_ englishText: String) -> String {
         let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
         let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")

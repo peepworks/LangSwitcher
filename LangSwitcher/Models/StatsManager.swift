@@ -101,16 +101,20 @@ class StatsManager: ObservableObject {
         }
     }
     
+    // v0.9.1 코어 아키텍처의 작동 순서
+    @MainActor
     private func forceSave() {
-        // 더티 플래그가 거짓이면 무거운 직렬화 전면 생략
         guard isDirty else { return }
         
-        // 메인 스레드에서 안전하게 데이터를 캡처한 후 플래그 청소
-        let snapshot = internalStatsDict
-        isDirty = false
+        // 🌟 Step 1 (메인 스레드 보장 구역):
+        // Swift 딕셔너리는 구조체(struct)이므로 이 순간 완벽한 '값 복사(Copy)'가 일어납니다.
+        let snapshot = self.internalStatsDict
+        self.isDirty = false
+        
         let key = defaultsKey
         
-        // 데이터 쓰기 부하만 백그라운드로 안전하게 던지기 (복사본이 전송되므로 레이스 방지)
+        // 🌟 Step 2 (백그라운드 스레드 이관):
+        // 메인 스레드와 완전히 분리된 독립된 복사본(snapshot)만 큐에 실어서 던집니다.
         saveQueue.async {
             let statsArray = Array(snapshot.values).sorted { $0.dateString < $1.dateString }
             if let data = try? JSONEncoder().encode(statsArray) {

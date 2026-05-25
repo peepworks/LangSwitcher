@@ -1,5 +1,7 @@
 //
+//  SettingsManager.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -37,17 +39,24 @@ class SettingsManager: ObservableObject {
     private var saveWorkItem: DispatchWorkItem?
     
     private let maxLogCount = 500
+    private var logBufferThreshold: Int { maxLogCount + 50 }
     
     @Published var selectedTab: SettingsTab? = .general
-    
     @MainActor var isBatchUpdating: Bool = false
     
+    // 🌟 [교정] 중복 선언되었던 recentLogs를 한 곳으로 깔끔하게 통합했습니다.
+    @Published private(set) var recentLogs: [ActionLog] = []
+    
+    // 딕셔너리 캐시는 전역으로 관리하되, 활성 프로필 데이터를 굽습니다.
+    private(set) var customShortcutCache: [ShortcutKey: CustomShortcut] = [:]
+    private(set) var appLaunchShortcutCache: [ShortcutKey: AppLaunchShortcut] = [:]
+
     // MARK: - Global Settings (전역 설정)
     
     @Published var isCtrlActive: Bool {
         didSet {
             save("isCtrlActive", isCtrlActive)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            guard !isBatchUpdating else { return } // 🌟 방어벽
             scheduleSave()
         }
     }
@@ -55,7 +64,7 @@ class SettingsManager: ObservableObject {
     @Published var isCmdActive: Bool {
         didSet {
             save("isCmdActive", isCmdActive)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            guard !isBatchUpdating else { return } // 🌟 방어벽
             scheduleSave()
         }
     }
@@ -70,23 +79,17 @@ class SettingsManager: ObservableObject {
     @Published var toggleKeyCode: UInt16 {
         didSet {
             save("toggleKeyCode", toggleKeyCode)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            guard !isBatchUpdating else { return } // 🌟 방어벽
             updateSnapshot()
         }
     }
     @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags); updateSnapshot() } }
     @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString); updateSnapshot() } }
-    
-    @Published private(set) var recentLogs: [ActionLog] = []
-    
-    // 딕셔너리 캐시는 전역으로 관리하되, 활성 프로필 데이터를 굽습니다.
-    private(set) var customShortcutCache: [ShortcutKey: CustomShortcut] = [:]
-    private(set) var appLaunchShortcutCache: [ShortcutKey: AppLaunchShortcut] = [:]
 
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet {
             HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가!
+            guard !isBatchUpdating else { return } // 🌟 방어벽
             updateSnapshot()
             syncToCloud()
         }
@@ -118,7 +121,6 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // 🌟 [핵심 수정] 프로필 전환 시 즉각적으로 엔진에 갱신을 지시하는 옵저버
     @Published var activeProfileID: UUID {
         didSet {
             guard oldValue != activeProfileID else { return }
@@ -130,7 +132,6 @@ class SettingsManager: ObservableObject {
                 self.saveAll()
                 self.syncToCloud()
                 
-                // 🌟 [추가] 프로필 전환 시 Siri 및 단축어 파라미터 최신화!
                 if #available(macOS 13.0, *) {
                     Task {
                         LangSwitcherShortcuts.updateAppShortcutParameters()
@@ -142,7 +143,6 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // 현재 활성화된 프로필에 안전하게 접근하고 수정하기 위한 연산 프로퍼티
     var activeProfile: SettingsProfile {
         get {
             profiles.first(where: { $0.id == activeProfileID }) ?? profiles.first!
@@ -155,12 +155,9 @@ class SettingsManager: ObservableObject {
     }
     
     private init() {
-        // 🌟 1. 초기화 데이터 붓기 시작! 연쇄 갱신 방어막을 가장 먼저 켭니다.
         self.isBatchUpdating = true
-        
         let d = UserDefaults.standard
         
-        // 1. 전역 설정 로드
         isCtrlActive = d.bool(forKey: "isCtrlActive"); isCmdActive = d.bool(forKey: "isCmdActive"); isOptActive = d.bool(forKey: "isOptActive")
         showVisualFeedback = d.object(forKey: "showVisualFeedback") as? Bool ?? true; isTestMode = d.bool(forKey: "isTestMode")
         toggleKeyCode = UInt16(d.integer(forKey: "toggleKeyCode"))
@@ -170,7 +167,6 @@ class SettingsManager: ObservableObject {
         
         var tempProfiles: [SettingsProfile] = []
         
-        // 2. 프로필 데이터 로드 및 마이그레이션
         if let data = d.data(forKey: "profiles"), let dec = try? JSONDecoder().decode([SettingsProfile].self, from: data), !dec.isEmpty {
             tempProfiles = dec
         } else {
@@ -213,20 +209,15 @@ class SettingsManager: ObservableObject {
             tempProfiles = [defaultProfile]
         }
         
-        // 3. 활성 프로필 ID 임시 변수 설정
         var tempActiveID = tempProfiles.first!.id
         if let savedIDString = d.string(forKey: "activeProfileID"), let savedID = UUID(uuidString: savedIDString), tempProfiles.contains(where: { $0.id == savedID }) {
             tempActiveID = savedID
         }
         
-        // 모든 임시 변수를 실제 프로퍼티에 한 번에 할당합니다.
         self.profiles = tempProfiles
         self.activeProfileID = tempActiveID
         
-        // 🌟 2. 초기화 후 상태 반영 (이 내부에서 방어막 해제 및 updateSnapshot() 1회 호출이 이루어짐)
         applyActiveProfile()
-        
-        // 🌟 3. 중복된 isBatchUpdating = false 및 updateSnapshot() 제거 완료
         
         NotificationCenter.default.addObserver(
             self,
@@ -251,28 +242,18 @@ class SettingsManager: ObservableObject {
         dprint("SettingsManager: 프로필 데이터가 디스크에 저장되었습니다.")
     }
     
-    // 🌟 [핵심] 프로필이 전환될 때 호출되는 통합 업데이트 메서드 (최적화 완료)
     func applyActiveProfile() {
-        // 1. 연쇄 업데이트 방어막 활성화
         self.isBatchUpdating = true
         
-        // 2. 함수 종료 시 방어막을 해제하고 스냅샷을 1회만 생성하도록 예약
         defer {
             self.isBatchUpdating = false
             self.updateSnapshot()
         }
         
         let payload = activeProfile.payload
-        
-        // 3. 도메인 룰 매니저 동기화
         DomainRuleManager.shared.rules = payload.domainRules
-        
-        // 4. 단축키 캐시 굽기
         updateShortcutCaches()
         
-        // (기존에 3번에 있던 updateSnapshot()은 위 defer 블록으로 이동하여 1회만 실행됨)
-        
-        // 5. 프로필 전환 로그 기록 (디버거 연동용)
         let log = ActionLog(timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Profile Switched", finalInputSource: "Active Profile: \(activeProfile.name)", result: .success, failureReason: .none)
         addLog(log)
             
@@ -327,12 +308,13 @@ class SettingsManager: ObservableObject {
         self._snapshot = newSnapshot
     }
     
+    // MARK: - 고성능 로그 주입 아키텍처
     func addLog(_ log: ActionLog) {
         self.recentLogs.append(log)
         
-        // 이제 스코프(Scope) 내부에서 maxLogCount를 정상적으로 인식합니다.
-        if self.recentLogs.count > maxLogCount {
-            self.recentLogs.removeFirst()
+        if self.recentLogs.count > logBufferThreshold {
+            let overflowCount = self.recentLogs.count - maxLogCount
+            self.recentLogs.removeFirst(overflowCount)
         }
     }
     
@@ -345,7 +327,6 @@ class SettingsManager: ObservableObject {
                 self.updateSnapshot()
                 if !self.isBatchUpdating { self.syncToCloud() }
                 
-                // 🌟 [추가] 설정 변경이 디스크에 저장될 때 Siri 및 단축어 파라미터도 최신화!
                 if #available(macOS 13.0, *) {
                     Task {
                         LangSwitcherShortcuts.updateAppShortcutParameters()
@@ -387,7 +368,6 @@ class SettingsManager: ObservableObject {
     func exportTextExpansionRules(to url: URL, completion: @escaping (Bool, Error?) -> Void = { _, _ in }) {
         do {
             let encoder = JSONEncoder()
-            encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(activeProfile.payload.textExpansionRules)
             DispatchQueue.global(qos: .userInitiated).async {
                 do { try data.write(to: url); DispatchQueue.main.async { completion(true, nil) } } catch { DispatchQueue.main.async { completion(false, error) } }
@@ -416,7 +396,6 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // 🌟 프로필 전체 데이터 내보내기 (Export)
     func exportProfiles() {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.json]
@@ -440,7 +419,6 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // 🌟 프로필 전체 데이터 가져오기 (Import) - 완벽한 에러 핸들링 적용
     func importProfiles() {
         let openPanel = NSOpenPanel()
         openPanel.allowedContentTypes = [.json]
@@ -456,7 +434,6 @@ class SettingsManager: ObservableObject {
                     let decoder = JSONDecoder()
                     let importedProfiles = try decoder.decode([SettingsProfile].self, from: data)
                     
-                    // 🌟 [수정 1] 빈 파일(빈 배열)일 경우 무시하지 않고 사용자에게 경고창 띄우기
                     guard !importedProfiles.isEmpty else {
                         DispatchQueue.main.async {
                             let alert = NSAlert()
@@ -475,7 +452,6 @@ class SettingsManager: ObservableObject {
                             self.activeProfileID = firstProfile.id
                         }
                         
-                        // 🌟 성공 알림창 띄우기
                         let alert = NSAlert()
                         alert.messageText = String(localized: "Profiles Restore Successful")
                         alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
@@ -488,13 +464,12 @@ class SettingsManager: ObservableObject {
                     dprint("✅ Profiles successfully imported from \(url.lastPathComponent)")
                     
                 } catch {
-                    // 🌟 [수정 2] 파싱 실패(에러) 시 콘솔에만 찍지 않고 크리티컬 에러창 띄우기
                     dprint("❌ Failed to import profiles: \(error.localizedDescription)")
                     DispatchQueue.main.async {
                         let alert = NSAlert()
                         alert.messageText = String(localized: "Import Failed")
                         alert.informativeText = String(localized: "Failed to read the backup file. It might be corrupted or in an unsupported format.\n\nError: \(error.localizedDescription)")
-                        alert.alertStyle = .critical // 빨간색 X 아이콘 표시
+                        alert.alertStyle = .critical
                         NSApp.activate(ignoringOtherApps: true)
                         alert.runModal()
                     }
@@ -503,10 +478,7 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    /// 외부의 스레드 환경과 무관하게 항상 메인 스레드에서 안전하게 로그를 비우는 캡슐화된 함수
     func clearLogs() {
-        // 🌟 [리팩토링 완료] 클래스 자체가 @MainActor이므로, 불필요한 DispatchQueue나 Task 포장지를 전면 폐기합니다.
-        // 이제 런루프 지연 딜레이가 완전한 0%가 되며, 호출되는 즉시 동기식(Sync)으로 메모리를 전량 회수합니다.
         self.recentLogs.removeAll(keepingCapacity: false)
     }
 }
