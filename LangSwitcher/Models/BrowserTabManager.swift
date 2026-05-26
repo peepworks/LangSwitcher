@@ -55,7 +55,26 @@ protocol BrowserAdapter: Sendable {
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError>
 }
 
-// MARK: - JXA 아웃프로세스 제어 커널
+// MARK: - JXA 아웃프로세스 제어 커널 (Swift 6 넌아이솔레이티드 완전 수복 사양)
+
+// 🌟 [Swift 6 최종 수복] 내부 데이터 프로퍼티까지 완벽하게 메인 액터 영향권에서 탈출시킵니다.
+nonisolated private final class SafeDataBuffer: @unchecked Sendable {
+    // 람다 내부에서 마음껏 수정 가능한 순정 비격리 var 변수 확립
+    private var data = Data()
+    private let lock = NSLock()
+    
+    func append(_ newData: Data) {
+        lock.lock()
+        data.append(newData)
+        lock.unlock()
+    }
+    
+    func read() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+}
 
 func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async throws -> String? {
     return try await withThrowingTaskGroup(of: String?.self) { group in
@@ -68,10 +87,24 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let errorPipe = Pipe()
         process.standardError = errorPipe
 
+        // 스레드 안전하게 설계된 독립 안전 자물쇠 상자 생성
+        let outputBuffer = SafeDataBuffer()
+        let fileHandle = pipe.fileHandleForReading
+
+        // 백그라운드 커널 I/O 줄기에서 메인 액터 간섭 없이 온전하게 데이터 주입
+        fileHandle.readabilityHandler = { handle in
+            let available = handle.availableData
+            if !available.isEmpty {
+                outputBuffer.append(available)
+            }
+        }
+
         group.addTask {
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
                     defer {
+                        fileHandle.readabilityHandler = nil
+                        
                         try? pipe.fileHandleForReading.close()
                         try? pipe.fileHandleForWriting.close()
                         try? errorPipe.fileHandleForReading.close()
@@ -80,17 +113,20 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
                     }
 
                     if p.terminationStatus == 0 {
-                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // 넌아이솔레이티드 상태이므로 백그라운드 종료 핸들러에서 블로킹/경찰 검문 없이 즉시 안전하게 획득
+                        let finalData = outputBuffer.read()
+                        let output = String(data: finalData, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
                         continuation.resume(returning: output)
                     } else {
-                        continuation.resume(throwing: JXAError.scriptFailed("Process terminated or failed"))
+                        continuation.resume(throwing: JXAError.scriptFailed("Process terminated with code \(p.terminationStatus)"))
                     }
                 }
 
                 do {
                     try process.run()
                 } catch {
+                    fileHandle.readabilityHandler = nil
                     continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
                 }
             }
@@ -104,9 +140,11 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         do {
             let firstResult = try await group.next()
             group.cancelAll()
+            pipe.fileHandleForReading.readabilityHandler = nil
             return firstResult ?? nil
         } catch {
             group.cancelAll()
+            pipe.fileHandleForReading.readabilityHandler = nil
             if process.isRunning {
                 process.terminate()
             }

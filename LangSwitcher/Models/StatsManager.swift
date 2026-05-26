@@ -34,13 +34,15 @@ struct DailyStat: Codable, Identifiable, Equatable, Sendable {
 class StatsManager: ObservableObject {
     static let shared = StatsManager()
     
-    // 🌟 [최적화] 수동 스레드 경합을 막던 비효율적인 stateQueue 배리어 자물쇠를 전면 삭제합니다.
     // 디스크 쓰기 전용 백그라운드 직렬 큐 하나만 유지하여 UI 스레드를 지켜냅니다.
     private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.stats.save", qos: .background)
     
     // UI 바인딩용 데이터 (메인 스레드 격리)
     @Published var dailyStats: [DailyStat] = []
-    @Published private(set) var statsDict: [String: DailyStat] = [:]
+    
+    // 🌟 [수복 완료] 경고 문법 준수 및 외부 세터 충돌 방지를 위해 빈 딕셔너리 명세를 명확히 고정합니다.
+    @Published var statsDict: [String: DailyStat] = [:]
+    @Published private(set) var filteredStatsCache: [DailyStat] = []
     
     // 인메모리 누적 딕셔너리
     private var internalStatsDict: [String: DailyStat] = [:]
@@ -60,7 +62,6 @@ class StatsManager: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // 알림 수신 시 즉시 메인 액터 격리 지표 확보
             MainActor.assumeIsolated {
                 self?.forceSave()
             }
@@ -72,13 +73,11 @@ class StatsManager: ObservableObject {
     func incrementLanguageSwitch() {
         let dateKey = todayKey()
         
-        // 🌟 [최적화] 메인 액터 격리 공간이므로 락 없이 비용 0%로 즉시 쓰기 수행
         var stat = internalStatsDict[dateKey] ?? DailyStat(dateString: dateKey, languageSwitches: 0, typoCorrections: 0)
         stat.languageSwitches += 1
         internalStatsDict[dateKey] = stat
         isDirty = true
         
-        // UI 디바운서 호출
         self.schedulePublishUpdate()
     }
 
@@ -103,25 +102,22 @@ class StatsManager: ObservableObject {
         }
     }
     
-    // v0.9.1 코어 아키텍처의 작동 순서
     @MainActor
     private func forceSave() {
         guard isDirty else { return }
         
-        // 🌟 Step 1 (메인 스레드 보장 구역):
-        // Swift 딕셔너리는 구조체(struct)이므로 이 순간 완벽한 '값 복사(Copy)'가 일어납니다.
+        // Zero-Capture 아키텍처 사양
         let snapshot = self.internalStatsDict
+        let key = defaultsKey
         self.isDirty = false
         
-        let key = defaultsKey
-        
-        // 🌟 Step 2 (백그라운드 스레드 이관):
-        // 메인 스레드와 완전히 분리된 독립된 복사본(snapshot)만 큐에 실어서 던집니다.
         saveQueue.async {
             let statsArray = Array(snapshot.values).sorted { $0.dateString < $1.dateString }
             if let data = try? JSONEncoder().encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: key)
-                dprint("StatsManager: 변경된 통계 데이터가 백그라운드에서 저장되었습니다.")
+                #if DEBUG
+                dprint("💾 [StatsManager] 백그라운드에서 self 간섭 없이 통계 데이터를 안전하게 저장했습니다.")
+                #endif
             }
         }
     }
@@ -141,20 +137,10 @@ class StatsManager: ObservableObject {
     }
     
     private func publishUpdate() {
-        // 메인 스레드에 상주 중이므로 락 프리 복사 캡처 수행
-        let dictSnapshot = internalStatsDict
-        
-        // 무거운 정렬(sorted) 작업만 메인 스레드가 아닌 인텔리전트 글로벌 큐로 위임
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let snapshotArray = Array(dictSnapshot.values).sorted { $0.dateString < $1.dateString }
-            
-            // 렌더링 준비 완료 시점에 다시 메인 팩터로 바인딩
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.dailyStats = snapshotArray
-                self.statsDict = dictSnapshot
-            }
-        }
+        // 🌟 [수복 완료] 원자적 대입문 매칭 수정
+        let snapshotArray = Array(internalStatsDict.values).sorted { $0.dateString < $1.dateString }
+        self.dailyStats = snapshotArray
+        self.statsDict = internalStatsDict
     }
     
     private func schedulePublishUpdate() {
@@ -168,7 +154,7 @@ class StatsManager: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
 
-    // 통계 날짜 정합성 추출 포매터 (메인 액터 전용 격리 상주시켜 컴파일러 위협 무력화)
+    // 통계 날짜 정합성 추출 포매터 (메인 액터 전용 격리 상주)
     private static let todayFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withYear, .withMonth, .withDay, .withDashSeparatorInDate]
@@ -190,38 +176,27 @@ class StatsManager: ObservableObject {
         self.publishUpdate()
     }
     
-    func exportToCSV(to url: URL, completion: @escaping @Sendable (Bool, Error?) -> Void) {
+    func exportToCSV(to url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void) {
         let snapshot = internalStatsDict
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 var csvString = "Date,Type,Count\n"
-                
                 for (dateKey, dailyStats) in snapshot {
-                    let switchCount = dailyStats.languageSwitches
-                    let typoCount = dailyStats.typoCorrections
-                    
-                    csvString += "\(dateKey),LanguageSwitch,\(switchCount)\n"
-                    csvString += "\(dateKey),TypoCorrection,\(typoCount)\n"
+                    csvString += "\(dateKey),LanguageSwitch,\(dailyStats.languageSwitches)\n"
+                    csvString += "\(dateKey),TypoCorrection,\(dailyStats.typoCorrections)\n"
                 }
                 
                 try csvString.write(to: url, atomically: true, encoding: .utf8)
                 
-                DispatchQueue.main.async {
-                    completion(true, nil)
-                }
+                DispatchQueue.main.async { completion(true, nil) }
             } catch {
-                DispatchQueue.global(qos: .userInitiated).async {
-                    completion(false, error)
-                }
+                DispatchQueue.main.async { completion(false, error) }
             }
         }
     }
     
-    // 필터링/정렬된 데이터를 보관할 캐시 프로퍼티
-    @Published private(set) var filteredStatsCache: [DailyStat] = []
-    
-    // 뷰에서 호출할 최적화된 데이터 가공 메서드
+    // 🌟 [수복 완료] 기존에 존재하는 TimeRange 프로젝트 사양을 온전하게 상속하여 연동합니다.
     func updateFilteredStats(for range: TimeRange) {
         let calendar = Calendar.current
         let today = Date()
@@ -240,7 +215,6 @@ class StatsManager: ObservableObject {
         var result: [DailyStat] = []
         result.reserveCapacity(daysToFetch)
         
-        // 🌟 [최적화] 불필요한 스레드 대기 연산(.sync)을 완전히 삭제하고, 메모리에서 직렬 다이렉트 처리
         let snapshot = internalStatsDict
         
         for i in (0..<daysToFetch).reversed() {

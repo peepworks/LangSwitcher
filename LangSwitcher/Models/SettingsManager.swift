@@ -388,18 +388,13 @@ class SettingsManager: ObservableObject {
         // 1. 맨 뒤에 붙이기는 언제나 비용이 없는 완벽한 O(1)
         self.recentLogs.append(log)
         
-        // 2. 매번 지우지 않고 임계값(550개)에 도달했을 때만 50개를 일괄 배치 청소
-        if self.recentLogs.count > logBufferThreshold {
-            let overflowCount = self.recentLogs.count - maxLogCount
-            
-            // 🌟 [리뷰어 지적 완벽 종결]
-            // Array(suffix)처럼 새 메모리 공간을 파서 500개를 전량 복사하는 낭비 없이,
-            // 순정 배열 내부에서 앞전의 50개 찌꺼기만 단 1번의 메모리 이동으로 칼같이 잘라냅니다.
-            // 550번의 키 타건 중 딱 1번만 이사가 실행되므로 고속 타이핑 시 CPU 지연이 0%로 통제됩니다.
-            self.recentLogs.removeFirst(overflowCount)
+        // 2. [리뷰 반영 1줄 교체] 550개 도달 시 suffix 슬라이스를 통해
+        // 매 타건마다 발생하던 O(n) 메모리 시프팅 부하를 50번에 1번꼴로 격하시킵니다.
+        if self.recentLogs.count > maxLogCount + 50 {
+            self.recentLogs = Array(self.recentLogs.suffix(maxLogCount))
             
             #if DEBUG
-            dprint("🧹 [LogEngine] 버퍼 한도 초과로 오래된 로그 \(overflowCount)건을 일괄 배치 트리밍했습니다. (현재 카운트: \(self.recentLogs.count)건)")
+            dprint("🧹 [LogEngine] 버퍼 한도 유예 통과: 50건의 로그를 일괄 suffix 트리밍했습니다.")
             #endif
         }
     }

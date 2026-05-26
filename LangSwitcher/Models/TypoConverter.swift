@@ -68,41 +68,38 @@ class TypoConverter {
     // MARK: - 수동 단축키 오타 교정 (리뷰어 피드백 완벽 수용 버전)
     
     func executeCorrection() {
+        // @MainActor 동기 구역이므로 원자적(Atomic) 제어권 획득
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
+        // 1. 이전 잔재 태스크가 혹시라도 남아있다면 먼저 비상 강제 처단
         self.forceCancelAndCleanup()
         
+        // 2. 신규 독점 트랜잭션 상태 수립
         isConvertingInProgress = true
         self.backupClipboard()
         let initialCount = NSPasteboard.general.changeCount
-        
-        // 🌟 [리뷰 반영] 현재 활성화된 타겟 앱의 고유 클립보드 딜레이 스냅샷 획득
-        let currentAppID = AppMonitor.shared.activeAppBundleID
-        let appDelay = self.getClipboardRestoreDelay(for: currentAppID)
 
+        // 3. 메인 교정 비동기 태스크 가동
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
-            defer { if Task.isCancelled { self.forceCancelAndCleanup() } }
-        
-            // 🌟 [리뷰어 제안 적극 수용: 완벽한 탈출 안전망 전개]
-            // Task가 50ms 대기 중 취소되어 얼리 리턴(return)을 맞이하더라도,
-            // 이 defer 블록이 스택 닫히는 순간을 낚아채 유저 클립보드와 자물쇠를 무조건 복구합니다.
+            
+            // 🌟 [리뷰 반영 수복: 단일 defer 안전망 통합]
+            // 복수의 defer 선언을 제거하여 실행 순서 꼬임(LIFO)을 원천 방쇄합니다.
+            // 이 defer는 오직 150ms 대기 도중 "외부 취소"가 발생해 튕겨 나갈 때만 비상 구출을 실행합니다.
             defer {
-                // 만약 아래 성공 경로의 cleanupAfterSuccess()를 만나기 전에
-                // 취소되어 튕겨 나간 상태라면 비상 복원 엔진을 즉시 트리거합니다.
                 if Task.isCancelled {
                     self.forceCancelAndCleanup()
                 }
             }
             
-            // 1. 선제 딜레이 및 복사 이벤트 시뮬레이션
+            // 50ms 선제 딜레이 및 복사 이벤트 시뮬레이션
             try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return } // 췻소 시 defer에 의해 클립보드 안전 원복
+            guard !Task.isCancelled else { return } // 취소 시 defer 구동
             self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
 
             try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return } // 취소 시 defer에 의해 클립보드 안전 원복
+            guard !Task.isCancelled else { return } // 취소 시 defer 구동
 
             let localPB = NSPasteboard.general
             
@@ -122,7 +119,7 @@ class TypoConverter {
                 let delay = self.getClipboardRestoreDelay(for: AppMonitor.shared.activeAppBundleID)
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 
-                // 임무 완수 후 정상 퇴출 (defer가 무시되도록 상태를 마무리 지음)
+                // 🌟 임무 완수 후 명시적으로 정상 청소부 호출 (Task.isCancelled가 아님으로 defer는 패스됨)
                 self.cleanupAfterSuccess()
                 
             } else {
@@ -131,30 +128,29 @@ class TypoConverter {
                 // ==========================================
                 self.postKeyEvent(keyCode: 124, modifiers: [])
                 
-                // 즉시 락 해제 및 클립보드 수복 처리
+                // 즉시 안전하게 정상 제어권 반납
                 self.cleanupAfterSuccess()
                 
                 #if DEBUG
-                dprint("⚡ [TypoConverter] 예외 경로 감지: 즉시 락을 해제하고 원복했습니다.")
+                dprint("⚡ [TypoConverter] 예외 경로 감지: 자원 정상 수복 완료")
                 #endif
             }
         }
 
-        // ── 파이프라인 2: [리뷰 반영 수복] 가중치 동적 데드라인 안전망 ────────────────
-        // appDelay의 3배수를 기본 마진으로 잡되, 최소 2.0초에서 최대 5.0초 사이로 클램프(Clamp) 조율합니다.
+        // 가중치 동적 데드라인 안전망 가동 (이전 레이어 유지)
+        let currentAppID = AppMonitor.shared.activeAppBundleID
+        let appDelay = self.getClipboardRestoreDelay(for: currentAppID)
         let calculatedTimeout = max(2.0, min(5.0, appDelay * 3.0))
         let timeoutNanoseconds = UInt64(calculatedTimeout * 1_000_000_000)
 
         timeoutTask = Task { [weak self] in
-            // 시스템 앱 환경에 최적화된 맞춤형 시간만큼 수면
             try? await Task.sleep(nanoseconds: timeoutNanoseconds)
             guard !Task.isCancelled else { return }
 
             guard let self = self else { return }
             #if DEBUG
-            dprint("🚨 [TypoConverter] 타겟 앱[\(currentAppID)] 맞춤형 동적 가드(\(calculatedTimeout)초) 데드라인 도달! 시스템 구출을 개시합니다.")
+            dprint("🚨 [TypoConverter] 동적 안전망 데드라인 도달! 비상 처단 가동")
             #endif
-            
             self.forceCancelAndCleanup()
         }
     }
