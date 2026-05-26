@@ -384,7 +384,7 @@ class SettingsManager: ObservableObject {
     
     // MARK: - 고성능 로그 주입 아키텍처
     func addLog(_ log: ActionLog) {
-        // 1. 맨 뒤에 붙이기는 언제나 비용이 없는 O(1)
+        // 1. 맨 뒤에 붙이기는 언제나 비용이 없는 완벽한 O(1)
         self.recentLogs.append(log)
         
         // 2. 매번 지우지 않고 임계값(550개)에 도달했을 때만 50개를 일괄 청소
@@ -394,6 +394,10 @@ class SettingsManager: ObservableObject {
             // 550번 타건할 때 딱 1번만 메모리 시프팅을 집행하므로,
             // 수학적 분할상환(Amortized) 성능은 완벽하게 O(1)에 수렴합니다.
             self.recentLogs.removeFirst(overflowCount)
+            
+            #if DEBUG
+            dprint("🧹 [LogEngine] 버퍼가 가득 차 오래된 로그 \(overflowCount)건을 일괄 배치 트리밍했습니다.")
+            #endif
         }
     }
     

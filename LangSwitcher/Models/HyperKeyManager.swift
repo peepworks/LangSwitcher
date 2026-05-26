@@ -1,5 +1,7 @@
 //
+//  HyperKeyManager.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -123,20 +125,33 @@ class HyperKeyManager {
                     return
                 }
 
-                // 3. 최종 설정 반영 등록
+                // 3. 최종 설정 반영 등록 (리뷰 반영 수복 지점)
                 let setTask = Process()
                 setTask.launchPath = "/usr/bin/hidutil"
                 setTask.arguments = ["property", "--set", finalJsonString]
 
+                // 🌟 [리뷰 반영] 콘솔 소음 누출 및 버퍼 행(Hang) 예방을 위한 소음기 파이프 개설
+                let setOutPipe = Pipe()
+                let setErrPipe = Pipe()
+                setTask.standardOutput = setOutPipe
+                setTask.standardError = setErrPipe
+
                 setTask.terminationHandler = { proc in
+                    // 🌟 [최종 가드] 자식 프로세스 종료 즉시 커널 파일 디스크립터(FD) 자원 강제 소각
+                    try? setOutPipe.fileHandleForReading.close()
+                    try? setOutPipe.fileHandleForWriting.close()
+                    try? setErrPipe.fileHandleForReading.close()
+                    try? setErrPipe.fileHandleForWriting.close()
+                    
                     if proc.terminationStatus != 0 {
-                        DispatchQueue.main.async { dprint("hidutil 실행 실패") }
+                        // 💡 UI 메인 스레드 간섭 없이 독립 격리 디버그 로그 출력
+                        dprint("⚠️ [HyperKeyManager] hidutil --set 실행 실패 (Status: \(proc.terminationStatus))")
                     }
                     proc.terminationHandler = nil
                 }
 
                 try setTask.run()
-                setTask.waitUntilExit() // 상호 간섭 방지를 위해 매핑 확정 대기 추가
+                setTask.waitUntilExit() // 상호 간섭 방지를 위해 매핑 확정 대기 유지
                 
             } catch {
                 dprint("❌ [HyperKeyManager] 하드웨어 키 매핑 프로세스 실행 중 예외 에러 발생: \(error.localizedDescription)")

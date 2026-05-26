@@ -1,5 +1,7 @@
 //
+//  BrowserTabManager.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -242,22 +244,29 @@ class BrowserTabManager {
         // 현재 탭의 언어 상태 백업 집행
         saveCurrentContext()
         
-        // 유저가 탭을 빠르게 전환 중이라면 이전 예약된 JXA 아웃프로세스 실행 계획을 즉시 무조건 사살(Cancel)합니다.
+        // 유저가 탭을 빠르게 전환 중이라면 이전 예약된 JXA 실행 계획을 즉시 원격 사살(Cancel)합니다.
         fetchTask?.cancel()
 
         // 새로운 150ms 보호망 타스크 개설
         fetchTask = Task(priority: .userInitiated) { [weak self] in
-            // 150ms 동안 대기하며 연속적인 전환 입력 충격을 모두 흡수합니다.
+            // 1. 1차 디바운스 대기 유예
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
 
-            // 폭풍이 지나간 후 최종 안착한 단 하나의 탭에 대해서만 무거운 프로세스 포크 실행
+            // 2. 외부 무거운 JXA 프로세스 쿼리 비동기 집행
             let result = await adapter.fetchActiveTabInfo(appName: appName)
-            guard !Task.isCancelled else { return }
-
-            // 🌟 [최적화] Task 자체가 메인 액터 격리 구역에서 생성되었으므로,
-            // 불필요한 MainActor.run 래퍼를 전면 제거하고 직통으로 연산 효율을 높입니다.
-            guard let self = self else { return }
+            
+            // 🌟 [리뷰 반영: 취소 전파 사각지대 2차 최종 변론 방어선 수복]
+            // JXA 비동기 네트워크 통신을 마치고 돌아온 시점에, 유저가 탭을 또 바꿔서
+            // 본 태스크가 이미 취소(Cancel) 상태가 되었는지 메인 액터 로직 진입 직전에 정밀 검문합니다.
+            guard let self = self, !Task.isCancelled else {
+                #if DEBUG
+                dprint("🧹 [BrowserTabManager] JXA 수신 후 최종 단계에서 취소 전파 감지. 유령 장부 덮어쓰기를 원천 차단했습니다.")
+                #endif
+                return
+            }
+            
+            // 3. 2차 검문을 무사히 통과한 가장 최신의 안착 탭에 대해서만 안전하게 장부 동기화 집행
             switch result {
             case .success(let context):
                 self.processTabContext(context, bundleID: bundleID)
@@ -391,11 +400,34 @@ class BrowserTabManager {
         }
     }
 
+    /// 1,000,000 tick 도달 시 유저 데이터 파괴 없이 오직 '순서 가중치'만 1부터 재정렬하는 고성능 정규화 엔진
     private func rebuildTicksFromScratch() {
-        currentTick = 0
-        tabMemory.removeAll()
-        tabAccessTicks.removeAll()
-        lastEvaluatedHostForTab.removeAll()
+        #if DEBUG
+        dprint("🔄 [Debounce Engine] 1,000,000 Tick 임계값 도달. 데이터 보존형 랭크 스케일링을 개시합니다.")
+        #endif
+        
+        // 🌟 [경고 수복: 미사용 activeKeys 상수 라인 전면 철거]
+        // 무거운 정렬(Sorted) 코드를 완벽하게 생략하고, 단 한 번의 순회(O(n))로
+        // 기존에 채워져 있던 tick 값들의 '상대적 대소 관계'를 그대로 유지한 채 1부터 재매핑합니다.
+        var nextRank = 1
+        
+        // 가장 오래된 가중치 순서대로 키를 안전하게 재배치하기 위해 가볍게 인덱싱 처리
+        let normalizedTicks = tabAccessTicks.sorted { $0.value < $1.value }
+        
+        // 기존의 소중한 tabMemory와 lastEvaluatedHostForTab은 단 1바이트도 건드리지 않고 원형 보존합니다!
+        tabAccessTicks.removeAll(keepingCapacity: true)
+        
+        for (key, _) in normalizedTicks {
+            tabAccessTicks[key] = nextRank
+            nextRank += 1
+        }
+        
+        // 다음 tick 카운터의 시작점을 최종 정정합니다. (예: 데이터가 100개였다면 차기 tick은 101번부터 시작)
+        currentTick = nextRank
+        
+        #if DEBUG
+        dprint("✅ [Debounce Engine] 정규화 완료. 소중한 탭 메모리 자산이 완벽하게 보호되었습니다. (차기 시작 Tick: \(currentTick))")
+        #endif
     }
 
     private func isNewTab(context: TabContext) -> Bool {

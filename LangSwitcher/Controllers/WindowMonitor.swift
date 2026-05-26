@@ -1,5 +1,7 @@
 //
+//  WindowMonitor.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -47,82 +49,79 @@ class WindowMonitor {
     }
 
     func observeApp(pid: pid_t) {
-            // 1차 방어선: 메인 액터 큐 대기 도중 취소된 좀비 태스크 입구 컷
-            guard !Task.isCancelled else {
-                dprint("🛑 [WindowMonitor] 진입 전 태스크 취소 감지. (PID: \(pid))")
-                return
-            }
-            
-            let snapshot = SettingsManager.shared.snapshot
-            guard snapshot.isWindowMemoryEnabled ||
-                  snapshot.isAppSpecificEnabled ||
-                  snapshot.isBrowserTabMemoryEnabled ||
-                  snapshot.isBrowserDomainModeEnabled else { return }
+        // 1차 방어선: 진입 전 태스크 취소 체크
+        guard !Task.isCancelled else { return }
+        
+        let snapshot = SettingsManager.shared.snapshot
+        guard snapshot.isWindowMemoryEnabled ||
+              snapshot.isAppSpecificEnabled ||
+              snapshot.isBrowserTabMemoryEnabled ||
+              snapshot.isBrowserDomainModeEnabled else { return }
 
-            guard self.currentPID != pid else { return }
-            self.currentPID = pid
+        guard self.currentPID != pid else { return }
+        self.currentPID = pid
 
-            // 기존 옵저버 자원이 있다면 메인 런루프에서 퇴출 및 해제 (.commonModes 규격 맞춤)
-            if let observer = self.axObserver, let rl = self.observerRunLoop {
-                CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
-                self.axObserver = nil
-                self.observerRunLoop = nil
-            }
+        // 🌟 [안전망 1] 기존에 등록되어 잔존하던 옵저버 자원이 있다면 메인 런루프에서 완벽히 퇴출
+        if let observer = self.axObserver, let rl = self.observerRunLoop {
+            CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
+            self.axObserver = nil
+            self.observerRunLoop = nil
+        }
 
-            var observer: AXObserver?
-            let callback: AXObserverCallback = { (obs, el, notif, ref) in
-                guard let ref = ref else { return }
-                MainActor.assumeIsolated {
-                    let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
-                    let nsNotif = notif as String
-                    if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
-                    else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
-                    else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
-                }
-            }
-
-            if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
-                
-                guard !Task.isCancelled, self.currentPID == pid else {
-                    dprint("⚠️ [WindowMonitor] 옵저버 생성 후 취소 감지.")
-                    return
-                }
-
-                // 🌟 [치명적 누락 원인 수복 완료!]
-                // 생성된 옵저버 엔진에 구체적으로 어떤 실시간 커널 이벤트를 가로챌지 바인딩 명세를 명시합니다.
-                // 이 세 줄이 수립되어야 비로소 브라우저의 탭 변경(Title Changed) 신호가 파이프라인을 타고 흐릅니다.
-                let appElement = AXUIElementCreateApplication(pid)
-                let refCon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-                
-                AXObserverAddNotification(newObs, appElement, kAXFocusedWindowChangedNotification as CFString, refCon)
-                AXObserverAddNotification(newObs, appElement, kAXTitleChangedNotification as CFString, refCon)
-                AXObserverAddNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString, refCon)
-
-                self.axObserver = newObs
-                let mainRunLoop = CFRunLoopGetMain()
-                
-                // 🌟 [.defaultMode ➔ .commonModes 격상]
-                // 유저가 macOS 메뉴바 팝업을 열고 있는 마우스 트래킹 순간에도
-                // 백그라운드 탭 감시 인터럽트가 멈추지 않고 100% 실행되도록 보장합니다.
-                CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
-                self.observerRunLoop = mainRunLoop
-
-                dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 commonModes 런루프 최종 등록 성공")
-            }
-
-            // 포커스 윈도우 추적을 위한 초기 딜레이 트리거
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                guard let self = self else { return }
-                guard self.currentPID == pid else { return }
-
-                let appElement = AXUIElementCreateApplication(pid)
-                var focusedWindow: CFTypeRef?
-                if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
-                   let windowRef = focusedWindow, CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
-                    self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
-                }
+        var observer: AXObserver?
+        let callback: AXObserverCallback = { (obs, el, notif, ref) in
+            guard let ref = ref else { return }
+            MainActor.assumeIsolated {
+                let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
+                let nsNotif = notif as String
+                if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
+                else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
+                else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
             }
         }
+
+        if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
+            
+            // 2차 방어선: 옵저버 생성 직후 취소 또는 PID 스위칭 감지 체크
+            guard !Task.isCancelled, self.currentPID == pid else {
+                dprint("⚠️ [WindowMonitor] 옵저버 생성 후 2차 방어선 취소 감지. (PID: \(pid))")
+                return
+            }
+
+            let appElement = AXUIElementCreateApplication(pid)
+            let refCon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+            
+            AXObserverAddNotification(newObs, appElement, kAXFocusedWindowChangedNotification as CFString, refCon)
+            AXObserverAddNotification(newObs, appElement, kAXTitleChangedNotification as CFString, refCon)
+            AXObserverAddNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString, refCon)
+
+            // 🌟 [리뷰 반영: 원자적 자원 교체 아키텍처 수복]
+            // 변수 기록을 커널 등록보다 '먼저' 수행합니다.
+            // 이제 이 다음 줄을 실행하기 직전에 다른 앱 스위칭 인터럽트가 들어와도,
+            // 다음 observeApp이 상단의 [안전망 1] 구역에서 이 변수를 보고 런루프 소스를 깔끔하게 소각합니다.
+            self.axObserver = newObs
+            let mainRunLoop = CFRunLoopGetMain()
+            self.observerRunLoop = mainRunLoop
+
+            // 장부 기록이 완전히 끝난 안전한 상태에서 비로소 커널 런루프에 소스를 최종 바인딩합니다.
+            CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
+
+            dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 런루프 최종 안전 등록 완료")
+        }
+
+        // 포커스 윈도우 추적을 위한 초기 딜레이 트리거 (이하 동일)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            guard self.currentPID == pid else { return }
+
+            let appElement = AXUIElementCreateApplication(pid)
+            var focusedWindow: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
+               let windowRef = focusedWindow, CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
+                self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
+            }
+        }
+    }
 
     // MARK: - 윈도우 메모리 & 앱 특정 규칙 제어 비즈니스 코어
 

@@ -1,5 +1,7 @@
 //
+//  TypoConverter.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -66,82 +68,108 @@ class TypoConverter {
     // MARK: - 수동 단축키 오타 교정 (리뷰어 피드백 완벽 수용 버전)
     
     func executeCorrection() {
-        // @MainActor 동기 구역이므로 이 두 줄은 완벽하게 원자적(Atomic)으로 묶여 작동합니다.
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
-        // 🌟 [리뷰 반영] 잔재 태스크가 있다면 등록 전에 가차없이 초기화
+        // 잔재 태스크가 있다면 등록 전에 외부 강제 취소 파이프라인으로 청소
         correctionTask?.cancel()
         timeoutTask?.cancel()
 
         self.backupClipboard()
         let initialCount = NSPasteboard.general.changeCount
 
-        // 텍스트 블록 선택 시뮬레이션 (Option + Shift + Left Arrow)
-        self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift])
-
-        // ── 파이프라인 1: 오타 교정 메인 본대 태스크 ─────────────────────────
+        // 메인 교정 비동기 태스크 가동
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
             
-            try? await Task.sleep(nanoseconds: 50_000_000) // 0.05초
+            // 1. 선제 딜레이 및 복사 이벤트 시뮬레이션
+            try? await Task.sleep(nanoseconds: 50_000_000)
             guard !Task.isCancelled else { return }
-
-            // 복사 (Cmd+C)
-            self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
+            self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
 
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard !Task.isCancelled else { return }
 
             let localPB = NSPasteboard.general
+            
+            // ─── 조건 분기 시작 ───────────────────────────────────
             if localPB.changeCount != initialCount,
                let selectedText = localPB.string(forType: .string), !selectedText.isEmpty {
-
+                
+                // ==========================================
+                // ✅ [경로 A] 교정 성공 경로
+                // ==========================================
                 let convertedText = self.convertString(selectedText)
                 localPB.clearContents()
                 localPB.setString(convertedText, forType: .string)
 
-                // 붙여넣기 (Cmd+V)
-                self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
-
-                let activeAppID = AppMonitor.shared.activeAppBundleID
-                let delay = self.getClipboardRestoreDelay(for: activeAppID)
-
+                self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
+                
+                // 시스템이 붙여넣기를 완료할 때까지 앱별 안전 딜레이만큼 대기
+                let delay = self.getClipboardRestoreDelay(for: AppMonitor.shared.activeAppBundleID)
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                
+                // 🌟 [리뷰 반영] 정상 종료이므로 Self-Cancel이 없는 순정 청소부 호출
+                self.cleanupAfterSuccess()
+                
             } else {
-                self.postKeyEvent(keyCode: 124, modifiers: []) // 선택 해제 가드
+                // ==========================================
+                // ⚠️ [경로 B] 선택 텍스트 없음 / 무변화 예외 경로
+                // ==========================================
+                self.postKeyEvent(keyCode: 124, modifiers: [])
+                
+                // 🌟 [리뷰 반영] 예외 상황에서도 3초를 기다리지 않고 즉시 순정 청소부로 락을 해제합니다.
+                self.cleanupAfterSuccess()
+                
+                #if DEBUG
+                dprint("⚡ [TypoConverter] 예외 경로 감지: 3초 타임아웃 없이 즉시 플래그 및 클립보드를 수복했습니다.")
+                #endif
             }
-
-            // 🌟 본대가 완벽하게 완수되었으므로 중앙 집중형 안전 청소 집행!
-            self.safeCleanup()
         }
 
-        // ── 파이프라인 2: [리뷰 반영] 3초 타임아웃 감시병 안전망 ────────────────
+        // 3초 타임아웃 감시병 안전망 (외부 가드 타스크)
         timeoutTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 3_000_000_000) // 3초 데드라인 수면
-            guard !Task.isCancelled else { return } // 본대가 3초 안에 끝났다면 여기서 자동 퇴출
+            guard !Task.isCancelled else { return } // 본대가 3초 안에 성공 청소를 했다면 여기서 자동 퇴출
 
-            // 3초가 지나도록 본대가 응답이 없는 크리티컬 행(Hang) 상태라면 강제 구출 실행
+            // 3초가 지나도록 본대가 뻗어있는 크리티컬 상태라면 비상 강제 해제 파이프라인 가동
             guard let self = self else { return }
+            #if DEBUG
             dprint("🚨 [TypoConverter] 메인 오토메이션 파이프라인 행(Hang) 감지! 3초 안전망 가드를 발동합니다.")
+            #endif
             
-            self.safeCleanup()
+            self.forceCancelAndCleanup()
         }
     }
 
-    // 🌟 [리뷰 반영 핵심] 모든 작업 완료 및 실패/타임아웃 경로에서 호출할 단일 청소 함수
-    private func safeCleanup() {
-        // 1. 서로가 서로를 원격 취소하여 유령 태스크 잔재 폭사 방지
-        timeoutTask?.cancel()
-        correctionTask?.cancel()
+    // MARK: - 청소부 이원화 아키텍처 수복 구역 (버그 박멸)
+
+    /// 🌟 [추가] 1. 태스크 내부에서 스스로 임무를 완수하고 퇴출할 때 사용하는 안전 청소부 (Self-Cancel 없음)
+    private func cleanupAfterSuccess() {
+        // 비상용 워치독 타이머만 해제합니다.
+        self.timeoutTask?.cancel()
+        self.timeoutTask = nil
         
-        // 2. 런타임 제어권 홀더 초기화
-        timeoutTask = nil
-        correctionTask = nil
+        // 태스크 내부 구역이므로 장부만 비워 컴파일러 오염을 차단합니다.
+        self.correctionTask = nil
         
-        // 3. 독점 시스템 자원 원복 및 플래그 해제 (항상 마지막에 해제)
-        restoreClipboard()
-        isConvertingInProgress = false
+        // 독점 자원 원복 및 락 팻말 철거
+        self.restoreClipboard()
+        self.isConvertingInProgress = false
+    }
+
+    /// 🌟 [추가] 2. 3초 타임아웃이 터졌거나 외부 프로필 체인지 등에서 비상용으로 강제 중단시킬 때 호출하는 청소부
+    func forceCancelAndCleanup() {
+        // 아직 잠들어있거나 돌고 있을지 모르는 모든 비동기 스레드를 강제로 사살합니다.
+        self.timeoutTask?.cancel()
+        self.correctionTask?.cancel()
+        
+        self.timeoutTask = nil
+        self.correctionTask = nil
+        
+        // 지체 없이 자원 완벽 원복 및 플래그 초기화
+        self.restoreClipboard()
+        self.isConvertingInProgress = false
     }
 
     private func backupClipboard() {
@@ -192,7 +220,7 @@ class TypoConverter {
 
     // MARK: - 두벌식 자모 오토마타 변환 코어 엔진 (이하 동일 유지)
     func convertToKo(_ englishText: String) -> String {
-        let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
+        let chos = Array("ㄱCCcㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
         let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
         let jongs = Array(" ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
         let doubleJongs: [String: String] = ["ㄱㅅ":"ㄳ", "ㄴㅈ":"ㄵ", "ㄴㅎ":"ㄶ", "ㄹㄱ":"ㄺ", "ㄹㅁ":"ㄻ", "ㄹㅂ":"ㄼ", "ㄹㅅ":"ㄽ", "ㄹㅌ":"ㄾ", "ㄹㅍ":"ㄿ", "ㄹㅎ":"ㅀ", "ㅂㅅ":"ㅄ"]
