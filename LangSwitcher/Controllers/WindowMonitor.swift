@@ -49,7 +49,7 @@ class WindowMonitor {
     }
 
     func observeApp(pid: pid_t) {
-        // 1차 방어선: 진입 전 태스크 취소 체크
+        // 1차 방어선: 진입 전 태스크 취소 감지
         guard !Task.isCancelled else { return }
         
         let snapshot = SettingsManager.shared.snapshot
@@ -61,7 +61,7 @@ class WindowMonitor {
         guard self.currentPID != pid else { return }
         self.currentPID = pid
 
-        // 🌟 [안전망 1] 기존에 등록되어 잔존하던 옵저버 자원이 있다면 메인 런루프에서 완벽히 퇴출
+        // 🌟 [안전망 1] 기존에 장부에 기록되어 있던 옵저버 자원이 있다면 메인 런루프에서 완벽히 퇴출
         if let observer = self.axObserver, let rl = self.observerRunLoop {
             CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
             self.axObserver = nil
@@ -82,11 +82,8 @@ class WindowMonitor {
 
         if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
             
-            // 2차 방어선: 옵저버 생성 직후 취소 또는 PID 스위칭 감지 체크
-            guard !Task.isCancelled, self.currentPID == pid else {
-                dprint("⚠️ [WindowMonitor] 옵저버 생성 후 2차 방어선 취소 감지. (PID: \(pid))")
-                return
-            }
+            // 2차 방어선: 옵저버 생성 직후 취소 또는 PID 변동 감지 체크
+            guard !Task.isCancelled, self.currentPID == pid else { return }
 
             let appElement = AXUIElementCreateApplication(pid)
             let refCon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
@@ -95,18 +92,20 @@ class WindowMonitor {
             AXObserverAddNotification(newObs, appElement, kAXTitleChangedNotification as CFString, refCon)
             AXObserverAddNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString, refCon)
 
-            // 🌟 [리뷰 반영: 원자적 자원 교체 아키텍처 수복]
-            // 변수 기록을 커널 등록보다 '먼저' 수행합니다.
-            // 이제 이 다음 줄을 실행하기 직전에 다른 앱 스위칭 인터럽트가 들어와도,
-            // 다음 observeApp이 상단의 [안전망 1] 구역에서 이 변수를 보고 런루프 소스를 깔끔하게 소각합니다.
+            // 🌟 [리뷰어 지적 완벽 종결: 선 장부 기록, 후 커널 등록]
+            // 변수 기록을 커널 등록보다 무조건 '먼저' 수행합니다.
+            // 이렇게 하면 이 다음 줄을 실행하기 직전에 메인 액터 큐 인터리빙이 발생하더라도,
+            // 후속 observeApp 호출이 상단의 [안전망 1] 구역에서 이 변수를 포착하여 런루프 소스를 확실하게 소각합니다.
             self.axObserver = newObs
             let mainRunLoop = CFRunLoopGetMain()
             self.observerRunLoop = mainRunLoop
 
-            // 장부 기록이 완전히 끝난 안전한 상태에서 비로소 커널 런루프에 소스를 최종 바인딩합니다.
+            // 장부 기록이 완료되어 추적 가능한 상태가 된 직후 비로소 런루프에 최종 바인딩합니다.
             CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
 
-            dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 런루프 최종 안전 등록 완료")
+            #if DEBUG
+            dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 commonModes 런루프 최종 안전 등록 성공")
+            #endif
         }
 
         // 포커스 윈도우 추적을 위한 초기 딜레이 트리거 (이하 동일)

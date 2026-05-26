@@ -241,37 +241,36 @@ class BrowserTabManager {
         guard SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled || SettingsManager.shared.snapshot.isBrowserDomainModeEnabled else { return }
         guard let adapter = adapters[bundleID] else { return }
 
-        // 현재 탭의 언어 상태 백업 집행
         saveCurrentContext()
-        
-        // 유저가 탭을 빠르게 전환 중이라면 이전 예약된 JXA 실행 계획을 즉시 원격 사살(Cancel)합니다.
         fetchTask?.cancel()
 
-        // 새로운 150ms 보호망 타스크 개설
         fetchTask = Task(priority: .userInitiated) { [weak self] in
-            // 1. 1차 디바운스 대기 유예
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled else { return }
+            do {
+                // 🌟 [리뷰 반영 수복] try? 로 에러를 뭉개지 않고, 순정 try await로 실행합니다.
+                // 만약 150ms 대기 도중 탭이 바뀌어 취소되면, catch 블록으로 다이렉트 워프(Warp)합니다.
+                try await Task.sleep(nanoseconds: 150_000_000)
+                
+                // 150ms 잠에서 깨어난 직후 혹은 JXA 실행 전, 한 번 더 동기적으로 취소 상태를 체크하여 에러를 던집니다.
+                try Task.checkCancellation()
 
-            // 2. 외부 무거운 JXA 프로세스 쿼리 비동기 집행
-            let result = await adapter.fetchActiveTabInfo(appName: appName)
-            
-            // 🌟 [리뷰 반영: 취소 전파 사각지대 2차 최종 변론 방어선 수복]
-            // JXA 비동기 네트워크 통신을 마치고 돌아온 시점에, 유저가 탭을 또 바꿔서
-            // 본 태스크가 이미 취소(Cancel) 상태가 되었는지 메인 액터 로직 진입 직전에 정밀 검문합니다.
-            guard let self = self, !Task.isCancelled else {
+                let result = await adapter.fetchActiveTabInfo(appName: appName)
+                
+                // 2차 검문소 가드레일 유지
+                guard let self = self, !Task.isCancelled else { return }
+                
+                switch result {
+                case .success(let context):
+                    self.processTabContext(context, bundleID: bundleID)
+                case .failure(let error):
+                    self.handleFetchFailure(error: error, appName: appName)
+                }
+                
+            } catch {
+                // 🌟 태스크 취소 에러(CancellationError)가 발생하면 아무런 부작용 없이 조용히 종료합니다.
                 #if DEBUG
-                dprint("🧹 [BrowserTabManager] JXA 수신 후 최종 단계에서 취소 전파 감지. 유령 장부 덮어쓰기를 원천 차단했습니다.")
+                dprint("🧹 [BrowserTabManager] 디바운스 대기 중 태스크가 정석적으로 취소되어 안전하게 퇴출되었습니다.")
                 #endif
                 return
-            }
-            
-            // 3. 2차 검문을 무사히 통과한 가장 최신의 안착 탭에 대해서만 안전하게 장부 동기화 집행
-            switch result {
-            case .success(let context):
-                self.processTabContext(context, bundleID: bundleID)
-            case .failure(let error):
-                self.handleFetchFailure(error: error, appName: appName)
             }
         }
     }
