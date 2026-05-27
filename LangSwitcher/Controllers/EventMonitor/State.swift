@@ -78,8 +78,8 @@ extension EventMonitor {
     func appendToTypingBuffer(_ char: Character) {
         self.typingBuffer.append(char)
 
-        if self.typingBuffer.count > 15 {
-            self.typingBuffer = String(self.typingBuffer.suffix(15))
+        if self.typingBuffer.count > 50 {
+            self.typingBuffer = String(self.typingBuffer.suffix(50))
             
             #if DEBUG
             dprint("⌨️ [EventState] 타이핑 윈도우 오버플로우 트리밍: 최신 15자 컨텍스트 슬라이스 고정")

@@ -67,6 +67,7 @@ class EventMonitor {
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.keyUp.rawValue) |
                         (1 << CGEventType.flagsChanged.rawValue) |
+                        (1 << CGEventType.leftMouseDown.rawValue) | // 🌟 안전장치: 마우스 클릭 감지 추가
                         (1 << CGEventType.tapDisabledByTimeout.rawValue) |
                         (1 << CGEventType.tapDisabledByUserInput.rawValue)
 
@@ -74,12 +75,8 @@ class EventMonitor {
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
-                // 🌟 [리뷰 반영: 데드락 경로 완벽 제거]
-                // 스레드를 블로킹하는 무거운 DispatchQueue.main.sync를 전면 철거합니다.
-                // 이미 아래에서 CFRunLoopGetMain()에 소스를 귀속시켰으므로,
-                // 순정 검문소인 assumeIsolated 만으로 데드락 리스크 0%의 초고속 논블로킹 패스가 성립합니다.
                 return autoreleasepool {
-                    return MainActor.assumeIsolated {
+                    return MainActor.assumeIsolated { () -> Unmanaged<CGEvent>? in
                         
                         // 1. 타임아웃 및 강제 비활성화 복구 시스템
                         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -89,6 +86,12 @@ class EventMonitor {
                                     CGEvent.tapEnable(tap: tap, enable: true)
                                 }
                             }
+                            return Unmanaged.passUnretained(event)
+                        }
+                        
+                        // 🌟 [추가] 마우스로 딴 곳을 클릭하면 과거 타이핑 장부를 완벽히 리셋합니다.
+                        if type == .leftMouseDown {
+                            EventMonitor.shared.clearTypingBuffer()
                             return Unmanaged.passUnretained(event)
                         }
 
@@ -118,7 +121,7 @@ class EventMonitor {
 
                         let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
 
-                        // 5. 시스템 긴급 제어 전역 단축키 감지 (일시 정지 / 메모리 청소)
+                        // 5. 시스템 긴급 제어 전역 단축키 감지
                         if type == .keyDown {
                             let flags = event.flags
                             let isCommand = flags.contains(.maskCommand)
@@ -145,9 +148,10 @@ class EventMonitor {
                             if HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode) { return nil }
                         }
 
-                        // 7. 자폭 루프 방지를 위한 가짜(시뮬레이션) 입력 버퍼 소각 레이어
+                        // 🌟 [수복 지점 2: 자폭 루프 방지 및 가상 입력 무오염 바이패스]
                         if isSimulated {
-                            EventMonitor.shared.clearTypingBuffer()
+                            // 기존의 전량 파괴 코드(clearTypingBuffer)를 완벽히 철거했습니다.
+                            // 내가 보낸 가상 이벤트는 내 장부를 건드리지 않고 그대로 OS 윈도우로 흘러가게 만듭니다.
                             return Unmanaged.passUnretained(event)
                         }
 
@@ -163,8 +167,8 @@ class EventMonitor {
                                 if isPureSpace || isEnterTrigger {
                                     let currentBuffer = EventMonitor.shared.typingBuffer
 
-                                    // 피처 A: 단어 기반 텍스트 확장 (Snippet Expansion)
-                                    if snapshot.isTextExpansionEnabled,
+                                    // 피처 A: 단어 기반 텍스트 확장
+                                    if snapshot.isTextExpansionEnabled, // 🌟 'isTextExpansionEnabled'로 정정합니다.
                                        let matchedRule = TextExpander.shared.findMatch(
                                             for: currentBuffer,
                                             dict: snapshot.textExpansionDict,
@@ -190,7 +194,7 @@ class EventMonitor {
                                         return nil
                                     }
 
-                                    // 피처 B: 영→한 자동 오타 교정 (Smart Auto-Correction)
+                                    // 피처 B: 영→한 자동 오타 교정
                                     if snapshot.isAutoTypoCorrectionEnabled {
                                         if currentBuffer.count >= 2 {
                                             if EventMonitor.shared.isCurrentLanguageEnglish() {
@@ -237,8 +241,6 @@ class EventMonitor {
 
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            
-            // 🌟 명시적 메인 런루프 부착 사양 고수
             let mainRL = CFRunLoopGetMain()
             CFRunLoopAddSource(mainRL, runLoopSource!, .commonModes)
             self.eventRunLoop = mainRL

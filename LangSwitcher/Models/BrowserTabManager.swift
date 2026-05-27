@@ -99,19 +99,20 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
                     defer {
+                        // 🌟 [안전 폐쇄] 레이스를 유발하는 수동 availableData 호출을 전면 철거하고
+                        // 바로 핸들러를 끈 뒤 커널 파이프 자원을 안전하게 닫습니다.
                         fileHandle.readabilityHandler = nil
+                        
                         try? pipe.fileHandleForReading.close()
                         try? pipe.fileHandleForWriting.close()
                         try? errorPipe.fileHandleForReading.close()
                         try? errorPipe.fileHandleForWriting.close()
                         process?.terminationHandler = nil
                     }
-                    
-                    // 레이스 컨디션 방어: 핸들러 nil 처리 후 잔여 데이터 드레이닝
-                    let remaining = fileHandle.availableData
-                    if !remaining.isEmpty { outputBuffer.append(remaining) }
 
                     if p.terminationStatus == 0 {
+                        // readabilityHandler가 백그라운드에서 무결하게 모아둔
+                        // 온전한 통짜 바이트 데이터만 원자적으로 파싱합니다. (오염 확률 0%)
                         let finalData = outputBuffer.read()
                         let output = String(data: finalData, encoding: .utf8)?
                             .trimmingCharacters(in: .whitespacesAndNewlines)
