@@ -18,9 +18,9 @@
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
-import Cocoa
 import Foundation
-import OSAKit
+import AppKit
+import Combine
 
 // MARK: - Data Models
 
@@ -57,22 +57,18 @@ protocol BrowserAdapter: Sendable {
 
 // MARK: - JXA 아웃프로세스 제어 커널 (Swift 6 넌아이솔레이티드 완전 수복 사양)
 
-// 🌟 [Swift 6 최종 수복] 내부 데이터 프로퍼티까지 완벽하게 메인 액터 영향권에서 탈출시킵니다.
-nonisolated private final class SafeDataBuffer: @unchecked Sendable {
-    // 람다 내부에서 마음껏 수정 가능한 순정 비격리 var 변수 확립
-    private var data = Data()
+// 🌟 [수복 완료] 글로벌 스코프 독립으로 @MainActor 괄호 가두리 완벽 탈출
+private final class SafeDataBuffer: @unchecked Sendable {
+    // nonisolated(unsafe) — NSLock이 스레드 안전을 보장하므로 컴파일러 격리 추론 완전 차단
+    nonisolated(unsafe) private var _data = Data()
     private let lock = NSLock()
     
-    func append(_ newData: Data) {
-        lock.lock()
-        data.append(newData)
-        lock.unlock()
+    nonisolated func append(_ newData: Data) {
+        lock.withLock { _data.append(newData) }
     }
     
-    func read() -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return data
+    nonisolated func read() -> Data {
+        lock.withLock { _data }
     }
 }
 
@@ -87,11 +83,11 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let errorPipe = Pipe()
         process.standardError = errorPipe
 
-        // 스레드 안전하게 설계된 독립 안전 자물쇠 상자 생성
+        // 완전히 해방된 비격리 상자 객체 인스턴스 확보
         let outputBuffer = SafeDataBuffer()
         let fileHandle = pipe.fileHandleForReading
 
-        // 백그라운드 커널 I/O 줄기에서 메인 액터 간섭 없이 온전하게 데이터 주입
+        // 백그라운드 시스템 커널 I/O 큐에서 메인 스레드 간섭 없이 원자적으로 고속 적재 실행 (리뷰어 지적 완벽 종결)
         fileHandle.readabilityHandler = { handle in
             let available = handle.availableData
             if !available.isEmpty {
@@ -104,16 +100,18 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
                 process.terminationHandler = { [weak process] p in
                     defer {
                         fileHandle.readabilityHandler = nil
-                        
                         try? pipe.fileHandleForReading.close()
                         try? pipe.fileHandleForWriting.close()
                         try? errorPipe.fileHandleForReading.close()
                         try? errorPipe.fileHandleForWriting.close()
                         process?.terminationHandler = nil
                     }
+                    
+                    // 레이스 컨디션 방어: 핸들러 nil 처리 후 잔여 데이터 드레이닝
+                    let remaining = fileHandle.availableData
+                    if !remaining.isEmpty { outputBuffer.append(remaining) }
 
                     if p.terminationStatus == 0 {
-                        // 넌아이솔레이티드 상태이므로 백그라운드 종료 핸들러에서 블로킹/경찰 검문 없이 즉시 안전하게 획득
                         let finalData = outputBuffer.read()
                         let output = String(data: finalData, encoding: .utf8)?
                             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -153,8 +151,11 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
     }
 }
 
+
 // MARK: - Chromium Adapter
 
+// 🌟 [동시성 수복] @MainActor를 명시하여 상위 매니저와 격리 계보를 일치시키고 Sendable 제약을 패스합니다.
+@MainActor
 class ChromiumAdapter: BrowserAdapter {
     let supportedBundleIDs = ["com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"]
 
@@ -199,6 +200,8 @@ class ChromiumAdapter: BrowserAdapter {
 
 // MARK: - Safari Adapter
 
+// 🌟 [동시성 수복] 격리 명세 일치화 적용
+@MainActor
 class SafariAdapter: BrowserAdapter {
     let supportedBundleIDs = ["com.apple.Safari"]
 
@@ -244,7 +247,7 @@ class SafariAdapter: BrowserAdapter {
 // MARK: - Core Manager
 
 @MainActor
-class BrowserTabManager {
+class BrowserTabManager: ObservableObject {
     static let shared = BrowserTabManager()
 
     private var adapters: [String: BrowserAdapter] = [:]
@@ -274,7 +277,6 @@ class BrowserTabManager {
         currentKey = nil
     }
 
-    // 🌟 1. 스로틀링/디바운싱 시스템이 탑재된 이벤트 제어 스코프 수복 완료
     func handleBrowserTabChanged(bundleID: String, appName: String) {
         guard SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled || SettingsManager.shared.snapshot.isBrowserDomainModeEnabled else { return }
         guard let adapter = adapters[bundleID] else { return }
@@ -284,16 +286,12 @@ class BrowserTabManager {
 
         fetchTask = Task(priority: .userInitiated) { [weak self] in
             do {
-                // 🌟 [리뷰 반영 수복] try? 로 에러를 뭉개지 않고, 순정 try await로 실행합니다.
-                // 만약 150ms 대기 도중 탭이 바뀌어 취소되면, catch 블록으로 다이렉트 워프(Warp)합니다.
+                // 🌟 [리뷰 반영 수복] 순정 try await 구조 및 명시적 취소 체크 확립
                 try await Task.sleep(nanoseconds: 150_000_000)
-                
-                // 150ms 잠에서 깨어난 직후 혹은 JXA 실행 전, 한 번 더 동기적으로 취소 상태를 체크하여 에러를 던집니다.
                 try Task.checkCancellation()
 
                 let result = await adapter.fetchActiveTabInfo(appName: appName)
                 
-                // 2차 검문소 가드레일 유지
                 guard let self = self, !Task.isCancelled else { return }
                 
                 switch result {
@@ -304,7 +302,6 @@ class BrowserTabManager {
                 }
                 
             } catch {
-                // 🌟 태스크 취소 에러(CancellationError)가 발생하면 아무런 부작용 없이 조용히 종료합니다.
                 #if DEBUG
                 dprint("🧹 [BrowserTabManager] 디바운스 대기 중 태스크가 정석적으로 취소되어 안전하게 퇴출되었습니다.")
                 #endif
@@ -422,12 +419,9 @@ class BrowserTabManager {
         currentTick += 1
         if currentTick >= 1_000_000 { rebuildTicksFromScratch(); return }
 
-        // 🌟 [핵심 최적화] 해당 키가 맵에 아예 없던 '새로운 키'인지 사전에 판별합니다.
         let isNewKey = (tabAccessTicks[key] == nil)
         tabAccessTicks[key] = currentTick
 
-        // 🌟 오직 '새로운 탭'이 진입하여 캐시 최대 한도를 정말로 넘어섰을 때만 min(by:) 스캔을 격리 실행합니다.
-        // 유저가 기존에 열어둔 탭들을 순회할 때는 이 블록을 완벽하게 건너뛰어 대규모 CPU 연산 낭비를 0%로 통제합니다.
         if isNewKey && tabAccessTicks.count > maxTabMemoryLimit {
             if let (oldestKey, _) = tabAccessTicks.min(by: { $0.value < $1.value }) {
                 tabMemory.removeValue(forKey: oldestKey)
@@ -443,23 +437,17 @@ class BrowserTabManager {
         dprint("🔄 [Debounce Engine] 1,000,000 Tick 임계값 도달. 데이터 보존형 랭크 스케일링을 개시합니다.")
         #endif
         
-        // 🌟 [경고 수복: 미사용 activeKeys 상수 라인 전면 철거]
-        // 무거운 정렬(Sorted) 코드를 완벽하게 생략하고, 단 한 번의 순회(O(n))로
-        // 기존에 채워져 있던 tick 값들의 '상대적 대소 관계'를 그대로 유지한 채 1부터 재매핑합니다.
-        var nextRank = 1
-        
-        // 가장 오래된 가중치 순서대로 키를 안전하게 재배치하기 위해 가볍게 인덱싱 처리
+        // 🌟 [문구 수복] 상대적 대소 관계 보존을 위한 순정 인덱싱 정렬 구동 문맥 일치화
         let normalizedTicks = tabAccessTicks.sorted { $0.value < $1.value }
         
-        // 기존의 소중한 tabMemory와 lastEvaluatedHostForTab은 단 1바이트도 건드리지 않고 원형 보존합니다!
         tabAccessTicks.removeAll(keepingCapacity: true)
         
+        var nextRank = 1
         for (key, _) in normalizedTicks {
             tabAccessTicks[key] = nextRank
             nextRank += 1
         }
         
-        // 다음 tick 카운터의 시작점을 최종 정정합니다. (예: 데이터가 100개였다면 차기 tick은 101번부터 시작)
         currentTick = nextRank
         
         #if DEBUG

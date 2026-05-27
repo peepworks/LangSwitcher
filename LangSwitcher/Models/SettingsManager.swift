@@ -399,24 +399,34 @@ class SettingsManager: ObservableObject {
         }
     }
     
+    // MARK: - 고성능 디바운스 저장 엔진 (@MainActor 격리 완전 준수)
+        
     func scheduleSave() {
+        // 1. 선행 예약되어 있던 저장 워크아이템이 있다면 즉시 취소 (타이핑 연타 시 디바운싱 가동)
         saveWorkItem?.cancel()
+        
+        // 2. [리뷰 반영 수복] 메인 액터 격리 요새 안에서 안전하게 집행될 청소부 클로저 생성
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
+            
+            // 🌟 이 블록은 메인 큐에서 실행되므로 @MainActor 격리 프로퍼티들을 락 없이 100% 안전하게 참조합니다.
             self.saveAll()
-            DispatchQueue.main.async {
-                self.updateSnapshot()
-                if !self.isBatchUpdating { self.syncToCloud() }
-                
-                if #available(macOS 13.0, *) {
-                    Task {
-                        LangSwitcherShortcuts.updateAppShortcutParameters()
-                    }
-                }
+            self.updateSnapshot()
+            
+            if !self.isBatchUpdating {
+                self.syncToCloud()
             }
+            
+            #if DEBUG
+            dprint("📝 [SettingsManager] 메인 액터 격리를 준수하며 안전하게 설정을 통합 보존했습니다.")
+            #endif
         }
-        saveWorkItem = workItem
-        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 0.5, execute: workItem)
+        
+        self.saveWorkItem = workItem
+        
+        // 3. 글로벌 큐 우회 배리어를 완전히 제거하고, 메인 큐 단독 asyncAfter 명세로 0.5초 딜레이 대기를 집행합니다.
+        // 스케줄러 대기 자체는 OS 커널이 관리하므로 UI 메인 스레드 스톨(Stall) 현상이 전혀 발생하지 않습니다.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
     }
     
     private func updateShortcutCaches() {

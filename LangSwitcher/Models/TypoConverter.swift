@@ -68,38 +68,48 @@ class TypoConverter {
     // MARK: - 수동 단축키 오타 교정 (리뷰어 피드백 완벽 수용 버전)
     
     func executeCorrection() {
-        // @MainActor 동기 구역이므로 원자적(Atomic) 제어권 획득
+        // [락 게이트치기] 메인 액터 격리 구역이므로 원자적으로 체크됩니다.
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
-        // 1. 이전 잔재 태스크가 혹시라도 남아있다면 먼저 비상 강제 처단
-        self.forceCancelAndCleanup()
-        
-        // 2. 신규 독점 트랜잭션 상태 수립
-        isConvertingInProgress = true
+        // 🌟 [문제 A 완벽 해결: 찰나의 락 유실 원천 차단]
+        // 내부에서 isConvertingInProgress = false를 실행하는 forceCancelAndCleanup() 대신
+        // 오직 이전 비동기 태스크들의 '취소' 명령만 순수하게 전파합니다.
+        // 이로써 락 상태가 상시 true로 완벽히 고정되어, 연타 시 태스크가 중복 생성되는 틈새가 0%로 통제됩니다.
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        correctionTask?.cancel()
+        correctionTask = nil
+
+        // 자원 백업 집행
         self.backupClipboard()
         let initialCount = NSPasteboard.general.changeCount
 
-        // 3. 메인 교정 비동기 태스크 가동
+        // 메인 교정 비동기 트랜잭션 가동
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
             
-            // 🌟 [리뷰 반영 수복: 단일 defer 안전망 통합]
-            // 복수의 defer 선언을 제거하여 실행 순서 꼬임(LIFO)을 원천 방쇄합니다.
-            // 이 defer는 오직 150ms 대기 도중 "외부 취소"가 발생해 튕겨 나갈 때만 비상 구출을 실행합니다.
+            // 🌟 [문제 B, C 완벽 해결: 단일 통합 defer 구조 수립]
+            // 복수 defer 선언을 과감히 철거하여 Swift LIFO 스택 꼬임 현상을 물리적으로 박멸합니다.
+            // 본문 하단의 모든 명시적 청소부 호출을 제거하고, 오직 이 단 하나의 defer 상자가 퇴출 분기를 독점합니다.
             defer {
                 if Task.isCancelled {
+                    // 비상 탈출 경로: 태스크 대기 도중 외부 취소를 맞이했다면 강제 청소 가동
                     self.forceCancelAndCleanup()
+                } else {
+                    // 정상 마감 경로: 교정이 성공했거나, 텍스트가 없는 예외 상태 분기를 모두 포괄하여 안전 마감
+                    self.cleanupAfterSuccess()
                 }
             }
             
-            // 50ms 선제 딜레이 및 복사 이벤트 시뮬레이션
+            // 1. 선제 유예 딜레이
             try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return } // 취소 시 defer 구동
+            guard !Task.isCancelled else { return }
             self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
 
+            // 2. 복사 이벤트 수신 대기 유예
             try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return } // 취소 시 defer 구동
+            guard !Task.isCancelled else { return }
 
             let localPB = NSPasteboard.general
             
@@ -119,8 +129,8 @@ class TypoConverter {
                 let delay = self.getClipboardRestoreDelay(for: AppMonitor.shared.activeAppBundleID)
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 
-                // 🌟 임무 완수 후 명시적으로 정상 청소부 호출 (Task.isCancelled가 아님으로 defer는 패스됨)
-                self.cleanupAfterSuccess()
+                // 🌟 [명시적 호출 제거] 본문 마지막에 cleanupAfterSuccess()를 적지 않고
+                // 그냥 블록을 자연 탈출하면 상단 defer의 else 분기가 알아서 완벽하게 장부를 정산합니다.
                 
             } else {
                 // ==========================================
@@ -128,16 +138,14 @@ class TypoConverter {
                 // ==========================================
                 self.postKeyEvent(keyCode: 124, modifiers: [])
                 
-                // 즉시 안전하게 정상 제어권 반납
-                self.cleanupAfterSuccess()
-                
+                // 🌟 [명시적 호출 제거] 그냥 탈출해도 defer의 else 분기가 안전하게 자물쇠를 풀어줍니다.
                 #if DEBUG
-                dprint("⚡ [TypoConverter] 예외 경로 감지: 자원 정상 수복 완료")
+                dprint("⚡ [TypoConverter] 선택 텍스트가 없어 예외 분기로 안전하게 탈출 마감합니다.")
                 #endif
             }
         }
 
-        // 가중치 동적 데드라인 안전망 가동 (이전 레이어 유지)
+        // 동적 워치독 타임아웃 세팅 (기존 로직 유지)
         let currentAppID = AppMonitor.shared.activeAppBundleID
         let appDelay = self.getClipboardRestoreDelay(for: currentAppID)
         let calculatedTimeout = max(2.0, min(5.0, appDelay * 3.0))
@@ -148,9 +156,6 @@ class TypoConverter {
             guard !Task.isCancelled else { return }
 
             guard let self = self else { return }
-            #if DEBUG
-            dprint("🚨 [TypoConverter] 동적 안전망 데드라인 도달! 비상 처단 가동")
-            #endif
             self.forceCancelAndCleanup()
         }
     }

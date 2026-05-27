@@ -196,7 +196,8 @@ class StatsManager: ObservableObject {
         }
     }
     
-    // 🌟 [수복 완료] 기존에 존재하는 TimeRange 프로젝트 사양을 온전하게 상속하여 연동합니다.
+    // MARK: - 필터링 및 차트 렌더링 데이터 가공 엔진
+    @MainActor
     func updateFilteredStats(for range: TimeRange) {
         let calendar = Calendar.current
         let today = Date()
@@ -215,8 +216,10 @@ class StatsManager: ObservableObject {
         var result: [DailyStat] = []
         result.reserveCapacity(daysToFetch)
         
+        // 메인 액터 격리가 명시되었으므로 안전하게 인메모리 장부 참조
         let snapshot = internalStatsDict
         
+        // 🌟 순정 역순 루프 사양 보존 ((0..<daysToFetch).reversed() 구조 유지)
         for i in (0..<daysToFetch).reversed() {
             if let date = calendar.date(byAdding: .day, value: -i, to: today) {
                 let dateString = Self.todayFormatter.string(from: date)
@@ -228,6 +231,7 @@ class StatsManager: ObservableObject {
             }
         }
         
+        // @Published UI 바인딩 변수에 최종 원자적 안착
         self.filteredStatsCache = result
     }
 }

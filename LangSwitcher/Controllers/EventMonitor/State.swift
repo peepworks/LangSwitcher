@@ -74,10 +74,16 @@ extension EventMonitor {
         self.localSnapshot = newSnapshot
     }
 
+    // MARK: - 고성능 타이핑 입력 버퍼 주입 (O(n) 시프팅 일관성 수복 완료)
     func appendToTypingBuffer(_ char: Character) {
-        self._typingBuffer.append(char)
-        if self._typingBuffer.count > 15 {
-            self._typingBuffer.removeFirst()
+        self.typingBuffer.append(char)
+
+        if self.typingBuffer.count > 15 {
+            self.typingBuffer = String(self.typingBuffer.suffix(15))
+            
+            #if DEBUG
+            dprint("⌨️ [EventState] 타이핑 윈도우 오버플로우 트리밍: 최신 15자 컨텍스트 슬라이스 고정")
+            #endif
         }
     }
 
