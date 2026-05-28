@@ -43,6 +43,7 @@ final class HUDManager {
     // 1. 중앙 HUD
     private var centerHUDWindow: NSPanel?
     private var centerHideTimer: Timer?
+    private var centerHideGeneration: UInt = 0
 
     // 2. 커서 미니 HUD
     private var cursorHUDWindow: NSWindow?
@@ -57,6 +58,8 @@ final class HUDManager {
     // 중앙 HUD용 뷰 및 모델 인스턴스 (최초 1회만 생성)
     private let centerHUDModel = CenterHUDModel()
     private var centerHUDHostingView: NSHostingView<HUDView>?
+    
+    private var centerHUDTask: Task<Void, Never>?
 
     private init() {}
 
@@ -90,14 +93,17 @@ final class HUDManager {
         }
     }
 
-    // MARK: - 중앙 HUD
+    // MARK: - 화면 하단 정사각형 HUD 엔진 (간섭 버그 완전 해결본)
 
     private func showCenterHUD(languageName: String) {
         centerHUDModel.languageName = languageName
 
+        let panelWidth: CGFloat = 200
+        let panelHeight: CGFloat = 200
+
         if self.centerHUDWindow == nil {
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+                contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -116,9 +122,10 @@ final class HUDManager {
         }
 
         if let screen = NSScreen.main {
-            let x = screen.frame.midX - 100
-            let y = screen.frame.midY - 100
-            self.centerHUDWindow?.setFrameOrigin(NSPoint(x: x, y: y))
+            let x = screen.frame.midX - (panelWidth / 2)
+            let y = screen.frame.minY + 120
+            
+            self.centerHUDWindow?.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight), display: true)
         }
 
         self.centerHUDWindow?.alphaValue = 0
@@ -129,27 +136,29 @@ final class HUDManager {
             self.centerHUDWindow?.animator().alphaValue = 1.0
         }
 
-        // Task.sleep 기반 모던 비동기 디바운스 가동
-        hideGeneration &+= 1
-        let generation = hideGeneration
+        self.centerHideTimer?.invalidate()
+        
+        // 🌟 [수복 핵심] 미니 HUD와 간섭하지 않는 '중앙 HUD 전용' 장부 사용
+        centerHideGeneration &+= 1
+        let currentGeneration = centerHideGeneration
 
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.5))
-            guard self.hideGeneration == generation else { return }
-            
-            // 🌟 [문법 교정 완료] 옵셔널 물음표(?)를 철거하여 타입 매치 실패 에러를 완벽하게 해결합니다.
-            self.hideCenterHUD(for: generation)
+        self.centerHideTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                // 중앙 전용 장부 검사
+                guard let self = self, self.centerHideGeneration == currentGeneration else { return }
+                self.hideCenterHUD(for: currentGeneration)
+            }
         }
     }
 
     private func hideCenterHUD(for generation: UInt) {
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.3
+            context.duration = 0.25
             self.centerHUDWindow?.animator().alphaValue = 0.0
         }, completionHandler: {
             Task { @MainActor [weak self] in
-                // 🌟 애니메이션이 끝난 0.3초 뒤 시점에도 최신 세대 번호를 최종 검증하여 안전하게 폐쇄합니다.
-                guard let self = self, self.hideGeneration == generation else { return }
+                // 중앙 전용 장부 검사
+                guard let self = self, self.centerHideGeneration == generation else { return }
                 self.centerHUDWindow?.orderOut(nil)
             }
         })
@@ -336,8 +345,16 @@ struct HUDView: View {
                 .lineLimit(1)
                 .padding(.horizontal, 10)
         }
-        .frame(width: 200, height: 200)
+        .frame(width: 200, height: 200) // 완벽한 정사각형!
         .background(VisualEffectView().clipShape(RoundedRectangle(cornerRadius: 18)))
+        .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
+    }
+}
+
+// 빌드 에러 방지용 가벼운 뷰 확장
+extension View {
+    func dropShadow() -> some View {
+        self.shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
     }
 }
 
