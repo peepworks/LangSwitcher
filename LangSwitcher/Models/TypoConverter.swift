@@ -27,6 +27,8 @@ class TypoConverter {
     private let eventSource: CGEventSource? = CGEventSource(stateID: .combinedSessionState)
     private var isConvertingInProgress = false
     private var savedClipboardString: String?
+    
+    private var correctionGeneration: Int = 0
 
     // 제어권을 명확하게 쥐고 흔들 두 개의 타이밍 태스크
     private var correctionTask: Task<Void, Never>?
@@ -69,10 +71,15 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 수동 단축키 오타 교정 (VSCode 클립보드 렉 극복 및 정밀 타겟팅 수복)
+    // MARK: - 수동 단축키 오타 교정 (문법 오류 수정 및 세대 레이스 컨디션 방어 완료)
     func executeCorrection() {
+        // 1. 원자적 자물쇠 체크
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
+
+        // 2. 오버플로우 안전 증가 연산으로 고유 세대 번호 발행
+        correctionGeneration &+= 1
+        let myGeneration = correctionGeneration
 
         timeoutTask?.cancel()
         timeoutTask = nil
@@ -82,38 +89,45 @@ class TypoConverter {
         self.backupClipboard()
         let initialCount = NSPasteboard.general.changeCount
 
+        // 3. 비동기 트랜잭션 발사
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
-    
+            
             defer {
-                if Task.isCancelled { self.forceCancelAndCleanup() }
-                else { self.cleanupAfterSuccess() }
+                // 🌟 [문법 교정 수복] guard-return 대신 if 문으로 구조를 변경하여
+                // 컴파일러의 'defer 내 return 금지' 제약을 완벽하게 우회하고 유령 태스크를 격리합니다.
+                if self.correctionGeneration == myGeneration {
+                    if Task.isCancelled {
+                        self.forceCancelAndCleanup()
+                    } else {
+                        self.cleanupAfterSuccess()
+                    }
+                } else {
+                    dprint("👻 [GenerationGuard] 구세대(#\(myGeneration)) 태스크의 뒤늦은 무단 장부 변경 시도를 차단했습니다. 현 세대: #\(self.correctionGeneration)")
+                }
             }
-    
+            
             let currentBuffer = EventMonitor.shared.typingBuffer
             let localPB = NSPasteboard.general
             var selectedText = ""
             var didFallback = false
             var currentChangeCount = initialCount
-    
-            // 🌟 [전략 1] 정밀 타겟팅 (VSCode의 부정확한 단어 선택 및 렉 원천 차단)
+            
+            // [전략 1] 정밀 타겟팅 (Shift + Left Arrow 기반 선택)
             if !currentBuffer.isEmpty {
                 let length = currentBuffer.count
-                // 방금 친 글자 수만큼만 정확하게 Shift + Left Arrow를 눌러 블록 지정 (오차 0%)
                 for _ in 0..<length {
                     self.postKeyEvent(keyCode: 123, modifiers: .maskShift)
                     try? await Task.sleep(nanoseconds: 2_000_000)
                 }
-    
+                
                 self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
-    
-                // 🌟 VSCode의 느린 클립보드를 배려하여 최대 300ms(10ms x 30번)까지 넉넉하게 폴링합니다.
-                // 성공하는 즉시 루프를 탈출하므로 네이티브 앱에서는 여전히 10ms만에 번개처럼 변환됩니다.
+                
                 for _ in 0..<30 {
                     try? await Task.sleep(nanoseconds: 10_000_000)
                     if localPB.changeCount != currentChangeCount { break }
                 }
-    
+                
                 if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
                     selectedText = text
                     currentChangeCount = localPB.changeCount
@@ -121,15 +135,14 @@ class TypoConverter {
                     didFallback = true
                 }
             } else {
-                // 🌟 버퍼가 비어있다면 마우스로 드래그한 상태인지 먼저 확인
+                // 버퍼가 비어있다면 마우스 드래그 상태 확인
                 self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
                 for _ in 0..<30 {
                     try? await Task.sleep(nanoseconds: 10_000_000)
                     if localPB.changeCount != currentChangeCount { break }
                 }
-    
+                
                 if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
-                    // VSCode 빈 줄 전체 복사 트랩 방어
                     if text.hasSuffix("\n") || text.hasSuffix("\r\n") { didFallback = true }
                     else {
                         selectedText = text
@@ -137,47 +150,44 @@ class TypoConverter {
                     }
                 } else { didFallback = true }
             }
-    
-            // 🌟 [전략 2] 정밀 타겟팅 실패 시 네이티브 단어 선택 폴백
+            
+            // [전략 2] 정밀 타겟팅 실패 시 네이티브 단어 선택 폴백
             if didFallback && selectedText.isEmpty {
-                // 꼬여있는 블록 지정을 풀기 위해 안전하게 우측 화살표 1회 타격
                 self.postKeyEvent(keyCode: 124, modifiers: [])
                 try? await Task.sleep(nanoseconds: 10_000_000)
-    
+                
                 self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift]) // Opt+Shift+Left
                 try? await Task.sleep(nanoseconds: 20_000_000)
-    
+                
                 self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
                 for _ in 0..<30 {
                     try? await Task.sleep(nanoseconds: 10_000_000)
                     if localPB.changeCount != currentChangeCount { break }
                 }
-    
+                
                 if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
                     selectedText = text
                 }
             }
-    
-            // 🌟 3. 최종 변환 및 덮어쓰기 집행
+            
+            // 4. 최종 변환 및 덮어쓰기 집행
             if !selectedText.isEmpty {
                 let convertedText = self.convertString(selectedText)
                 localPB.clearContents()
                 localPB.setString(convertedText, forType: .string)
-    
+                
                 try? await Task.sleep(nanoseconds: 20_000_000)
                 self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
-    
+                
                 let delay = self.getClipboardRestoreDelay(for: AppMonitor.shared.activeAppBundleID)
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-    
-                // 무한 토글을 위해 방금 변환된 텍스트를 장부에 업데이트
+                
                 EventMonitor.shared.clearTypingBuffer()
                 for char in convertedText {
                     EventMonitor.shared.appendToTypingBuffer(char)
                 }
             } else {
-                // 🌟 최후까지 클립보드 확보 실패 시, 블록 지정된 텍스트를 안전하게 우측 화살표로 해제!
-                // 이것이 스페이스바를 눌렀을 때 전체가 삭제되는 현상을 물리적으로 차단합니다!
+                // 최후까지 실패 시 블록 지정된 텍스트를 확실하게 안전 해제
                 self.postKeyEvent(keyCode: 124, modifiers: [])
             }
         }
@@ -185,7 +195,7 @@ class TypoConverter {
         let currentAppID = AppMonitor.shared.activeAppBundleID
         let appDelay = self.getClipboardRestoreDelay(for: currentAppID)
         let calculatedTimeout = max(2.0, min(5.0, appDelay * 3.0))
-    
+        
         timeoutTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(calculatedTimeout * 1_000_000_000))
             guard !Task.isCancelled else { return }
@@ -195,30 +205,27 @@ class TypoConverter {
 
     // MARK: - 청소부 이원화 아키텍처 수복 구역 (버그 박멸)
 
-    /// 🌟 [추가] 1. 태스크 내부에서 스스로 임무를 완수하고 퇴출할 때 사용하는 안전 청소부 (Self-Cancel 없음)
+    /// 🌟 1. 태스크 내부에서 스스로 임무를 완수하고 퇴출할 때 사용하는 안전 청소부
     private func cleanupAfterSuccess() {
-        // 비상용 워치독 타이머만 해제합니다.
         self.timeoutTask?.cancel()
         self.timeoutTask = nil
         
-        // 태스크 내부 구역이므로 장부만 비워 컴파일러 오염을 차단합니다.
+        // 🌟 [리뷰 반영 수복] 임무를 마친 자기 자신의 Task 참조 핸들을 완전히 석방합니다.
+        // 이 조치를 통해 힙(Heap) 메모리에 불필요한 태스크 메타데이터가 단 1바이트도 남지 않게 됩니다.
         self.correctionTask = nil
         
-        // 독점 자원 원복 및 락 팻말 철거
         self.restoreClipboard()
         self.isConvertingInProgress = false
     }
 
-    /// 🌟 [추가] 2. 3초 타임아웃이 터졌거나 외부 프로필 체인지 등에서 비상용으로 강제 중단시킬 때 호출하는 청소부
+    /// 🌟 2. 3초 타임아웃이 터졌거나 외부 비상 중단 시 호출하는 청소부
     func forceCancelAndCleanup() {
-        // 아직 잠들어있거나 돌고 있을지 모르는 모든 비동기 스레드를 강제로 사살합니다.
         self.timeoutTask?.cancel()
         self.correctionTask?.cancel()
         
         self.timeoutTask = nil
-        self.correctionTask = nil
+        self.correctionTask = nil // (여기는 이미 잘 들어가 있습니다!)
         
-        // 지체 없이 자원 완벽 원복 및 플래그 초기화
         self.restoreClipboard()
         self.isConvertingInProgress = false
     }

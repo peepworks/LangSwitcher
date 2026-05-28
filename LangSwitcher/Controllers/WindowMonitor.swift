@@ -102,10 +102,7 @@ class WindowMonitor {
 
             // 장부 기록이 완료되어 추적 가능한 상태가 된 직후 비로소 런루프에 최종 바인딩합니다.
             CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
-
-            #if DEBUG
             dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 commonModes 런루프 최종 안전 등록 성공")
-            #endif
         }
 
         // 포커스 윈도우 추적을 위한 초기 딜레이 트리거 (이하 동일)

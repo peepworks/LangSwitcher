@@ -307,9 +307,7 @@ class SettingsManager: ObservableObject {
                 // 원래 파일과 교체하는 방식을 취하므로, 저장 도중 앱이 꺼져도 파일 무결성이 깨지지 않습니다.
                 try data.write(to: fileURL, options: .atomic)
                 
-                #if DEBUG
                 dprint("✅ [Storage Engine] 프로필 데이터가 Application Support 폴더에 안전하게 저장되었습니다.")
-                #endif
             } catch {
                 dprint("❌ [Storage Engine] 프로필 디스크 저장 실패: \(error.localizedDescription)")
             }
@@ -393,9 +391,7 @@ class SettingsManager: ObservableObject {
         if self.recentLogs.count > maxLogCount + 50 {
             self.recentLogs = Array(self.recentLogs.suffix(maxLogCount))
             
-            #if DEBUG
             dprint("🧹 [LogEngine] 버퍼 한도 유예 통과: 50건의 로그를 일괄 suffix 트리밍했습니다.")
-            #endif
         }
     }
     
@@ -416,10 +412,8 @@ class SettingsManager: ObservableObject {
             if !self.isBatchUpdating {
                 self.syncToCloud()
             }
-            
-            #if DEBUG
+
             dprint("📝 [SettingsManager] 메인 액터 격리를 준수하며 안전하게 설정을 통합 보존했습니다.")
-            #endif
         }
         
         self.saveWorkItem = workItem
@@ -507,6 +501,7 @@ class SettingsManager: ObservableObject {
         }
     }
     
+    // MARK: - 프로필 내보내기/가져오기 고성능 스레드 격리 수복 버전
     func exportProfiles() {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.json]
@@ -516,15 +511,23 @@ class SettingsManager: ObservableObject {
         
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
+                // 🌟 메인 스레드 단에서 데이터를 로컬 상수로 먼저 안전하게 구워냅니다.
                 do {
                     let encoder = JSONEncoder()
                     encoder.outputFormatting = .prettyPrinted
                     let data = try encoder.encode(self.profiles)
                     
-                    try data.write(to: url)
-                    dprint("✅ Profiles successfully exported to \(url.lastPathComponent)")
+                    // 🌟 무거운 디스크 파일 쓰기(I/O)만 백그라운드로 철저히 유기합니다.
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        do {
+                            try data.write(to: url)
+                            dprint("✅ Profiles successfully exported to \(url.lastPathComponent)")
+                        } catch {
+                            dprint("❌ Failed to export profiles: \(error.localizedDescription)")
+                        }
+                    }
                 } catch {
-                    dprint("❌ Failed to export profiles: \(error.localizedDescription)")
+                    dprint("❌ Failed to encode profiles: \(error.localizedDescription)")
                 }
             }
         }
@@ -540,49 +543,51 @@ class SettingsManager: ObservableObject {
         
         openPanel.begin { response in
             if response == .OK, let url = openPanel.url {
-                do {
-                    let data = try Data(contentsOf: url)
-                    let decoder = JSONDecoder()
-                    let importedProfiles = try decoder.decode([SettingsProfile].self, from: data)
-                    
-                    guard !importedProfiles.isEmpty else {
+                // 🌟 디스크에서 무거운 백업 파일을 읽고 JSON 디코딩을 처리하는 전 과정을 백그라운드로 이관합니다.
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let data = try Data(contentsOf: url)
+                        let decoder = JSONDecoder()
+                        let importedProfiles = try decoder.decode([SettingsProfile].self, from: data)
+                        
+                        // 🌟 파싱이 끝난 깨끗한 결과 장부만 메인 액터 영역으로 진입하여 안전하게 주입합니다.
                         DispatchQueue.main.async {
+                            guard !importedProfiles.isEmpty else {
+                                let alert = NSAlert()
+                                alert.messageText = String(localized: "Import Failed")
+                                alert.informativeText = String(localized: "The selected backup file is empty or contains no valid profiles.")
+                                alert.alertStyle = .warning
+                                NSApp.activate(ignoringOtherApps: true)
+                                alert.runModal()
+                                return
+                            }
+                            
+                            self.profiles = importedProfiles
+                            if let firstProfile = importedProfiles.first {
+                                self.activeProfileID = firstProfile.id
+                            }
+                            
                             let alert = NSAlert()
-                            alert.messageText = String(localized: "Import Failed")
-                            alert.informativeText = String(localized: "The selected backup file is empty or contains no valid profiles.")
-                            alert.alertStyle = .warning
+                            alert.messageText = String(localized: "Profiles Restore Successful")
+                            alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
+                            if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                                alert.icon = appIcon
+                            }
                             NSApp.activate(ignoringOtherApps: true)
                             alert.runModal()
                         }
-                        return
-                    }
-                    
-                    DispatchQueue.main.async {
-                        self.profiles = importedProfiles
-                        if let firstProfile = importedProfiles.first {
-                            self.activeProfileID = firstProfile.id
-                        }
+                        dprint("✅ Profiles successfully imported from \(url.lastPathComponent)")
                         
-                        let alert = NSAlert()
-                        alert.messageText = String(localized: "Profiles Restore Successful")
-                        alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
-                        if let appIcon = NSImage(named: NSImage.applicationIconName) {
-                            alert.icon = appIcon
+                    } catch {
+                        dprint("❌ Failed to import profiles: \(error.localizedDescription)")
+                        DispatchQueue.main.async {
+                            let alert = NSAlert()
+                            alert.messageText = String(localized: "Import Failed")
+                            alert.informativeText = String(localized: "Failed to read the backup file. It might be corrupted or in an unsupported format.\n\nError: \(error.localizedDescription)")
+                            alert.alertStyle = .critical
+                            NSApp.activate(ignoringOtherApps: true)
+                            alert.runModal()
                         }
-                        NSApp.activate(ignoringOtherApps: true)
-                        alert.runModal()
-                    }
-                    dprint("✅ Profiles successfully imported from \(url.lastPathComponent)")
-                    
-                } catch {
-                    dprint("❌ Failed to import profiles: \(error.localizedDescription)")
-                    DispatchQueue.main.async {
-                        let alert = NSAlert()
-                        alert.messageText = String(localized: "Import Failed")
-                        alert.informativeText = String(localized: "Failed to read the backup file. It might be corrupted or in an unsupported format.\n\nError: \(error.localizedDescription)")
-                        alert.alertStyle = .critical
-                        NSApp.activate(ignoringOtherApps: true)
-                        alert.runModal()
                     }
                 }
             }
@@ -592,8 +597,6 @@ class SettingsManager: ObservableObject {
     @MainActor
     func clearLogs() {
         self.recentLogs.removeAll(keepingCapacity: false)
-        #if DEBUG
         dprint("🧹 [SettingsManager] 메인 액터 보호막 안에서 안전하게 전체 로그를 소각했습니다.")
-        #endif
     }
 }

@@ -87,7 +87,7 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let outputBuffer = SafeDataBuffer()
         let fileHandle = pipe.fileHandleForReading
 
-        // 백그라운드 시스템 커널 I/O 큐에서 메인 스레드 간섭 없이 원자적으로 고속 적재 실행 (리뷰어 지적 완벽 종결)
+        // 백그라운드 시스템 커널 I/O 큐에서 메인 스레드 간섭 없이 원자적으로 고속 적재 실행
         fileHandle.readabilityHandler = { handle in
             let available = handle.availableData
             if !available.isEmpty {
@@ -99,8 +99,7 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
                     defer {
-                        // 🌟 [안전 폐쇄] 레이스를 유발하는 수동 availableData 호출을 전면 철거하고
-                        // 바로 핸들러를 끈 뒤 커널 파이프 자원을 안전하게 닫습니다.
+                        // 🌟 [안전 폐쇄] 커널 파이프 자원을 안전하게 닫습니다.
                         fileHandle.readabilityHandler = nil
                         
                         try? pipe.fileHandleForReading.close()
@@ -111,10 +110,11 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
                     }
 
                     if p.terminationStatus == 0 {
-                        // readabilityHandler가 백그라운드에서 무결하게 모아둔
-                        // 온전한 통짜 바이트 데이터만 원자적으로 파싱합니다. (오염 확률 0%)
+                        // readabilityHandler가 백그라운드에서 무결하게 모아둔 온전한 통짜 바이트 데이터
                         let finalData = outputBuffer.read()
-                        let output = String(data: finalData, encoding: .utf8)?
+                        
+                        // 🌟 [컴파일러 에러 수복] String.Encoding.utf8 로 명시하여 타입 추론 실패를 원천 차단합니다.
+                        let output = String(data: finalData, encoding: String.Encoding.utf8)?
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         continuation.resume(returning: output)
                     } else {
@@ -155,7 +155,6 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
 
 // MARK: - Chromium Adapter
 
-// 🌟 [동시성 수복] @MainActor를 명시하여 상위 매니저와 격리 계보를 일치시키고 Sendable 제약을 패스합니다.
 @MainActor
 class ChromiumAdapter: BrowserAdapter {
     let supportedBundleIDs = ["com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"]
@@ -186,7 +185,8 @@ class ChromiumAdapter: BrowserAdapter {
                 return .failure(.executionFailed(jsonString))
             }
 
-            guard let data = jsonString.data(using: .utf8),
+            // 🌟 [컴파일러 에러 수복] String.Encoding.utf8 로 명시
+            guard let data = jsonString.data(using: String.Encoding.utf8),
                   let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
                 return .failure(.decodingFailed)
             }
@@ -201,7 +201,6 @@ class ChromiumAdapter: BrowserAdapter {
 
 // MARK: - Safari Adapter
 
-// 🌟 [동시성 수복] 격리 명세 일치화 적용
 @MainActor
 class SafariAdapter: BrowserAdapter {
     let supportedBundleIDs = ["com.apple.Safari"]
@@ -232,7 +231,8 @@ class SafariAdapter: BrowserAdapter {
                 return .failure(.executionFailed(jsonString))
             }
 
-            guard let data = jsonString.data(using: .utf8),
+            // 🌟 [컴파일러 에러 수복] String.Encoding.utf8 로 명시
+            guard let data = jsonString.data(using: String.Encoding.utf8),
                   let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
                 return .failure(.decodingFailed)
             }
@@ -287,7 +287,6 @@ class BrowserTabManager: ObservableObject {
 
         fetchTask = Task(priority: .userInitiated) { [weak self] in
             do {
-                // 🌟 [리뷰 반영 수복] 순정 try await 구조 및 명시적 취소 체크 확립
                 try await Task.sleep(nanoseconds: 150_000_000)
                 try Task.checkCancellation()
 
@@ -303,9 +302,7 @@ class BrowserTabManager: ObservableObject {
                 }
                 
             } catch {
-                #if DEBUG
                 dprint("🧹 [BrowserTabManager] 디바운스 대기 중 태스크가 정석적으로 취소되어 안전하게 퇴출되었습니다.")
-                #endif
                 return
             }
         }
@@ -432,13 +429,9 @@ class BrowserTabManager: ObservableObject {
         }
     }
 
-    /// 1,000,000 tick 도달 시 유저 데이터 파괴 없이 오직 '순서 가중치'만 1부터 재정렬하는 고성능 정규화 엔진
     private func rebuildTicksFromScratch() {
-        #if DEBUG
         dprint("🔄 [Debounce Engine] 1,000,000 Tick 임계값 도달. 데이터 보존형 랭크 스케일링을 개시합니다.")
-        #endif
         
-        // 🌟 [문구 수복] 상대적 대소 관계 보존을 위한 순정 인덱싱 정렬 구동 문맥 일치화
         let normalizedTicks = tabAccessTicks.sorted { $0.value < $1.value }
         
         tabAccessTicks.removeAll(keepingCapacity: true)
@@ -451,9 +444,7 @@ class BrowserTabManager: ObservableObject {
         
         currentTick = nextRank
         
-        #if DEBUG
         dprint("✅ [Debounce Engine] 정규화 완료. 소중한 탭 메모리 자산이 완벽하게 보호되었습니다. (차기 시작 Tick: \(currentTick))")
-        #endif
     }
 
     private func isNewTab(context: TabContext) -> Bool {

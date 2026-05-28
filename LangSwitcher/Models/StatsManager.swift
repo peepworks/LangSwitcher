@@ -106,18 +106,23 @@ class StatsManager: ObservableObject {
     private func forceSave() {
         guard isDirty else { return }
         
-        // Zero-Capture 아키텍처 사양
+        // Zero-Capture 아키텍처 사양 (MainActor 격리 준수)
         let snapshot = self.internalStatsDict
         let key = defaultsKey
         self.isDirty = false
         
         saveQueue.async {
+            // 백그라운드 스레드에서 무거운 정렬 및 인코딩 독점 수행
             let statsArray = Array(snapshot.values).sorted { $0.dateString < $1.dateString }
+            
             if let data = try? JSONEncoder().encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: key)
-                #if DEBUG
                 dprint("💾 [StatsManager] 백그라운드에서 self 간섭 없이 통계 데이터를 안전하게 저장했습니다.")
-                #endif
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.isDirty = true
+                }
+                dprint("🚨 [StatsManager] 통계 데이터 인코딩 실패로 인해 isDirty 상태를 롤백했습니다.")
             }
         }
     }
