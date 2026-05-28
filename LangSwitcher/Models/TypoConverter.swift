@@ -74,7 +74,10 @@ class TypoConverter {
     // MARK: - 수동 단축키 오타 교정 (문법 오류 수정 및 세대 레이스 컨디션 방어 완료)
     func executeCorrection() {
         // 1. 원자적 자물쇠 체크
-        guard !isConvertingInProgress else { return }
+        guard !isConvertingInProgress else {
+            dprint("⚡️ [TypoConverter] 이미 변환 트랜잭션이 진행 중입니다 — 재진입을 안전하게 차단했습니다.")
+            return
+        }
         isConvertingInProgress = true
 
         // 2. 오버플로우 안전 증가 연산으로 고유 세대 번호 발행

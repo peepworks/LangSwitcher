@@ -23,21 +23,21 @@ import Cocoa
 import ApplicationServices
 import Combine
 
-
 // MARK: - CursorHUD 상태 모델
+@MainActor
 final class CursorHUDModel: ObservableObject {
     @Published var symbol: String = ""
     @Published var name: String = ""
 }
 
+@MainActor
 final class CenterHUDModel: ObservableObject {
     @Published var languageName: String = ""
 }
 
-
 // MARK: - HUDManager
-
-class HUDManager {
+@MainActor
+final class HUDManager {
     static let shared = HUDManager()
 
     // 1. 중앙 HUD
@@ -46,19 +46,19 @@ class HUDManager {
 
     // 2. 커서 미니 HUD
     private var cursorHUDWindow: NSWindow?
-    private var cursorHideTimer: Timer?
 
-    // ✅ 뷰 재생성 방지: 모델 + HostingView를 1회만 생성
+    // 뷰 재생성 방지: 모델 + HostingView를 1회만 생성
     private var cursorHUDModel = CursorHUDModel()
     private var cursorHUDHostingView: NSHostingView<CursorHUDView>?
 
-    // ✅ 타이머 completionHandler 경쟁 방지용 세대 카운터
+    // 타이머 completionHandler 경쟁 방지용 세대 카운터
     private var hideGeneration: UInt = 0
     
     // 중앙 HUD용 뷰 및 모델 인스턴스 (최초 1회만 생성)
     private let centerHUDModel = CenterHUDModel()
     private var centerHUDHostingView: NSHostingView<HUDView>?
 
+    private init() {}
 
     // MARK: - 진입점
 
@@ -67,29 +67,24 @@ class HUDManager {
 
         dprint("📍 HUD Debug: 호출됨! [CenterEnabled: \(snapshot.showVisualFeedback)] [MiniEnabled: \(snapshot.isCursorHUDEnabled)]")
 
-        // 두 옵션이 모두 꺼져 있다면 아무것도 그리지 않고 즉시 종료합니다.
         guard snapshot.showVisualFeedback || snapshot.isCursorHUDEnabled else {
             dprint("📍 HUD Debug: 모든 시각적 피드백 옵션이 꺼져있어 종료합니다.")
             return
         }
 
-        DispatchQueue.main.async {
-            // 1. 중앙 HUD 처리 (독립 실행)
-            if snapshot.showVisualFeedback {
-                self.showCenterHUD(languageName: languageName)
-            }
+        // 1. 중앙 HUD 처리 (독립 실행)
+        if snapshot.showVisualFeedback {
+            self.showCenterHUD(languageName: languageName)
+        }
 
-            // 2. 커서 미니 HUD 처리 (독립 실행)
-            if snapshot.isCursorHUDEnabled {
-                if let cursorRect = self.getCursorRect() {
-                    self.showCursorMiniHUD(text: languageName, at: cursorRect)
-                } else {
-                    // 미니 플래그를 그려야 하는데 좌표 획득에 완전히 실패한 경우의 방어 로직
-                    // (단, 중앙 HUD가 이미 켜져 있다면 중복해서 호출하지 않음)
-                    if !snapshot.showVisualFeedback {
-                        dprint("📍 HUD Debug: [Fallback] 미니 플래그 실패로 중앙 HUD를 대체 표시합니다.")
-                        self.showCenterHUD(languageName: languageName)
-                    }
+        // 2. 커서 미니 HUD 처리 (독립 실행)
+        if snapshot.isCursorHUDEnabled {
+            if let cursorRect = self.getCursorRect() {
+                self.showCursorMiniHUD(text: languageName, at: cursorRect)
+            } else {
+                if !snapshot.showVisualFeedback {
+                    dprint("📍 HUD Debug: [Fallback] 미니 플래그 실패로 중앙 HUD를 대체 표시합니다.")
+                    self.showCenterHUD(languageName: languageName)
                 }
             }
         }
@@ -98,10 +93,8 @@ class HUDManager {
     // MARK: - 중앙 HUD
 
     private func showCenterHUD(languageName: String) {
-        // 1. 모델 데이터만 업데이트 (SwiftUI가 알아서 화면 갱신)
         centerHUDModel.languageName = languageName
 
-        // 2. 윈도우 및 HostingView가 없는 경우에만 최초 1회 생성
         if self.centerHUDWindow == nil {
             let panel = NSPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
@@ -109,7 +102,6 @@ class HUDManager {
                 backing: .buffered,
                 defer: false
             )
-            // ... (패널 설정 유지) ...
             panel.level = .statusBar
             panel.backgroundColor = .clear
             panel.isOpaque = false
@@ -117,14 +109,12 @@ class HUDManager {
             panel.ignoresMouseEvents = true
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             
-            // 뷰 생성 및 저장
             let hostingView = NSHostingView(rootView: HUDView(model: centerHUDModel))
             panel.contentView = hostingView
             self.centerHUDHostingView = hostingView
             self.centerHUDWindow = panel
         }
 
-        // 3. 위치 계산 및 표시 로직 (기존 유지)
         if let screen = NSScreen.main {
             let x = screen.frame.midX - 100
             let y = screen.frame.midY - 100
@@ -139,22 +129,31 @@ class HUDManager {
             self.centerHUDWindow?.animator().alphaValue = 1.0
         }
 
-        // 타이머 (기존 유지)
-        self.centerHideTimer?.invalidate()
-        self.centerHideTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
-            self.hideCenterHUD()
+        // Task.sleep 기반 모던 비동기 디바운스 가동
+        hideGeneration &+= 1
+        let generation = hideGeneration
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard self.hideGeneration == generation else { return }
+            
+            // 🌟 [문법 교정 완료] 옵셔널 물음표(?)를 철거하여 타입 매치 실패 에러를 완벽하게 해결합니다.
+            self.hideCenterHUD(for: generation)
         }
     }
 
-    private func hideCenterHUD() {
+    private func hideCenterHUD(for generation: UInt) {
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.3
             self.centerHUDWindow?.animator().alphaValue = 0.0
         }, completionHandler: {
-            self.centerHUDWindow?.orderOut(nil)
+            Task { @MainActor [weak self] in
+                // 🌟 애니메이션이 끝난 0.3초 뒤 시점에도 최신 세대 번호를 최종 검증하여 안전하게 폐쇄합니다.
+                guard let self = self, self.hideGeneration == generation else { return }
+                self.centerHUDWindow?.orderOut(nil)
+            }
         })
     }
-
 
     // MARK: - 커서 위치 추적 (AX API)
     private func getCursorRect() -> CGRect? {
@@ -197,7 +196,6 @@ class HUDManager {
             return getMouseFallbackRect("좌표값(AXValue) 형변환 실패")
         }
 
-        // 🌟 크기가 0이더라도 X, Y 좌표가 정상적이면 강제로 높이를 부여해서 살려냅니다.
         if bounds.height <= 0 {
             if bounds.origin.x > 0 || bounds.origin.y > 0 {
                 dprint("📍 HUD Debug: [보정됨] 커서 크기가 0이지만 좌표가 유효하여 강제 보정합니다. (origin: \(bounds.origin))")
@@ -216,76 +214,65 @@ class HUDManager {
         return bounds
     }
 
-    // 🌟 텍스트 커서 위치 획득 실패 시 '마우스 포인터' 위치를 반환하는 최후의 방어선
     private func getMouseFallbackRect(_ reason: String) -> CGRect {
         dprint("📍 HUD Debug: [마우스 Fallback 발동] \(reason)")
 
         let mouseLoc = NSEvent.mouseLocation
         let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
-
-        // NSEvent는 화면 좌측 하단(Bottom-Left) 기준이고,
-        // AX API는 좌측 상단(Top-Left) 기준이므로 Y축을 뒤집어 줍니다.
         let flippedY = screenHeight - mouseLoc.y
 
-        // 마우스 포인터 바로 옆(우측 하단)에 위치하도록 가상의 커서 Rect 생성
         return CGRect(x: mouseLoc.x + 2, y: flippedY - 18, width: 1.0, height: 18.0)
     }
 
     // MARK: - 커서 미니 HUD
 
     private func showCursorMiniHUD(text: String, at rect: CGRect) {
-        // 1. 심볼 계산 (로직 유지)
         let lowerText = text.lowercased()
-        let shortText: String
-        if lowerText.contains("u.s.") || lowerText.contains("abc") || lowerText.contains("english") {
-            shortText = "A"
-        } else if lowerText.contains("두벌식") || lowerText.contains("세벌식") || lowerText.contains("korean") || lowerText.contains("한글") {
-            shortText = "한"
-        } else {
-            shortText = String(text.prefix(1)).uppercased()
-        }
+            let shortText: String
+            if lowerText.contains("u.s.") || lowerText.contains("abc") || lowerText.contains("english") {
+                shortText = "A"
+            } else if lowerText.contains("두벌식") || lowerText.contains("세벌식") || lowerText.contains("korean") || lowerText.contains("한글") {
+                shortText = "한"
+            } else {
+                shortText = String(text.prefix(1)).uppercased()
+            }
 
-        // 2. 모델 업데이트 (데이터만 변경 -> SwiftUI가 알아서 리렌더링)
-        cursorHUDModel.symbol = shortText
-        cursorHUDModel.name = text
+            cursorHUDModel.symbol = shortText
+            cursorHUDModel.name = text
 
-        // 3. 창 및 HostingView 최초 1회 생성 (이미 구현하신 부분)
-        if cursorHUDWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 50, height: 30),
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false
+            if cursorHUDWindow == nil {
+                let window = NSWindow(
+                    contentRect: NSRect(x: 0, y: 0, width: 50, height: 30),
+                    styleMask: [.borderless],
+                    backing: .buffered,
+                    defer: false
+                )
+                window.isOpaque = false
+                window.backgroundColor = .clear
+                window.level = .screenSaver
+                window.ignoresMouseEvents = true
+                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+                let hostingView = NSHostingView(rootView: CursorHUDView(model: cursorHUDModel))
+                window.contentView = hostingView
+                cursorHUDHostingView = hostingView
+                window.orderOut(nil)
+                cursorHUDWindow = window
+            }
+
+            let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
+            
+            cursorHUDHostingView?.layoutSubtreeIfNeeded()
+            let viewSize = cursorHUDHostingView?.intrinsicContentSize ?? NSSize(width: 80, height: 30)
+            
+            let windowX = rect.maxX + 6
+            let windowY = screenHeight - rect.maxY - viewSize.height - 2
+
+            cursorHUDWindow?.setFrame(
+                NSRect(x: windowX, y: windowY, width: viewSize.width, height: viewSize.height),
+                display: false
             )
-            window.isOpaque = false
-            window.backgroundColor = .clear
-            window.level = .screenSaver // 또는 .floating
-            window.ignoresMouseEvents = true
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-            let hostingView = NSHostingView(rootView: CursorHUDView(model: cursorHUDModel))
-            window.contentView = hostingView
-            cursorHUDHostingView = hostingView
-            cursorHUDWindow = window
-        }
-
-        // 4. 위치 계산 (이제 뷰 재생성 없이 intrinsicContentSize 활용)
-        let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
-        
-        // 🌟 데이터가 바뀐 후 뷰가 레이아웃을 다시 잡을 시간을 줍니다.
-        cursorHUDHostingView?.layoutSubtreeIfNeeded()
-        let viewSize = cursorHUDHostingView?.intrinsicContentSize ?? NSSize(width: 80, height: 30)
-        
-        let windowX = rect.maxX + 6
-        let windowY = screenHeight - rect.maxY - viewSize.height - 2
-
-        // 5. 프레임 설정 (애니메이션 루프 방지를 위해 display: false)
-        cursorHUDWindow?.setFrame(
-            NSRect(x: windowX, y: windowY, width: viewSize.width, height: viewSize.height),
-            display: false
-        )
-
-        // 6. 표시 및 애니메이션 로직 유지...
         cursorHUDWindow?.alphaValue = 0
         cursorHUDWindow?.orderFrontRegardless()
 
@@ -294,44 +281,47 @@ class HUDManager {
             self.cursorHUDWindow?.animator().alphaValue = 1.0
         }
 
-        // 7. 타이머 — 세대(generation) 카운터로 completionHandler 경쟁 방지
-        let currentGeneration = hideGeneration &+ 1
-        hideGeneration = currentGeneration
+        // ✅ Timer 완전 제거 — Task.sleep으로 교체
+        hideGeneration &+= 1
+        let generation = hideGeneration
 
-        cursorHideTimer?.invalidate()
-        cursorHideTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
-            guard let self = self, self.hideGeneration == currentGeneration else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard self.hideGeneration == generation else { return }
+
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.3
                 self.cursorHUDWindow?.animator().alphaValue = 0.0
-            }, completionHandler: { [weak self] in
-                // ✅ 새 전환이 발생했으면 숨기지 않음
-                guard let self = self, self.hideGeneration == currentGeneration else { return }
-                self.cursorHUDWindow?.orderOut(nil)
+            }, completionHandler: {
+                // completionHandler는 @Sendable — MainActor 프로퍼티 접근 불가
+                // ✅ 별도 Task로 분리
+                Task { @MainActor [weak self] in
+                    guard let self, self.hideGeneration == generation else { return }
+                    self.cursorHUDWindow?.orderOut(nil)
+                }
             })
         }
     }
 
     func hideCursorMiniHUD() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            // ✅ 세대 증가 → 진행 중인 타이머 completionHandler를 무효화
-            self.hideGeneration = self.hideGeneration &+ 1
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.1
-                self.cursorHUDWindow?.animator().alphaValue = 0.0
-            }, completionHandler: { [weak self] in
+        hideGeneration &+= 1
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.1
+            self.cursorHUDWindow?.animator().alphaValue = 0.0
+        }, completionHandler: {
+            // ✅ completionHandler 내부는 항상 별도 Task로 분리
+            Task { @MainActor [weak self] in
                 self?.cursorHUDWindow?.orderOut(nil)
-            })
-        }
+            }
+        })
     }
 }
-
 
 // MARK: - SwiftUI Views
 
 struct HUDView: View {
-    @ObservedObject var model: CenterHUDModel // 텍스트 대신 모델 구독
+    @ObservedObject var model: CenterHUDModel
 
     var body: some View {
         VStack(spacing: 20) {
@@ -340,7 +330,7 @@ struct HUDView: View {
                 .foregroundColor(Color.primary.opacity(0.8))
                 .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
 
-            Text(model.languageName) // 모델의 데이터 출력
+            Text(model.languageName)
                 .font(.title2.bold())
                 .foregroundColor(Color.primary.opacity(0.9))
                 .lineLimit(1)
@@ -368,7 +358,6 @@ struct CursorHUDView: View {
                 .font(.system(size: 15, weight: .semibold, design: .default))
                 .foregroundColor(.white)
         }
-        // 🌟 바로 여기 패딩 수치를 줄여줍니다! (원래 10, 8 이었음)
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .background(
@@ -383,7 +372,6 @@ struct CursorHUDView: View {
         .fixedSize()
     }
 }
-
 
 struct VisualEffectView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {

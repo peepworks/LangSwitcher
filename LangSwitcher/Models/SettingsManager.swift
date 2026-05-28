@@ -80,12 +80,45 @@ class SettingsManager: ObservableObject {
             scheduleSave()
         }
     }
-    @Published var isOptActive: Bool { didSet { save("isOptActive", isOptActive); scheduleSave() } }
-    @Published var ctrlLang: String { didSet { save("ctrlLang", ctrlLang); scheduleSave() } }
-    @Published var cmdLang: String { didSet { save("cmdLang", cmdLang); scheduleSave() } }
-    @Published var optLang: String { didSet { save("optLang", optLang); scheduleSave() } }
+    @Published var isOptActive: Bool {
+        didSet {
+            save("isOptActive", isOptActive)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            scheduleSave()
+        }
+    }
+    
+    @Published var ctrlLang: String {
+        didSet {
+            save("ctrlLang", ctrlLang)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            scheduleSave()
+        }
+    }
+    
+    @Published var cmdLang: String {
+        didSet {
+            save("cmdLang", cmdLang)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            scheduleSave()
+        }
+    }
+    
+    @Published var optLang: String {
+        didSet {
+            save("optLang", optLang)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            scheduleSave()
+        }
+    }
         
-    @Published var showVisualFeedback: Bool { didSet { save("showVisualFeedback", showVisualFeedback); scheduleSave() } }
+    @Published var showVisualFeedback: Bool {
+        didSet {
+            save("showVisualFeedback", showVisualFeedback)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            scheduleSave()
+        }
+    }
     @Published var isTestMode: Bool { didSet { save("isTestMode", isTestMode); updateSnapshot() } }
     
     @Published var toggleKeyCode: UInt16 {
@@ -95,8 +128,21 @@ class SettingsManager: ObservableObject {
             updateSnapshot()
         }
     }
-    @Published var toggleModifierFlags: UInt64 { didSet { save("toggleModifierFlags", toggleModifierFlags); updateSnapshot() } }
-    @Published var toggleDisplayString: String { didSet { save("toggleDisplayString", toggleDisplayString); updateSnapshot() } }
+    @Published var toggleModifierFlags: UInt64 {
+        didSet {
+            save("toggleModifierFlags", toggleModifierFlags)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            updateSnapshot()
+        }
+    }
+    
+    @Published var toggleDisplayString: String {
+        didSet {
+            save("toggleDisplayString", toggleDisplayString)
+            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            updateSnapshot()
+        }
+    }
 
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet {
@@ -139,15 +185,13 @@ class SettingsManager: ObservableObject {
             
             applyActiveProfile()
             NotificationCenter.default.post(name: .profileDidSwitch, object: nil)
-            
-            DispatchQueue.main.async {
+
+            Task { @MainActor in
                 self.saveAll()
                 self.syncToCloud()
                 
                 if #available(macOS 13.0, *) {
-                    Task {
-                        LangSwitcherShortcuts.updateAppShortcutParameters()
-                    }
+                    LangSwitcherShortcuts.updateAppShortcutParameters()
                 }
             }
             

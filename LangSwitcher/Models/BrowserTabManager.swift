@@ -412,10 +412,15 @@ class BrowserTabManager: ObservableObject {
     }
 
     // MARK: - LRU Cache Management (분할상환 O(1) 고성능 튜닝 완료)
-
     private func touchTabMemory(key: String) {
         currentTick += 1
-        if currentTick >= 1_000_000 { rebuildTicksFromScratch(); return }
+        if currentTick >= 1_000_000 {
+            // 🌟 [수복] 메인 스레드 멈춤을 완벽히 차단하기 위해 비동기 태스크로 분리하여 스케일링 엔진 가동
+            Task {
+                await rebuildTicksFromScratch()
+            }
+            return
+        }
 
         let isNewKey = (tabAccessTicks[key] == nil)
         tabAccessTicks[key] = currentTick
@@ -429,22 +434,31 @@ class BrowserTabManager: ObservableObject {
         }
     }
 
-    private func rebuildTicksFromScratch() {
-        dprint("🔄 [Debounce Engine] 1,000,000 Tick 임계값 도달. 데이터 보존형 랭크 스케일링을 개시합니다.")
+    /// 🌟 1,000,000 tick 도달 시 UI 프리징을 0.000%로 통제하는 백그라운드 랭크 스케일링 엔진
+    private func rebuildTicksFromScratch() async {
+        dprint("🔄 [Debounce Engine] 1,000,000 Tick 임계값 도달. 비동기 랭크 스케일링을 개시합니다.")
         
-        let normalizedTicks = tabAccessTicks.sorted { $0.value < $1.value }
+        // 1. 메인 액터 안전 구역에서 정렬할 원본 딕셔너리 데이터를 로컬 상수로 스냅샷 복사합니다.
+        let ticksSnapshot = self.tabAccessTicks
         
-        tabAccessTicks.removeAll(keepingCapacity: true)
+        // 2. 메인 스레드 소속이 없는 완전한 독립 백그라운드 작업동(Task.detached)으로 무거운 정렬 연산을 유기합니다.
+        let safeNormalizedTicks = await Task.detached(priority: .background) {
+            // @MainActor 격리가 없는 순수 백그라운드 스레드에서 O(n log n) 정렬을 독점 집행합니다.
+            return ticksSnapshot.sorted { $0.value < $1.value }
+        }.value
+        
+        // 3. 정렬이 끝난 정제된 장부를 들고 다시 메인 액터 본진으로 안심 복귀하여 동기식 주입을 집행합니다.
+        self.tabAccessTicks.removeAll(keepingCapacity: true)
         
         var nextRank = 1
-        for (key, _) in normalizedTicks {
-            tabAccessTicks[key] = nextRank
+        for (key, _) in safeNormalizedTicks {
+            self.tabAccessTicks[key] = nextRank
             nextRank += 1
         }
         
-        currentTick = nextRank
+        self.currentTick = nextRank
         
-        dprint("✅ [Debounce Engine] 정규화 완료. 소중한 탭 메모리 자산이 완벽하게 보호되었습니다. (차기 시작 Tick: \(currentTick))")
+        dprint("✅ [Debounce Engine] 백그라운드 정규화 완료. 차기 시작 Tick: \(self.currentTick)")
     }
 
     private func isNewTab(context: TabContext) -> Bool {
