@@ -136,13 +136,16 @@ class MemoryMonitor {
         }
     }
 
+    // MARK: - 능동적 메모리 자기치유 커널 (즉시 동기 집행 사양)
+
+    @MainActor
     private func checkMemoryUsage() {
         guard let currentMemory = reportMemoryUsage() else { return }
-        
+    
         if currentMemory > thresholdInBytes {
             let memoryInMB = currentMemory / 1024 / 1024
-            dprint("🚨 [경고] 메모리 초과: \(memoryInMB) MB. 능동적 해제(Self-Healing)를 시작합니다.")
-            
+            dprint("🚨 [MemoryMonitor] 임계값 초과 감지: \(memoryInMB) MB. 즉각적인 자기치유(Self-Healing)를 집행합니다.")
+    
             let log = ActionLog(
                 timestamp: Date(),
                 targetApp: "LangSwitcher System",
@@ -152,13 +155,13 @@ class MemoryMonitor {
                 failureReason: .unknown
             )
             SettingsManager.shared.addLog(log)
-            
-            // 메인 큐의 맨 뒤로 미루어 UI 블로킹 없이 순차 실행 유도
-            DispatchQueue.main.async {
-                BrowserTabManager.shared.clearMemory()
-                DecisionTraceManager.shared.clear()
-                SettingsManager.shared.clearLogs()
-            }
+    
+            // ✅ 중첩 비동기 껍데기 완전 철거 완료! 지연 없이 즉시 동기 실행됩니다.
+            BrowserTabManager.shared.clearMemory()
+            DecisionTraceManager.shared.clear()
+            SettingsManager.shared.clearLogs()
+    
+            dprint("🧹 [MemoryMonitor] 메인 액터 동기 결속 영역 내에서 모든 캐시 퍼지가 지연 없이 즉시 완료되었습니다.")
         }
     }
 

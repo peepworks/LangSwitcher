@@ -34,6 +34,13 @@ class SettingsManager: ObservableObject {
     static let shared = SettingsManager()
     let currentSettingsVersion = "1.0.0"
     
+    nonisolated private static let profileEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted // 줄바꿈/들여쓰기 포맷 사양 고정
+        return encoder
+    }()
+    nonisolated private static let profileDecoder = JSONDecoder()
+    
     let icloudStore = NSUbiquitousKeyValueStore.default
     private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
     private var saveWorkItem: DispatchWorkItem?
@@ -345,7 +352,7 @@ class SettingsManager: ObservableObject {
                 }
                 
                 // 2. 인코딩 집행
-                let data = try JSONEncoder().encode(profilesToSave)
+                let data = try Self.profileEncoder.encode(profilesToSave)
                 
                 // 3. .atomic 옵션을 주어 임시 파일을 만든 뒤 쓰기가 성공하면
                 // 원래 파일과 교체하는 방식을 취하므로, 저장 도중 앱이 꺼져도 파일 무결성이 깨지지 않습니다.
@@ -494,28 +501,23 @@ class SettingsManager: ObservableObject {
     }
     
     // MARK: - Text Expansion Only Backup/Restore
-    // 호출자가 내부 스레드 전환 구조를 신경 쓰지 않고 무조건 메인 스레드에서 안전하게 UI를 받도록 규격화합니다.
     func exportTextExpansionRules(to url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void = { _, _ in }) {
         let rulesToExport = activeProfile.payload.textExpansionRules
         
         do {
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(rulesToExport)
+            // 🌟 [수복 완료] 일회용 JSONEncoder()를 제거하고 상단의 정적 자산을 재사용합니다.
+            let data = try Self.profileEncoder.encode(rulesToExport)
             
             // 디스크 쓰기(I/O)만 백그라운드로 철저히 격리
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try data.write(to: url)
-                    // ✅ 성공 경로: 메인 스레드 정렬
                     DispatchQueue.main.async { completion(true, nil) }
                 } catch {
-                    // 🌟 [리뷰 반영 수복] 디스크 쓰기 실패 시에도 백그라운드에서 터지지 않고,
-                    // 반드시 메인 스레드로 컨텍스트를 이관한 뒤 실패 콜백을 호출합니다.
                     DispatchQueue.main.async { completion(false, error) }
                 }
             }
         } catch {
-            // ✅ 인코딩 실패 경로: 이미 메인 스레드 위이므로 즉시 안전하게 호출
             completion(false, error)
         }
     }
@@ -555,13 +557,11 @@ class SettingsManager: ObservableObject {
         
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
-                // 🌟 메인 스레드 단에서 데이터를 로컬 상수로 먼저 안전하게 구워냅니다.
                 do {
-                    let encoder = JSONEncoder()
-                    encoder.outputFormatting = .prettyPrinted
-                    let data = try encoder.encode(self.profiles)
+                    // 🌟 [수복 완료] 무거운 prettyPrinted 인코더 할당을 0으로 지우고 정적 자산으로 통합!
+                    let data = try Self.profileEncoder.encode(self.profiles)
                     
-                    // 🌟 무거운 디스크 파일 쓰기(I/O)만 백그라운드로 철저히 유기합니다.
+                    // 무거운 디스크 파일 쓰기(I/O)만 백그라운드로 철저히 유기합니다.
                     DispatchQueue.global(qos: .userInitiated).async {
                         do {
                             try data.write(to: url)
@@ -587,14 +587,16 @@ class SettingsManager: ObservableObject {
         
         openPanel.begin { response in
             if response == .OK, let url = openPanel.url {
-                // 🌟 디스크에서 무거운 백업 파일을 읽고 JSON 디코딩을 처리하는 전 과정을 백그라운드로 이관합니다.
+                // 🌟 [수복 완료] 백그라운드 큐 내부에서 안전하게 가져다 쓸 수 있도록
+                // Sendable이 보장된 정적 디코더 자산을 로컬 상수로 선언(Capture-Binding)하여 진입합니다.
+                let localDecoder = Self.profileDecoder
+                
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
                         let data = try Data(contentsOf: url)
-                        let decoder = JSONDecoder()
-                        let importedProfiles = try decoder.decode([SettingsProfile].self, from: data)
+                        // 🌟 [수복 완료] 일회용 인스턴스 소각 및 공유 자산 바인딩 대입
+                        let importedProfiles = try localDecoder.decode([SettingsProfile].self, from: data)
                         
-                        // 🌟 파싱이 끝난 깨끗한 결과 장부만 메인 액터 영역으로 진입하여 안전하게 주입합니다.
                         DispatchQueue.main.async {
                             guard !importedProfiles.isEmpty else {
                                 let alert = NSAlert()

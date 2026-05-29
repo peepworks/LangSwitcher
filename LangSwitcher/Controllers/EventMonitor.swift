@@ -78,7 +78,6 @@ class EventMonitor {
                 return autoreleasepool {
                     return MainActor.assumeIsolated { () -> Unmanaged<CGEvent>? in
                         
-                        // 1. 타임아웃 및 강제 비활성화 복구 시스템
                         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                             if let refcon = refcon {
                                 let monitor = Unmanaged<EventMonitor>.fromOpaque(refcon).takeUnretainedValue()
@@ -89,27 +88,17 @@ class EventMonitor {
                             return Unmanaged.passUnretained(event)
                         }
                         
-                        // 🌟 [추가] 마우스로 딴 곳을 클릭하면 과거 타이핑 장부를 완벽히 리셋합니다.
                         if type == .leftMouseDown {
                             EventMonitor.shared.clearTypingBuffer()
                             return Unmanaged.passUnretained(event)
                         }
 
-                        // 2. 패스워드 필드 등 보안 입력 상태 예외처리
                         if IsSecureEventInputEnabled() { return Unmanaged.passUnretained(event) }
 
                         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                         let snapshot = SettingsManager.shared.snapshot
                         let currentAppID = AppMonitor.shared.activeAppBundleID
 
-                        // 3. 예외 등록 앱 필터링
-                        if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
-                            if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
-                                return Unmanaged.passUnretained(event)
-                            }
-                        }
-
-                        // 4. 단축키 레코더 가로채기 활성화 시 최소한의 비동기 이관 처리
                         if let callback = EventMonitor.shared.shortcutRecordingCallback {
                             if type == .keyDown || type == .flagsChanged {
                                 if let nsEvent = NSEvent(cgEvent: event) {
@@ -119,9 +108,7 @@ class EventMonitor {
                             }
                         }
 
-                        let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
-
-                        // 5. 시스템 긴급 제어 전역 단축키 감지
+                        // 🌟 [수복 1] 시스템 긴급 제어는 어떤 예외 상황에서도 무조건 1순위로 작동해야 하므로 최상단으로 끌어올립니다.
                         if type == .keyDown {
                             let flags = event.flags
                             let isCommand = flags.contains(.maskCommand)
@@ -143,16 +130,64 @@ class EventMonitor {
                             }
                         }
 
-                        // 6. Caps Lock 하드웨어 매핑 엔진 구동
+                        // 🌟 [수복 2] Caps Lock (Hyper Key) 엔진 역시 예외 앱 화면인지 아닌지 따지지 않고 상시 동작하도록 위로 올립니다.
                         if snapshot.isHyperKeyEnabled {
                             if HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode) { return nil }
                         }
 
-                        // 🌟 [수복 지점 2: 자폭 루프 방지 및 가상 입력 무오염 바이패스]
+                        // 3. 단축키 레코더 가로채기 (설정 화면 UI 보호용)
+                        if let callback = EventMonitor.shared.shortcutRecordingCallback {
+                            if type == .keyDown || type == .flagsChanged {
+                                if let nsEvent = NSEvent(cgEvent: event) {
+                                    DispatchQueue.main.async { callback(nsEvent) }
+                                }
+                                return nil
+                            }
+                        }
+
+                        let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
+
+                        // 🌟 [핵심 수복: 무한 루프 차단] 앱이 스스로 발생시킨 가상 이벤트는
+                        // 장부를 오염시키거나 재귀에 빠지지 않도록 즉시 그대로 통과(Bypass)시킵니다.
                         if isSimulated {
-                            // 기존의 전량 파괴 코드(clearTypingBuffer)를 완벽히 철거했습니다.
-                            // 내가 보낸 가상 이벤트는 내 장부를 건드리지 않고 그대로 OS 윈도우로 흘러가게 만듭니다.
                             return Unmanaged.passUnretained(event)
+                        }
+
+                        // 🌟 [수복 3] 예외 등록 앱 필터링 (한영 전환키 VIP 패스 로직 추가)
+                        if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
+                            if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
+                                
+                                var isLanguageSwitchKey = false
+                                let nsFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)).intersection(.deviceIndependentFlagsMask)
+                                let toggleFlags = NSEvent.ModifierFlags(rawValue: UInt(snapshot.toggleModifierFlags)).intersection(.deviceIndependentFlagsMask)
+                                
+                                if type == .keyDown || type == .flagsChanged {
+                                    // 🌟 [핵심 교정] CapsLock 상태가 섞여서 엄격한 비교가 실패하는 것을 막기 위해 캡스락 플래그를 걷어낸 순수 상태를 만듭니다.
+                                    let cleanNsFlags = nsFlags.subtracting(.capsLock)
+                                    let cleanToggleFlags = toggleFlags.subtracting(.capsLock)
+                                    
+                                    // A. 일반 설정에서 지정한 커스텀 입력소스 전환키 확인
+                                    if keyCode == snapshot.toggleKeyCode {
+                                        // 💡 CapsLock(57) 등 단일 수식어 자체가 전환키인 경우, 플래그 검사를 무시하고 무조건 VIP 패스 발급!
+                                        if [57, 56, 60, 59, 62, 58, 61].contains(keyCode) {
+                                            isLanguageSwitchKey = true
+                                        } else if cleanNsFlags == cleanToggleFlags {
+                                            isLanguageSwitchKey = true
+                                        }
+                                    }
+                                    
+                                    // B. 기본 조합(Cmd/Opt/Ctrl + Space) 한영 전환키 확인
+                                    if keyCode == 49 {
+                                        if cleanNsFlags == .command && snapshot.isCmdActive { isLanguageSwitchKey = true }
+                                        if cleanNsFlags == .control && snapshot.isCtrlActive { isLanguageSwitchKey = true }
+                                        if cleanNsFlags == .option && snapshot.isOptActive { isLanguageSwitchKey = true }
+                                    }
+                                }
+                                
+                                if !isLanguageSwitchKey {
+                                    return Unmanaged.passUnretained(event)
+                                }
+                            }
                         }
 
                         // 8. 텍스트 대치(Snippets) 및 스마트 자동 오타 교정 코어 엔진
@@ -230,9 +265,13 @@ class EventMonitor {
                         if EventMonitor.shared.isPaused { return Unmanaged.passUnretained(event) }
 
                         // 10. 수동 언어 전환 및 단축키 매칭 라우터 이관
-                        let nsModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
-                        if type == .flagsChanged { return EventMonitor.shared.handleFlagsChanged(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags) }
-                        if type == .keyDown { return EventMonitor.shared.handleKeyDown(event: event, keyCode: keyCode, modifierFlags: nsModifierFlags) }
+                        // 🌟 [핵심 수복] 하위 함수들이 CapsLock 찌꺼기 때문에 엄격한 일치 검사(==)에서
+                        // 튕겨내는 현상을 막기 위해, 캡스락 플래그를 완전히 세척하여 내려보냅니다.
+                        var cleanRouterFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
+                        cleanRouterFlags.remove(.capsLock)
+
+                        if type == .flagsChanged { return EventMonitor.shared.handleFlagsChanged(event: event, keyCode: keyCode, modifierFlags: cleanRouterFlags) }
+                        if type == .keyDown { return EventMonitor.shared.handleKeyDown(event: event, keyCode: keyCode, modifierFlags: cleanRouterFlags) }
 
                         return Unmanaged.passUnretained(event)
                     }

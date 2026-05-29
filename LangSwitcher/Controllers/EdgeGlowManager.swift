@@ -113,9 +113,9 @@ class EdgeGlowManager {
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0.3
                     window.animator().alphaValue = 0
-                } completionHandler: { [continuation] in
-                    // 🌟 [리뷰 반영 리팩토링 완료]
-                    // 명시적 캡처 리스트를 주입하여 Swift 6 Strict Concurrency 경고를 완벽하게 분쇄합니다.
+                } completionHandler: {
+                    // 🌟 [최종 종결] continuation.resume()은 자체적으로 완벽한 스레드 안전성을 가집니다.
+                    // 억지로 @MainActor를 씌우거나 assumeIsolated를 쓸 필요 없이 가장 순수하게 호출합니다.
                     continuation.resume()
                 }
             }

@@ -92,16 +92,22 @@ class WindowMonitor {
             AXObserverAddNotification(newObs, appElement, kAXTitleChangedNotification as CFString, refCon)
             AXObserverAddNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString, refCon)
 
-            // 🌟 [리뷰어 지적 완벽 종결: 선 장부 기록, 후 커널 등록]
-            // 변수 기록을 커널 등록보다 무조건 '먼저' 수행합니다.
-            // 이렇게 하면 이 다음 줄을 실행하기 직전에 메인 액터 큐 인터리빙이 발생하더라도,
-            // 후속 observeApp 호출이 상단의 [안전망 1] 구역에서 이 변수를 포착하여 런루프 소스를 확실하게 소각합니다.
-            self.axObserver = newObs
             let mainRunLoop = CFRunLoopGetMain()
-            self.observerRunLoop = mainRunLoop
-
-            // 장부 기록이 완료되어 추적 가능한 상태가 된 직후 비로소 런루프에 최종 바인딩합니다.
+                        
+            // 1. 런루프(컨베이어 벨트)에 감시자를 먼저 올립니다.
             CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
+
+            // 2. 🌟 [수복 지점] 런루프 등록 직후, 찰나의 취소를 감지하는 최후의 검문소를 세웁니다.
+            // 이 순간에 Task가 취소되었거나 창(PID)이 바뀌었다면, 즉시 런루프에서 끌어내려 좀비 누수를 막습니다.
+            guard !Task.isCancelled, self.currentPID == pid else {
+                dprint("⚠️ [WindowMonitor] 런루프 등록 직후 취소 감지됨 — 옵저버를 안전하게 회수 및 폐기합니다.")
+                CFRunLoopRemoveSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
+                return
+            }
+
+            // 3. 최후의 검문까지 무사히 통과했다면, 장부에 공식 기록합니다.
+            self.axObserver = newObs
+            self.observerRunLoop = mainRunLoop
             dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 commonModes 런루프 최종 안전 등록 성공")
         }
 

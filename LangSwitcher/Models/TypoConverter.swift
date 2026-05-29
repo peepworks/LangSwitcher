@@ -206,31 +206,37 @@ class TypoConverter {
         }
     }
 
-    // MARK: - 청소부 이원화 아키텍처 수복 구역 (버그 박멸)
+    // MARK: - 정리 및 초기화 로직 (동시성 레이스 컨디션 방어망 구축 완료)
 
-    /// 🌟 1. 태스크 내부에서 스스로 임무를 완수하고 퇴출할 때 사용하는 안전 청소부
     private func cleanupAfterSuccess() {
         self.timeoutTask?.cancel()
         self.timeoutTask = nil
         
-        // 🌟 [리뷰 반영 수복] 임무를 마친 자기 자신의 Task 참조 핸들을 완전히 석방합니다.
-        // 이 조치를 통해 힙(Heap) 메모리에 불필요한 태스크 메타데이터가 단 1바이트도 남지 않게 됩니다.
-        self.correctionTask = nil
+        // 🌟 [수복] 현재 실행 중인 Task가 자기 자신을 즉시 nil 처리하지 않고,
+        // 클로저가 완전히 종료되어 반환되는 최후의 시점까지 지연(defer)시킵니다.
+        defer { self.correctionTask = nil }
         
         self.restoreClipboard()
         self.isConvertingInProgress = false
     }
 
-    /// 🌟 2. 3초 타임아웃이 터졌거나 외부 비상 중단 시 호출하는 청소부
     func forceCancelAndCleanup() {
         self.timeoutTask?.cancel()
-        self.correctionTask?.cancel()
-        
         self.timeoutTask = nil
-        self.correctionTask = nil // (여기는 이미 잘 들어가 있습니다!)
         
-        self.restoreClipboard()
+        self.correctionTask?.cancel()
+        self.correctionTask = nil
+        
+        // 🌟 [수복 핵심 1] 상태 플래그는 비동기로 미루지 않고 동기적으로 즉각 해제합니다!
+        // @MainActor 함수 내부이므로, Task를 닫는 순간과 팻말을 뒤집는 순간이
+        // 중간에 아무도 끼어들 수 없는 단일 턴(원자적)으로 완벽하게 묶입니다.
         self.isConvertingInProgress = false
+        
+        // 🌟 [수복 핵심 2] 시스템 통신이 필요한 클립보드 복구 작업만 다음 런루프로 넘깁니다.
+        // 논리적 꼬임 없이 UI 스레드의 부하만 안전하게 분산시키는 최고의 패턴입니다.
+        Task { @MainActor [weak self] in
+            self?.restoreClipboard()
+        }
     }
 
     private func backupClipboard() {

@@ -53,26 +53,50 @@ class HyperKeyManager {
         stateLock.unlock()
     }
 
-    // 🌟 [수정] 파일 디스크립터(Pipe) 누수를 막기 위해 명시적으로 자원을 닫습니다.
+    // 🌟 [최종 수복 완결본] defer 결속 구조를 통해 모든 연쇄 파이프 누수를 100% 원천 차단합니다.
     private func setupHardwareMapping(enable: Bool) {
         hidutilQueue.async { [weak self] in
             guard let self = self else { return }
+
+            // 파이프 자원들을 블록 전역에서 추적할 수 있도록 선제 선언합니다.
+            let getPipe = Pipe()
+            let plutilIn = Pipe()
+            let plutilOut = Pipe()
+            let setOutPipe = Pipe()
+            let letSetErrPipe = Pipe()
+
+            // 🌟 [핵심 수복 지점] 이 비동기 큐의 실행 턴이 끝나는 최후의 순간(정상 탈출, catch 탈출 불문),
+            // 개설된 모든 파이프의 읽기/쓰기 핸들을 한 자리에 모아 OS 커널에 강제 반납(문단속)합니다.
+            defer {
+                try? getPipe.fileHandleForReading.close()
+                try? getPipe.fileHandleForWriting.close()
+                
+                try? plutilIn.fileHandleForReading.close()
+                try? plutilIn.fileHandleForWriting.close()
+                
+                try? plutilOut.fileHandleForReading.close()
+                try? plutilOut.fileHandleForWriting.close()
+                
+                try? setOutPipe.fileHandleForReading.close()
+                try? setOutPipe.fileHandleForWriting.close()
+                try? letSetErrPipe.fileHandleForReading.close()
+                try? letSetErrPipe.fileHandleForWriting.close()
+                
+                #if DEBUG
+                dprint("🧹 [HyperKeyManager] setupHardwareMapping 내의 모든 좀비 파이프 핸들이 안전하게 소각되었습니다.")
+                #endif
+            }
 
             // 1. hidutil 정보 가져오기
             let getTask = Process()
             getTask.launchPath = "/usr/bin/hidutil"
             getTask.arguments = ["property", "--get", "UserKeyMapping"]
-            let getPipe = Pipe()
             getTask.standardOutput = getPipe
             
             do {
                 try getTask.run()
                 let getData = getPipe.fileHandleForReading.readDataToEndOfFile()
                 getTask.waitUntilExit()
-
-                // 🌟 [리뷰 반영 최적화 1] 사용한 읽기단과 '단 한번도 쓰지 않은' 쓰기단을 동시에 강제 폐쇄
-                try? getPipe.fileHandleForReading.close()
-                try? getPipe.fileHandleForWriting.close()
 
                 let getString = String(data: getData, encoding: .utf8) ?? ""
                 var mappings: [[String: Int]] = []
@@ -81,8 +105,6 @@ class HyperKeyManager {
                     let plutilTask = Process()
                     plutilTask.launchPath = "/usr/bin/plutil"
                     plutilTask.arguments = ["-convert", "json", "-", "-o", "-"]
-                    let plutilIn = Pipe()
-                    let plutilOut = Pipe()
                     plutilTask.standardInput = plutilIn
                     plutilTask.standardOutput = plutilOut
 
@@ -90,17 +112,11 @@ class HyperKeyManager {
                     
                     // 데이터 주입
                     try? plutilIn.fileHandleForWriting.write(contentsOf: getData)
-
-                    // 🌟 [리뷰 반영 최적화 2] 자식에게 EOF를 알리는 쓰기단 폐쇄와 동시에, 안 쓰던 읽기단도 즉시 청소
+                    // EOF 신호를 주어 자식의 무한 대기(Hang) 방지
                     try? plutilIn.fileHandleForWriting.close()
-                    try? plutilIn.fileHandleForReading.close()
 
                     let jsonData = plutilOut.fileHandleForReading.readDataToEndOfFile()
                     plutilTask.waitUntilExit()
-
-                    // 🌟 [리뷰 반영 최적화 3] 결과 수집 완료 즉시 읽기단과 미사용 쓰기단 전량 폐쇄
-                    try? plutilOut.fileHandleForReading.close()
-                    try? plutilOut.fileHandleForWriting.close()
 
                     if let parsed = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Int]] {
                         mappings = parsed
@@ -125,26 +141,15 @@ class HyperKeyManager {
                     return
                 }
 
-                // 3. 최종 설정 반영 등록 (리뷰 반영 수복 지점)
+                // 3. 최종 설정 반영 등록
                 let setTask = Process()
                 setTask.launchPath = "/usr/bin/hidutil"
                 setTask.arguments = ["property", "--set", finalJsonString]
-
-                // 🌟 [리뷰 반영] 콘솔 소음 누출 및 버퍼 행(Hang) 예방을 위한 소음기 파이프 개설
-                let setOutPipe = Pipe()
-                let setErrPipe = Pipe()
                 setTask.standardOutput = setOutPipe
-                setTask.standardError = setErrPipe
+                setTask.standardError = letSetErrPipe
 
                 setTask.terminationHandler = { proc in
-                    // 🌟 [최종 가드] 자식 프로세스 종료 즉시 커널 파일 디스크립터(FD) 자원 강제 소각
-                    try? setOutPipe.fileHandleForReading.close()
-                    try? setOutPipe.fileHandleForWriting.close()
-                    try? setErrPipe.fileHandleForReading.close()
-                    try? setErrPipe.fileHandleForWriting.close()
-                    
                     if proc.terminationStatus != 0 {
-                        // 💡 UI 메인 스레드 간섭 없이 독립 격리 디버그 로그 출력
                         dprint("⚠️ [HyperKeyManager] hidutil --set 실행 실패 (Status: \(proc.terminationStatus))")
                     }
                     proc.terminationHandler = nil
@@ -243,12 +248,11 @@ class HyperKeyManager {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05, execute: item)
     }
 
-    // MARK: - HyperKey 내이티브 캡스락 토글 커널 (파이프 자원 누수 완전 해제)
+    // MARK: - HyperKey 내이티브 캡스락 토글 커널
 
     func executeCapsLockToggle() {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/hidutil")
-        // 키 매핑 및 캡스락 상태 전환을 위한 인자 설정
         task.arguments = ["property", "--set", "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x700000039}]}"]
 
         let outPipe = Pipe()
@@ -259,23 +263,23 @@ class HyperKeyManager {
         do {
             try task.run()
             
-            // hidutil이 실행을 마치고 물리적으로 종료될 때까지 대기합니다.
+            // hidutil 프로세스가 임무를 마치고 종료될 때까지 동기 대기
             task.waitUntilExit()
             
-            // 🌟 [리뷰 반영 수복] 프로세스가 확실하게 종료되었으므로,
-            // 커널 공간에 묶여있던 파이프 파일 핸들 자원을 즉시 동기적으로 강제 폐쇄(Close)합니다.
-            // 이 조치로 인해 시스템 파일 디스크립터 잔류 누수 리스크가 0%로 완전히 소각됩니다.
+            // 🌟 [핵심 수복 1] 정상 종료 후: 운영체제 파일 디스크립터(FD) 누수 원천 차단
+            // 프로세스가 죽었으므로 파이프 통로도 즉시 강제로 닫아 자원을 100% 반납합니다.
             try? outPipe.fileHandleForReading.close()
             try? errPipe.fileHandleForReading.close()
-
-            dprint("💾 [HyperKeyManager] hidutil 실행 및 커널 파이프 자원 반납이 완벽하게 완료되었습니다.")
             
         } catch {
-            // 🚨 실행 실패 예외 경로에서도 자원이 누수되지 않도록 철저하게 2중 방어벽 가동
+            // 🌟 [핵심 수복 2] 에러 발생 후: 실행에 실패하더라도 열려있던 파이프는 무조건 닫아야 합니다.
+            // 이중 방어벽을 통해 어떤 예외 상황에서도 자원 누수가 발생하지 않도록 밀봉합니다.
             try? outPipe.fileHandleForReading.close()
             try? errPipe.fileHandleForReading.close()
-
+            
+            #if DEBUG
             dprint("❌ [HyperKeyManager] hidutil 커널 명령 집행 실패: \(error.localizedDescription)")
+            #endif
         }
     }
 }

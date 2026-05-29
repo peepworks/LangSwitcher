@@ -34,6 +34,9 @@ struct DailyStat: Codable, Identifiable, Equatable, Sendable {
 class StatsManager: ObservableObject {
     static let shared = StatsManager()
     
+    nonisolated private static let encoder = JSONEncoder()
+    nonisolated private static let decoder = JSONDecoder()
+    
     // 디스크 쓰기 전용 백그라운드 직렬 큐 하나만 유지하여 UI 스레드를 지켜냅니다.
     private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.stats.save", qos: .background)
     
@@ -115,7 +118,7 @@ class StatsManager: ObservableObject {
             // 백그라운드 스레드에서 무거운 정렬 및 인코딩 독점 수행
             let statsArray = Array(snapshot.values).sorted { $0.dateString < $1.dateString }
             
-            if let data = try? JSONEncoder().encode(statsArray) {
+            if let data = try? Self.encoder.encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: key)
                 dprint("💾 [StatsManager] 백그라운드에서 self 간섭 없이 통계 데이터를 안전하게 저장했습니다.")
             } else {
@@ -129,7 +132,8 @@ class StatsManager: ObservableObject {
     
     private func loadStats() {
         if let data = UserDefaults.standard.data(forKey: defaultsKey),
-           let decoded = try? JSONDecoder().decode([DailyStat].self, from: data) {
+           // 🌟 [수복 2] 아직 남아있던 일회용 JSONDecoder()를 Self.decoder로 완벽하게 짝맞춤 교체!
+           let decoded = try? Self.decoder.decode([DailyStat].self, from: data) {
             
             var tempDict: [String: DailyStat] = [:]
             for stat in decoded {
