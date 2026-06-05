@@ -12,17 +12,23 @@
   macOS에서 입력 언어 전환을 더 빠르고 정확하게 만들어 주는 경량 메뉴바 앱입니다.
 </p>
 
+<p align="center">
+  <a href="https://github.com/sponsors/peepworks">
+    <img src="https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?logo=github-sponsors&logoColor=white" alt="Sponsor">
+  </a>
+</p>
+
 ---
 
 ## English
 
-### What’s New in v0.9.0
+### What's New in v0.9.0
 
 #### 🗂️ Profile Support
 v0.9.0 introduces profile support, making it easier to organize and switch between different LangSwitcher setups depending on your workflow or usage scenario.
 
 #### 🔒 Enterprise-Grade Stability & System Hardening
-LangSwitcher’s internal architecture has been reinforced to better resist long-running resource leaks and background degradation. It now reclaims Unix file descriptors from helper processes such as `hidutil` and `plutil`, and keeps accessibility observers (`AXObserver`) anchored to macOS’s native Main RunLoop for more stable long-term operation.
+LangSwitcher's internal architecture has been reinforced to better resist long-running resource leaks and background degradation. It now reclaims Unix file descriptors from helper processes such as `hidutil` and `plutil`, and keeps accessibility observers (`AXObserver`) anchored to macOS's native Main RunLoop for more stable long-term operation.
 
 #### ⚡ Race-Free Task & Event Management
 To reduce micro-stuttering during rapid app switching, `AppMonitor` now cancels stale background tasks more aggressively. This ensures only the currently relevant window and task chain continue consuming system resources.
@@ -35,7 +41,7 @@ High-resolution app icon image buffers (`NSImage`) are now released as soon as l
 
 ---
 
-### What’s New in v0.8.0 (Legacy)
+### What's New in v0.8.0 (Legacy)
 
 - **Zero-Delay Typo Correction** — switches the input source first and removes artificial backspace timers to prevent broken characters and leftover English text.
 - **Custom Text Expansion / Snippets** — expands user-defined triggers after pressing Space and supports dynamic placeholders such as `{{date:yyyy-MM-dd}}`, `{{date:HH:mm}}`, and `{{clipboard}}`.
@@ -99,7 +105,7 @@ It combines direct language switching, profile-based setup management, app-speci
 ### Installation
 
 > [!WARNING]
-> LangSwitcher is a free open-source project and is not signed with a paid Apple Developer account, so macOS may show an **“unidentified developer”** warning on first launch.
+> LangSwitcher is a free open-source project and is not signed with a paid Apple Developer account, so macOS may show an **"unidentified developer"** warning on first launch.
 
 1. Go to the **Releases** page.
 2. Download the latest `LangSwitcher_v0.9.0.zip`.
@@ -177,9 +183,15 @@ Accessibility
 
 ---
 
-### Donations
+## Support LangSwitcher
 
-If LangSwitcher helps improve your workflow, consider supporting the project. Your support helps maintain and improve the app.
+LangSwitcher is a free, open-source project maintained by a solo developer.
+If it has improved your workflow, please consider supporting ongoing development.
+
+### GitHub Sponsors
+👉 [Sponsor on GitHub](https://github.com/sponsors/peepworks)
+
+### Cryptocurrency Donations
 
 | Cryptocurrency | Wallet Address |
 |---|---|
@@ -368,9 +380,15 @@ sudo xattr -r -d com.apple.quarantine /Applications/LangSwitcher.app
 
 ---
 
-### Donations / 후원
+## LangSwitcher 후원하기
 
-LangSwitcher가 작업 흐름 개선에 도움이 되었다면 프로젝트 후원을 고려해 주세요. 후원은 프로젝트 유지 및 기능 개선에 큰 도움이 됩니다.
+LangSwitcher는 1인 개발자가 유지하는 무료 오픈소스 프로젝트입니다.
+작업 흐름 개선에 도움이 되었다면 지속적인 개발을 후원해 주세요.
+
+### GitHub Sponsors
+👉 [GitHub Sponsors로 후원하기](https://github.com/sponsors/peepworks)
+
+### 암호화폐 후원
 
 | 암호화폐 | 지갑 주소 |
 |---|---|
