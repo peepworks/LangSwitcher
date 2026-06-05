@@ -82,9 +82,7 @@ class HyperKeyManager {
                 try? letSetErrPipe.fileHandleForReading.close()
                 try? letSetErrPipe.fileHandleForWriting.close()
                 
-                #if DEBUG
                 dprint("🧹 [HyperKeyManager] setupHardwareMapping 내의 모든 좀비 파이프 핸들이 안전하게 소각되었습니다.")
-                #endif
             }
 
             // 1. hidutil 정보 가져오기
@@ -260,26 +258,29 @@ class HyperKeyManager {
         task.standardOutput = outPipe
         task.standardError = errPipe
 
+        // 🌟 [최종 수복 완료] 파이프가 생성되자마자 읽기/쓰기 핸들을 한곳에 묶어 문단속을 예약합니다.
+        // 이제 do 블록에서 성공하든, catch 블록으로 튕겨 나가든 100% 무조건 완벽하게 자원이 소각됩니다.
+        defer {
+            try? outPipe.fileHandleForReading.close()
+            try? outPipe.fileHandleForWriting.close() // 💡 누락되었던 쓰기 핸들 추가 정산
+            
+            try? errPipe.fileHandleForReading.close()
+            try? errPipe.fileHandleForWriting.close() // 💡 누락되었던 쓰기 핸들 추가 정산
+            
+            dprint("🧹 [HyperKeyManager] CapsLock 토글 커널 파이프 자원이 완전히 해제되었습니다.")
+        }
+
         do {
             try task.run()
             
             // hidutil 프로세스가 임무를 마치고 종료될 때까지 동기 대기
             task.waitUntilExit()
             
-            // 🌟 [핵심 수복 1] 정상 종료 후: 운영체제 파일 디스크립터(FD) 누수 원천 차단
-            // 프로세스가 죽었으므로 파이프 통로도 즉시 강제로 닫아 자원을 100% 반납합니다.
-            try? outPipe.fileHandleForReading.close()
-            try? errPipe.fileHandleForReading.close()
+            // ❌ [기존 파편화 코드 철거] 이제 상단의 defer가 단일화하여 처리하므로
+            // 내부의 지저분한 close() 연산들은 전부 깔끔하게 걷어냅니다.
             
         } catch {
-            // 🌟 [핵심 수복 2] 에러 발생 후: 실행에 실패하더라도 열려있던 파이프는 무조건 닫아야 합니다.
-            // 이중 방어벽을 통해 어떤 예외 상황에서도 자원 누수가 발생하지 않도록 밀봉합니다.
-            try? outPipe.fileHandleForReading.close()
-            try? errPipe.fileHandleForReading.close()
-            
-            #if DEBUG
             dprint("❌ [HyperKeyManager] hidutil 커널 명령 집행 실패: \(error.localizedDescription)")
-            #endif
         }
     }
 }

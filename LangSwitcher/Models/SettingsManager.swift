@@ -58,14 +58,13 @@ class SettingsManager: ObservableObject {
     private(set) var customShortcutCache: [ShortcutKey: CustomShortcut] = [:]
     private(set) var appLaunchShortcutCache: [ShortcutKey: AppLaunchShortcut] = [:]
  
-    // 🌟 [추가] Application Support 내 앱 전용 안전 폴더 경로 확보
+    // Application Support 내 앱 전용 안전 폴더 경로 확보
     private var applicationSupportDirectoryURL: URL {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        // ~/Library/Application Support/LangSwitcher 폴더 지정
         return paths[0].appendingPathComponent("LangSwitcher", isDirectory: true)
     }
 
-    // 🌟 [추가] 최종 프로필 JSON 파일의 절대 경로
+    // 최종 프로필 JSON 파일의 절대 경로
     private var profilesFileURL: URL {
         return applicationSupportDirectoryURL.appendingPathComponent("profiles.json")
     }
@@ -75,7 +74,7 @@ class SettingsManager: ObservableObject {
     @Published var isCtrlActive: Bool {
         didSet {
             save("isCtrlActive", isCtrlActive)
-            guard !isBatchUpdating else { return } // 🌟 방어벽
+            guard !isBatchUpdating else { return }
             scheduleSave()
         }
     }
@@ -83,14 +82,14 @@ class SettingsManager: ObservableObject {
     @Published var isCmdActive: Bool {
         didSet {
             save("isCmdActive", isCmdActive)
-            guard !isBatchUpdating else { return } // 🌟 방어벽
+            guard !isBatchUpdating else { return }
             scheduleSave()
         }
     }
     @Published var isOptActive: Bool {
         didSet {
             save("isOptActive", isOptActive)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            guard !isBatchUpdating else { return }
             scheduleSave()
         }
     }
@@ -98,7 +97,7 @@ class SettingsManager: ObservableObject {
     @Published var ctrlLang: String {
         didSet {
             save("ctrlLang", ctrlLang)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            guard !isBatchUpdating else { return }
             scheduleSave()
         }
     }
@@ -106,7 +105,7 @@ class SettingsManager: ObservableObject {
     @Published var cmdLang: String {
         didSet {
             save("cmdLang", cmdLang)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            guard !isBatchUpdating else { return }
             scheduleSave()
         }
     }
@@ -114,7 +113,7 @@ class SettingsManager: ObservableObject {
     @Published var optLang: String {
         didSet {
             save("optLang", optLang)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            guard !isBatchUpdating else { return }
             scheduleSave()
         }
     }
@@ -122,7 +121,7 @@ class SettingsManager: ObservableObject {
     @Published var showVisualFeedback: Bool {
         didSet {
             save("showVisualFeedback", showVisualFeedback)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            guard !isBatchUpdating else { return }
             scheduleSave()
         }
     }
@@ -131,14 +130,14 @@ class SettingsManager: ObservableObject {
     @Published var toggleKeyCode: UInt16 {
         didSet {
             save("toggleKeyCode", toggleKeyCode)
-            guard !isBatchUpdating else { return } // 🌟 방어벽
+            guard !isBatchUpdating else { return }
             updateSnapshot()
         }
     }
     @Published var toggleModifierFlags: UInt64 {
         didSet {
             save("toggleModifierFlags", toggleModifierFlags)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            guard !isBatchUpdating else { return }
             updateSnapshot()
         }
     }
@@ -146,7 +145,7 @@ class SettingsManager: ObservableObject {
     @Published var toggleDisplayString: String {
         didSet {
             save("toggleDisplayString", toggleDisplayString)
-            guard !isBatchUpdating else { return } // 🌟 방어벽 추가
+            guard !isBatchUpdating else { return }
             updateSnapshot()
         }
     }
@@ -154,7 +153,7 @@ class SettingsManager: ObservableObject {
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet {
             HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled)
-            guard !isBatchUpdating else { return } // 🌟 방어벽
+            guard !isBatchUpdating else { return }
             updateSnapshot()
             syncToCloud()
         }
@@ -201,8 +200,6 @@ class SettingsManager: ObservableObject {
                     LangSwitcherShortcuts.updateAppShortcutParameters()
                 }
             }
-            
-            dprint("🔄 [Profile Switched] Engine reloaded with profile: \(self.activeProfile.name)")
         }
     }
     
@@ -218,12 +215,10 @@ class SettingsManager: ObservableObject {
     }
     
     private init() {
-        // 1. 연쇄 업데이트 방어막 활성화
         self.isBatchUpdating = true
         let d = UserDefaults.standard
         let fileManager = FileManager.default
         
-        // 2. 일반 저장 프로퍼티들 선제 초기화
         isCtrlActive = d.bool(forKey: "isCtrlActive")
         isCmdActive = d.bool(forKey: "isCmdActive")
         isOptActive = d.bool(forKey: "isOptActive")
@@ -236,33 +231,23 @@ class SettingsManager: ObservableObject {
         cmdLang = d.string(forKey: "cmdLang") ?? ""
         optLang = d.string(forKey: "optLang") ?? ""
         
-        // 3. self 가 완전히 초기화되기 전이므로, 파일 경로를 안전한 '지역 변수'로 계산합니다.
         let appSupportPaths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let localProfilesFileURL = appSupportPaths[0]
             .appendingPathComponent("LangSwitcher", isDirectory: true)
             .appendingPathComponent("profiles.json")
         
-        // 마이그레이션이 실행되어야 하는지 추적할 플래그
         var needsMigration = false
         var tempProfiles: [SettingsProfile] = []
         
-        // 4. 독립된 지역 변수 풀 안에서 프로필 데이터 정산 집행
         if fileManager.fileExists(atPath: localProfilesFileURL.path),
            let data = try? Data(contentsOf: localProfilesFileURL),
            let dec = try? JSONDecoder().decode([SettingsProfile].self, from: data), !dec.isEmpty {
-            
-            // [케이스 A] Application Support에 정식 파일이 이미 상주 중인 경우
             tempProfiles = dec
-            
         } else if let legacyData = d.data(forKey: "profiles"),
                   let dec = try? JSONDecoder().decode([SettingsProfile].self, from: legacyData), !dec.isEmpty {
-            
-            // [케이스 B] 구버전 UserDefaults 데이터가 남아있는 경우 (마이그레이션 대상)
             tempProfiles = dec
             needsMigration = true
-            
         } else {
-            // [케이스 C] 설정이 전혀 없는 완전 순정 최초 실행 유저
             var migratedPayload = ProfileSettingsPayload()
             
             if let data = d.data(forKey: "customShortcuts"), let dec = try? JSONDecoder().decode([CustomShortcut].self, from: data) { migratedPayload.customShortcuts = dec }
@@ -296,10 +281,9 @@ class SettingsManager: ObservableObject {
                 isDefault: true, createdAt: Date(), updatedAt: Date(), payload: migratedPayload
             )
             tempProfiles = [defaultProfile]
-            needsMigration = true // 최초 유저도 파일 공간 확보를 위해 즉시 저장 플래그를 켭니다.
+            needsMigration = true
         }
         
-        // 활성 프로필 ID 가 계산될 임시 변수 확보
         var tempActiveID = tempProfiles.first!.id
         if let savedIDString = d.string(forKey: "activeProfileID"),
            let savedID = UUID(uuidString: savedIDString),
@@ -307,16 +291,11 @@ class SettingsManager: ObservableObject {
             tempActiveID = savedID
         }
         
-        // 🌟 [핵심 수복 지점]
-        // 1단계(Phase 1) 초기화 완료! 모든 핵심 저장 프로퍼티의 장부를 완전히 채웁니다.
         self.profiles = tempProfiles
         self.activeProfileID = tempActiveID
         
-        // ── 여기서부터 2단계(Phase 2) 영역 진입: 이제 'self' 메서드를 호출해도 100% 안전합니다 ──
-        
         self.applyActiveProfile()
         
-        // 마이그레이션 대상이거나 신규 파일 생성이 필요한 경우 후속 안전지대에서 청소 실행
         if needsMigration {
             self.saveAll()
             if d.data(forKey: "profiles") != nil {
@@ -343,21 +322,14 @@ class SettingsManager: ObservableObject {
         let directoryURL = self.applicationSupportDirectoryURL
         let fileURL = self.profilesFileURL
         
-        // 백그라운드 스레드에서 무거운 파일 쓰기를 처리하여 UI 스레드를 완벽하게 보호합니다.
-        DispatchQueue.global(qos: .background).async {
+        // 🌟 [수복 완료] 레거시 GCD 대신 Swift 6 최적화 규격인 Task.detached 사양으로 디스크 저장 처리 통합
+        Task.detached(priority: .background) {
             do {
-                // 1. Application Support 내부에 앱 전용 폴더가 없다면 선제 생성
                 if !FileManager.default.fileExists(atPath: directoryURL.path) {
                     try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
                 }
-                
-                // 2. 인코딩 집행
                 let data = try Self.profileEncoder.encode(profilesToSave)
-                
-                // 3. .atomic 옵션을 주어 임시 파일을 만든 뒤 쓰기가 성공하면
-                // 원래 파일과 교체하는 방식을 취하므로, 저장 도중 앱이 꺼져도 파일 무결성이 깨지지 않습니다.
                 try data.write(to: fileURL, options: .atomic)
-                
                 dprint("✅ [Storage Engine] 프로필 데이터가 Application Support 폴더에 안전하게 저장되었습니다.")
             } catch {
                 dprint("❌ [Storage Engine] 프로필 디스크 저장 실패: \(error.localizedDescription)")
@@ -434,43 +406,30 @@ class SettingsManager: ObservableObject {
     // MARK: - 고성능 로그 주입 아키텍처
     @MainActor
     func addLog(_ log: ActionLog) {
-        // 1. 맨 뒤에 붙이기는 언제나 비용이 없는 완벽한 O(1)
         self.recentLogs.append(log)
-        
-        // 2. [리뷰 반영 1줄 교체] 550개 도달 시 suffix 슬라이스를 통해
-        // 매 타건마다 발생하던 O(n) 메모리 시프팅 부하를 50번에 1번꼴로 격하시킵니다.
         if self.recentLogs.count > maxLogCount + 50 {
             self.recentLogs = Array(self.recentLogs.suffix(maxLogCount))
-            
             dprint("🧹 [LogEngine] 버퍼 한도 유예 통과: 50건의 로그를 일괄 suffix 트리밍했습니다.")
         }
     }
     
     // MARK: - 고성능 디바운스 저장 엔진 (@MainActor 격리 완전 준수)
-        
     func scheduleSave() {
-        // 1. 선행 예약되어 있던 저장 워크아이템이 있다면 즉시 취소 (타이핑 연타 시 디바운싱 가동)
         saveWorkItem?.cancel()
         
-        // 2. [리뷰 반영 수복] 메인 액터 격리 요새 안에서 안전하게 집행될 청소부 클로저 생성
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             
-            // 🌟 이 블록은 메인 큐에서 실행되므로 @MainActor 격리 프로퍼티들을 락 없이 100% 안전하게 참조합니다.
             self.saveAll()
             self.updateSnapshot()
             
             if !self.isBatchUpdating {
                 self.syncToCloud()
             }
-
             dprint("📝 [SettingsManager] 메인 액터 격리를 준수하며 안전하게 설정을 통합 보존했습니다.")
         }
         
         self.saveWorkItem = workItem
-        
-        // 3. 글로벌 큐 우회 배리어를 완전히 제거하고, 메인 큐 단독 asyncAfter 명세로 0.5초 딜레이 대기를 집행합니다.
-        // 스케줄러 대기 자체는 OS 커널이 관리하므로 UI 메인 스레드 스톨(Stall) 현상이 전혀 발생하지 않습니다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
     }
     
@@ -505,16 +464,15 @@ class SettingsManager: ObservableObject {
         let rulesToExport = activeProfile.payload.textExpansionRules
         
         do {
-            // 🌟 [수복 완료] 일회용 JSONEncoder()를 제거하고 상단의 정적 자산을 재사용합니다.
             let data = try Self.profileEncoder.encode(rulesToExport)
             
-            // 디스크 쓰기(I/O)만 백그라운드로 철저히 격리
-            DispatchQueue.global(qos: .userInitiated).async {
+            // 🌟 [수복 완료] 레거시 GCD 대신 리뷰어 9번의 권고에 맞춰 전역 Task.detached 독립 스레드로 격리 통합
+            Task.detached(priority: .userInitiated) {
                 do {
                     try data.write(to: url)
-                    DispatchQueue.main.async { completion(true, nil) }
+                    await completion(true, nil)
                 } catch {
-                    DispatchQueue.main.async { completion(false, error) }
+                    await completion(false, error)
                 }
             }
         } catch {
@@ -522,27 +480,51 @@ class SettingsManager: ObservableObject {
         }
     }
 
+    @MainActor
     func importTextExpansionRules(from url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void = { _, _ in }) {
-        // 백그라운드에서는 순수 디스크 데이터 읽기와 JSON 파싱만 독점 집행하여 UI 프리징을 막습니다.
-        DispatchQueue.global(qos: .userInitiated).async {
+        // 독립된 백그라운드 작업동(Task.detached)으로 파일 I/O 및 대량 파싱 연산을 완벽히 위임합니다.
+        Task.detached(priority: .userInitiated) {
             do {
                 let data = try Data(contentsOf: url)
-                let importedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
+                let decodedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
                 
-                // 🌟 [수복 핵심] 가공된 결과물 장부를 원본 프로필에 주입할 때는
-                // 반드시 메인 액터 런타임 안으로 안전하게 진입하여 동기화 처리를 수행합니다.
-                DispatchQueue.main.async {
+                // 1. 샌드박스 파싱이 완벽히 끝난 시점에 메인 액터의 진짜 장부(activeProfile)에 원자적 대입을 집행합니다.
+                await MainActor.run {
                     var profile = self.activeProfile
-                    for rule in importedRules {
-                        if !profile.payload.textExpansionRules.contains(where: { $0.trigger == rule.trigger }) {
-                            profile.payload.textExpansionRules.append(rule)
-                        }
-                    }
+                    profile.payload.textExpansionRules = decodedRules
                     self.activeProfile = profile
+                    
+                    // 수동 메모리 스냅샷 정산 및 디스크 커널 백업 트리거 호출
+                    self.updateSnapshot()
+                    self.scheduleSave()
+                    
+                    let log = ActionLog(
+                        timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Text Expansion Import",
+                        finalInputSource: "Successfully imported \(decodedRules.count) rules", result: .success,
+                        failureReason: .none
+                    )
+                    self.addLog(log)
+                    HUDManager.shared.showHUD(languageName: String(localized: "Import Successful"))
+                    
+                    // 🌟 [수복 완료] 성공 시 뷰(View)가 등록해둔 후행 콜백을 깨워 정산 완료를 알립니다.
                     completion(true, nil)
                 }
             } catch {
-                DispatchQueue.main.async { completion(false, error) }
+                // 2. 예외 상황 발생 시 오염된 decodedRules 접근을 원천 차단하고 청정하게 에러 상태 장부만 보고합니다.
+                await MainActor.run {
+                    dprint("❌ [SettingsManager] 텍스트 대치 규칙 임포트 실패: \(error.localizedDescription)")
+                    
+                    let log = ActionLog(
+                        timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Text Expansion Import",
+                        finalInputSource: "Failed to import rules: \(error.localizedDescription)", result: .failure,
+                        failureReason: .unknown
+                    )
+                    self.addLog(log)
+                    HUDManager.shared.showHUD(languageName: String(localized: "Import Failed"))
+                    
+                    // 🌟 [수복 완료] 실패 시에도 뷰(View)에 실패 원인 에러 객체를 안전하게 배달합니다.
+                    completion(false, error)
+                }
             }
         }
     }
@@ -556,23 +538,22 @@ class SettingsManager: ObservableObject {
         savePanel.title = String(localized: "Export Profiles Backup")
         
         savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                do {
-                    // 🌟 [수복 완료] 무거운 prettyPrinted 인코더 할당을 0으로 지우고 정적 자산으로 통합!
-                    let data = try Self.profileEncoder.encode(self.profiles)
-                    
-                    // 무거운 디스크 파일 쓰기(I/O)만 백그라운드로 철저히 유기합니다.
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        do {
-                            try data.write(to: url)
-                            dprint("✅ Profiles successfully exported to \(url.lastPathComponent)")
-                        } catch {
-                            dprint("❌ Failed to export profiles: \(error.localizedDescription)")
-                        }
+            guard response == .OK, let url = savePanel.url else { return }
+            
+            do {
+                let data = try Self.profileEncoder.encode(self.profiles)
+                
+                // 🌟 [수복 완료] 리뷰어 9번 의견 적용: 익스포트 디스크 I/O 역시 무결한 Task.detached 시스템으로 전환
+                Task.detached(priority: .userInitiated) {
+                    do {
+                        try data.write(to: url)
+                        dprint("✅ Profiles successfully exported to \(url.lastPathComponent)")
+                    } catch {
+                        dprint("❌ Failed to export profiles: \(error.localizedDescription)")
                     }
-                } catch {
-                    dprint("❌ Failed to encode profiles: \(error.localizedDescription)")
                 }
+            } catch {
+                dprint("❌ Failed to encode profiles: \(error.localizedDescription)")
             }
         }
     }
@@ -586,54 +567,50 @@ class SettingsManager: ObservableObject {
         openPanel.title = String(localized: "Import Profiles Backup")
         
         openPanel.begin { response in
-            if response == .OK, let url = openPanel.url {
-                // 🌟 [수복 완료] 백그라운드 큐 내부에서 안전하게 가져다 쓸 수 있도록
-                // Sendable이 보장된 정적 디코더 자산을 로컬 상수로 선언(Capture-Binding)하여 진입합니다.
-                let localDecoder = Self.profileDecoder
-                
-                DispatchQueue.global(qos: .userInitiated).async {
-                    do {
-                        let data = try Data(contentsOf: url)
-                        // 🌟 [수복 완료] 일회용 인스턴스 소각 및 공유 자산 바인딩 대입
-                        let importedProfiles = try localDecoder.decode([SettingsProfile].self, from: data)
-                        
-                        DispatchQueue.main.async {
-                            guard !importedProfiles.isEmpty else {
-                                let alert = NSAlert()
-                                alert.messageText = String(localized: "Import Failed")
-                                alert.informativeText = String(localized: "The selected backup file is empty or contains no valid profiles.")
-                                alert.alertStyle = .warning
-                                NSApp.activate(ignoringOtherApps: true)
-                                alert.runModal()
-                                return
-                            }
-                            
-                            self.profiles = importedProfiles
-                            if let firstProfile = importedProfiles.first {
-                                self.activeProfileID = firstProfile.id
-                            }
-                            
-                            let alert = NSAlert()
-                            alert.messageText = String(localized: "Profiles Restore Successful")
-                            alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
-                            if let appIcon = NSImage(named: NSImage.applicationIconName) {
-                                alert.icon = appIcon
-                            }
-                            NSApp.activate(ignoringOtherApps: true)
-                            alert.runModal()
-                        }
-                        dprint("✅ Profiles successfully imported from \(url.lastPathComponent)")
-                        
-                    } catch {
-                        dprint("❌ Failed to import profiles: \(error.localizedDescription)")
-                        DispatchQueue.main.async {
+            guard response == .OK, let url = openPanel.url else { return }
+            let localDecoder = Self.profileDecoder
+            
+            // 🌟 [수복 완료] 리뷰어 9번 의견 적극 반영: 대량의 전체 프로필 임포트 구역까지 완벽한 Task.detached 사양으로 통일 완성!
+            Task.detached(priority: .userInitiated) {
+                do {
+                    let data = try Data(contentsOf: url)
+                    let importedProfiles = try localDecoder.decode([SettingsProfile].self, from: data)
+                    
+                    await MainActor.run {
+                        guard !importedProfiles.isEmpty else {
                             let alert = NSAlert()
                             alert.messageText = String(localized: "Import Failed")
-                            alert.informativeText = String(localized: "Failed to read the backup file. It might be corrupted or in an unsupported format.\n\nError: \(error.localizedDescription)")
-                            alert.alertStyle = .critical
+                            alert.informativeText = String(localized: "The selected backup file is empty or contains no valid profiles.")
+                            alert.alertStyle = .warning
                             NSApp.activate(ignoringOtherApps: true)
                             alert.runModal()
+                            return
                         }
+                        
+                        self.profiles = importedProfiles
+                        if let firstProfile = importedProfiles.first {
+                            self.activeProfileID = firstProfile.id
+                        }
+                        
+                        let alert = NSAlert()
+                        alert.messageText = String(localized: "Profiles Restore Successful")
+                        alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
+                        if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                            alert.icon = appIcon
+                        }
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
+                    }
+                    dprint("✅ Profiles successfully imported from \(url.lastPathComponent)")
+                } catch {
+                    dprint("❌ Failed to import profiles: \(error.localizedDescription)")
+                    await MainActor.run {
+                        let alert = NSAlert()
+                        alert.messageText = String(localized: "Import Failed")
+                        alert.informativeText = String(localized: "Failed to read the backup file. It might be corrupted or in an unsupported format.\n\nError: \(error.localizedDescription)")
+                        alert.alertStyle = .critical
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
                     }
                 }
             }

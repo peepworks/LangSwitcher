@@ -37,9 +37,6 @@ class StatsManager: ObservableObject {
     nonisolated private static let encoder = JSONEncoder()
     nonisolated private static let decoder = JSONDecoder()
     
-    // 디스크 쓰기 전용 백그라운드 직렬 큐 하나만 유지하여 UI 스레드를 지켜냅니다.
-    private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.stats.save", qos: .background)
-    
     // UI 바인딩용 데이터 (메인 스레드 격리)
     @Published var dailyStats: [DailyStat] = []
     
@@ -109,21 +106,23 @@ class StatsManager: ObservableObject {
     private func forceSave() {
         guard isDirty else { return }
         
-        // Zero-Capture 아키텍처 사양 (MainActor 격리 준수)
-        let snapshot = self.internalStatsDict
+        // 1. 🌟 [핵심 수복] 딕셔너리 원본을 넘기지 않고, 메인 액터 안전 구역 내에서
+        // 완전히 독립된 메모리 버퍼를 가지는 일반 고정 배열([DailyStat])로 전치 및 정렬을 끝마칩니다.
+        // 이 순간, 백그라운드 태스크는 internalStatsDict의 내부 공유 버퍼를 절대 참조할 수 없게 됩니다.
+        let statsArray = Array(self.internalStatsDict.values).sorted { $0.dateString < $1.dateString }
         let key = defaultsKey
         self.isDirty = false
         
-        saveQueue.async {
-            // 백그라운드 스레드에서 무거운 정렬 및 인코딩 독점 수행
-            let statsArray = Array(snapshot.values).sorted { $0.dateString < $1.dateString }
-            
+        // 2. 이제 딕셔너리와 완벽하게 절연된 statsArray만 들고 백그라운드로 떠납니다.
+        Task.detached(priority: .background) {
+            // statsArray는 완벽하게 독립된 값 타입 배열이므로,
+            // 메인 스레드에서 타이핑 연타로 internalStatsDict가 조작되든 말든 100% 안전합니다.
             if let data = try? Self.encoder.encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: key)
-                dprint("💾 [StatsManager] 백그라운드에서 self 간섭 없이 통계 데이터를 안전하게 저장했습니다.")
+                dprint("💾 [StatsManager] CoW 데이터 레이스를 원천 차단하며 백그라운드 저장을 완료했습니다.")
             } else {
-                DispatchQueue.main.async { [weak self] in
-                    self?.isDirty = true
+                await MainActor.run {
+                    StatsManager.shared.isDirty = true
                 }
                 dprint("🚨 [StatsManager] 통계 데이터 인코딩 실패로 인해 isDirty 상태를 롤백했습니다.")
             }
@@ -188,7 +187,8 @@ class StatsManager: ObservableObject {
     func exportToCSV(to url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void) {
         let snapshot = internalStatsDict
         
-        DispatchQueue.global(qos: .userInitiated).async {
+        // 🌟 [수복 완료] 무거운 문자열 조작 및 디스크 파일 I/O를 메인 스레드 스올(Stall) 없이 백그라운드 태스크로 유기합니다.
+        Task.detached(priority: .userInitiated) {
             do {
                 var csvString = "Date,Type,Count\n"
                 for (dateKey, dailyStats) in snapshot {
@@ -198,9 +198,11 @@ class StatsManager: ObservableObject {
                 
                 try csvString.write(to: url, atomically: true, encoding: .utf8)
                 
-                DispatchQueue.main.async { completion(true, nil) }
+                // 🌟 콜백 함수가 이미 @MainActor 격리 사양이므로, await 호출 한 방으로
+                // DispatchQueue.main 없이 메인 스레드에 안전하게 정렬 배달됩니다.
+                await completion(true, nil)
             } catch {
-                DispatchQueue.main.async { completion(false, error) }
+                await completion(false, error)
             }
         }
     }

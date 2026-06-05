@@ -57,18 +57,15 @@ protocol BrowserAdapter: Sendable {
 
 // MARK: - JXA 아웃프로세스 제어 커널 (Swift 6 넌아이솔레이티드 완전 수복 사양)
 
-// 🌟 [수복 완료] 글로벌 스코프 독립으로 @MainActor 괄호 가두리 완벽 탈출
-private final class SafeDataBuffer: @unchecked Sendable {
-    // nonisolated(unsafe) — NSLock이 스레드 안전을 보장하므로 컴파일러 격리 추론 완전 차단
-    nonisolated(unsafe) private var _data = Data()
-    private let lock = NSLock()
-    
-    nonisolated func append(_ newData: Data) {
-        lock.withLock { _data.append(newData) }
+actor SafeDataBuffer {
+    private var data = Data()
+
+    func append(_ newData: Data) {
+        data.append(newData)
     }
-    
-    nonisolated func read() -> Data {
-        lock.withLock { _data }
+
+    func read() -> Data {
+        return data
     }
 }
 
@@ -83,49 +80,49 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let errorPipe = Pipe()
         process.standardError = errorPipe
 
-        // 완전히 해방된 비격리 상자 객체 인스턴스 확보
         let outputBuffer = SafeDataBuffer()
         let fileHandle = pipe.fileHandleForReading
 
-        // 백그라운드 시스템 커널 I/O 큐에서 메인 스레드 간섭 없이 원자적으로 고속 적재 실행
+        // 🌟 [수복 1: 거대 전역 방어벽]
+        // 성공, 실패, 타임아웃 등 '어떤 경로'로 함수를 탈출해도 파이프와 핸들러를 0.000초 만에 완벽히 소각합니다.
+        defer {
+            fileHandle.readabilityHandler = nil
+            try? pipe.fileHandleForReading.close()
+            try? pipe.fileHandleForWriting.close()
+            try? errorPipe.fileHandleForReading.close()
+            try? errorPipe.fileHandleForWriting.close()
+        }
+
         fileHandle.readabilityHandler = { handle in
             let available = handle.availableData
             if !available.isEmpty {
-                outputBuffer.append(available)
+                Task {
+                    await outputBuffer.append(available)
+                }
             }
         }
 
         group.addTask {
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
-                    defer {
-                        // 🌟 [안전 폐쇄] 커널 파이프 자원을 안전하게 닫습니다.
-                        fileHandle.readabilityHandler = nil
-                        
-                        try? pipe.fileHandleForReading.close()
-                        try? pipe.fileHandleForWriting.close()
-                        try? errorPipe.fileHandleForReading.close()
-                        try? errorPipe.fileHandleForWriting.close()
+                    // 🌟 이제 복잡한 청소 코드(nil 대입 등)는 상단 defer가 독점하므로, 여기선 결과 인출에만 집중합니다.
+                    Task {
+                        let finalData = await outputBuffer.read()
                         process?.terminationHandler = nil
-                    }
 
-                    if p.terminationStatus == 0 {
-                        // readabilityHandler가 백그라운드에서 무결하게 모아둔 온전한 통짜 바이트 데이터
-                        let finalData = outputBuffer.read()
-                        
-                        // 🌟 [컴파일러 에러 수복] String.Encoding.utf8 로 명시하여 타입 추론 실패를 원천 차단합니다.
-                        let output = String(data: finalData, encoding: String.Encoding.utf8)?
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        continuation.resume(returning: output)
-                    } else {
-                        continuation.resume(throwing: JXAError.scriptFailed("Process terminated with code \(p.terminationStatus)"))
+                        if p.terminationStatus == 0 {
+                            let output = String(data: finalData, encoding: String.Encoding.utf8)?
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            continuation.resume(returning: output)
+                        } else {
+                            continuation.resume(throwing: JXAError.scriptFailed("Process terminated with code \(p.terminationStatus)"))
+                        }
                     }
                 }
 
                 do {
                     try process.run()
                 } catch {
-                    fileHandle.readabilityHandler = nil
                     continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
                 }
             }
@@ -139,13 +136,26 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         do {
             let firstResult = try await group.next()
             group.cancelAll()
-            pipe.fileHandleForReading.readabilityHandler = nil
             return firstResult ?? nil
         } catch {
             group.cancelAll()
-            pipe.fileHandleForReading.readabilityHandler = nil
+            
+            // 🌟 [수복 2: 스레드 블로킹 없는 프로세스 추적기]
             if process.isRunning {
-                process.terminate()
+                let processToReap = process
+                processToReap.terminationHandler = nil // 핸들러 해제하여 순환 참조 고리 완전 파괴
+                
+                // GCD 스레드를 동기적으로 묶어버리던 waitUntilExit()를 철거하고,
+                // 안전한 비동기 논블로킹 유유자적 스케줄러로 프로세스를 강제 종료 및 분리 유기합니다.
+                Task.detached(priority: .background) {
+                    processToReap.terminate()
+                    
+                    // 3초 동안 프로세스가 스스로 정리할 유예를 준 뒤, 여전히 안 죽고 좀비처럼 버티면 재차 terminate를 가합니다.
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    if processToReap.isRunning {
+                        processToReap.terminate()
+                    }
+                }
             }
             throw error
         }

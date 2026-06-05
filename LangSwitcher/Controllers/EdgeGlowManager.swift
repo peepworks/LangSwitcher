@@ -109,15 +109,16 @@ class EdgeGlowManager {
             guard let self = self, self.currentGlowID == myID else { return }
 
             // Continuation 브릿지를 통해 비동기 애니메이션을 직렬 구조로 동기화
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                NSAnimationContext.runAnimationGroup { context in
+            await withCheckedContinuation { continuation in
+                NSAnimationContext.runAnimationGroup({ context in
                     context.duration = 0.3
                     window.animator().alphaValue = 0
-                } completionHandler: {
-                    // 🌟 [최종 종결] continuation.resume()은 자체적으로 완벽한 스레드 안전성을 가집니다.
-                    // 억지로 @MainActor를 씌우거나 assumeIsolated를 쓸 필요 없이 가장 순수하게 호출합니다.
+                }, completionHandler: {
+                    // 💡 오직 애니메이션이 100% 완료된 '이 순간'에만 딱 한 번 resume을 선언합니다.
                     continuation.resume()
-                }
+                })
+                
+                // ❌ [체크포인트] 이 구역(하단)에는 그 어떤 continuation.resume()도 절대 존재하면 안 됩니다!
             }
 
             // 애니메이션이 무사히 끝난 후 메인 액터 보장 안전지대에서 최종 자원 반납

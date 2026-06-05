@@ -67,7 +67,7 @@ class EventMonitor {
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.keyUp.rawValue) |
                         (1 << CGEventType.flagsChanged.rawValue) |
-                        (1 << CGEventType.leftMouseDown.rawValue) | // 🌟 안전장치: 마우스 클릭 감지 추가
+                        (1 << CGEventType.leftMouseDown.rawValue) |
                         (1 << CGEventType.tapDisabledByTimeout.rawValue) |
                         (1 << CGEventType.tapDisabledByUserInput.rawValue)
 
@@ -76,6 +76,17 @@ class EventMonitor {
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
                 return autoreleasepool {
+                    // 🌟 [최종 수복: 백그라운드 스레드 크래시 방어벽 구축]
+                    // OS의 타이밍 꼬임이나 타임아웃 재활성화 경합으로 인해 이 콜백이
+                    // 백그라운드 스레드에서 유입될 경우, MainActor.assumeIsolated가 앱을 즉사시키는 현상을 원천 차단합니다.
+                    guard Thread.isMainThread else {
+                        dprint("⚠️ [EventMonitor] 콜백이 메인 스레드가 아닌 곳에서 감지되었습니다. 안전하게 바이패스합니다.")
+                        // 메인 스레드가 아닐 때는 격리된 인메모리 장부들을 건드릴 수 없으므로,
+                        // 입력을 차단하거나 조작하지 않고 시스템 원래의 키보드 이벤트를 그대로 흘려보내 앱의 생존을 보장합니다.
+                        return Unmanaged.passUnretained(event)
+                    }
+
+                    // 💡 위에서 100% 메인 스레드임이 검증되었으므로 안심하고 격리 해제를 집행합니다.
                     return MainActor.assumeIsolated { () -> Unmanaged<CGEvent>? in
                         
                         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -108,7 +119,7 @@ class EventMonitor {
                             }
                         }
 
-                        // 🌟 [수복 1] 시스템 긴급 제어는 어떤 예외 상황에서도 무조건 1순위로 작동해야 하므로 최상단으로 끌어올립니다.
+                        // 시스템 긴급 제어
                         if type == .keyDown {
                             let flags = event.flags
                             let isCommand = flags.contains(.maskCommand)
@@ -130,12 +141,12 @@ class EventMonitor {
                             }
                         }
 
-                        // 🌟 [수복 2] Caps Lock (Hyper Key) 엔진 역시 예외 앱 화면인지 아닌지 따지지 않고 상시 동작하도록 위로 올립니다.
+                        // Caps Lock (Hyper Key) 엔진 상시 동작
                         if snapshot.isHyperKeyEnabled {
                             if HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode) { return nil }
                         }
 
-                        // 3. 단축키 레코더 가로채기 (설정 화면 UI 보호용)
+                        // 단축키 레코더 가로채기
                         if let callback = EventMonitor.shared.shortcutRecordingCallback {
                             if type == .keyDown || type == .flagsChanged {
                                 if let nsEvent = NSEvent(cgEvent: event) {
@@ -147,13 +158,11 @@ class EventMonitor {
 
                         let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
 
-                        // 🌟 [핵심 수복: 무한 루프 차단] 앱이 스스로 발생시킨 가상 이벤트는
-                        // 장부를 오염시키거나 재귀에 빠지지 않도록 즉시 그대로 통과(Bypass)시킵니다.
                         if isSimulated {
                             return Unmanaged.passUnretained(event)
                         }
 
-                        // 🌟 [수복 3] 예외 등록 앱 필터링 (한영 전환키 VIP 패스 로직 추가)
+                        // 예외 등록 앱 필터링
                         if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
                             if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
                                 
@@ -162,13 +171,10 @@ class EventMonitor {
                                 let toggleFlags = NSEvent.ModifierFlags(rawValue: UInt(snapshot.toggleModifierFlags)).intersection(.deviceIndependentFlagsMask)
                                 
                                 if type == .keyDown || type == .flagsChanged {
-                                    // 🌟 [핵심 교정] CapsLock 상태가 섞여서 엄격한 비교가 실패하는 것을 막기 위해 캡스락 플래그를 걷어낸 순수 상태를 만듭니다.
                                     let cleanNsFlags = nsFlags.subtracting(.capsLock)
                                     let cleanToggleFlags = toggleFlags.subtracting(.capsLock)
                                     
-                                    // A. 일반 설정에서 지정한 커스텀 입력소스 전환키 확인
                                     if keyCode == snapshot.toggleKeyCode {
-                                        // 💡 CapsLock(57) 등 단일 수식어 자체가 전환키인 경우, 플래그 검사를 무시하고 무조건 VIP 패스 발급!
                                         if [57, 56, 60, 59, 62, 58, 61].contains(keyCode) {
                                             isLanguageSwitchKey = true
                                         } else if cleanNsFlags == cleanToggleFlags {
@@ -176,7 +182,6 @@ class EventMonitor {
                                         }
                                     }
                                     
-                                    // B. 기본 조합(Cmd/Opt/Ctrl + Space) 한영 전환키 확인
                                     if keyCode == 49 {
                                         if cleanNsFlags == .command && snapshot.isCmdActive { isLanguageSwitchKey = true }
                                         if cleanNsFlags == .control && snapshot.isCtrlActive { isLanguageSwitchKey = true }
@@ -190,7 +195,7 @@ class EventMonitor {
                             }
                         }
 
-                        // 8. 텍스트 대치(Snippets) 및 스마트 자동 오타 교정 코어 엔진
+                        // 텍스트 대치 및 스마트 자동 오타 교정 코어 엔진
                         if type == .keyDown {
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
@@ -202,8 +207,7 @@ class EventMonitor {
                                 if isPureSpace || isEnterTrigger {
                                     let currentBuffer = EventMonitor.shared.typingBuffer
 
-                                    // 피처 A: 단어 기반 텍스트 확장
-                                    if snapshot.isTextExpansionEnabled, // 🌟 'isTextExpansionEnabled'로 정정합니다.
+                                    if snapshot.isTextExpansionEnabled,
                                        let matchedRule = TextExpander.shared.findMatch(
                                             for: currentBuffer,
                                             dict: snapshot.textExpansionDict,
@@ -229,7 +233,6 @@ class EventMonitor {
                                         return nil
                                     }
 
-                                    // 피처 B: 영→한 자동 오타 교정
                                     if snapshot.isAutoTypoCorrectionEnabled {
                                         if currentBuffer.count >= 2 {
                                             if EventMonitor.shared.isCurrentLanguageEnglish() {
@@ -261,12 +264,8 @@ class EventMonitor {
                             }
                         }
 
-                        // 9. 일시정지 상태 최종 플래그 검증
                         if EventMonitor.shared.isPaused { return Unmanaged.passUnretained(event) }
 
-                        // 10. 수동 언어 전환 및 단축키 매칭 라우터 이관
-                        // 🌟 [핵심 수복] 하위 함수들이 CapsLock 찌꺼기 때문에 엄격한 일치 검사(==)에서
-                        // 튕겨내는 현상을 막기 위해, 캡스락 플래그를 완전히 세척하여 내려보냅니다.
                         var cleanRouterFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
                         cleanRouterFlags.remove(.capsLock)
 

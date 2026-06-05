@@ -96,19 +96,7 @@ class TypoConverter {
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
             
-            defer {
-                // 🌟 [문법 교정 수복] guard-return 대신 if 문으로 구조를 변경하여
-                // 컴파일러의 'defer 내 return 금지' 제약을 완벽하게 우회하고 유령 태스크를 격리합니다.
-                if self.correctionGeneration == myGeneration {
-                    if Task.isCancelled {
-                        self.forceCancelAndCleanup()
-                    } else {
-                        self.cleanupAfterSuccess()
-                    }
-                } else {
-                    dprint("👻 [GenerationGuard] 구세대(#\(myGeneration)) 태스크의 뒤늦은 무단 장부 변경 시도를 차단했습니다. 현 세대: #\(self.correctionGeneration)")
-                }
-            }
+            // ❌ [구형 defer 구역 철거] 'defer 내 await 금지' 제약을 피하기 위해 코드를 최하단으로 이동합니다.
             
             let currentBuffer = EventMonitor.shared.typingBuffer
             let localPB = NSPasteboard.general
@@ -193,6 +181,18 @@ class TypoConverter {
                 // 최후까지 실패 시 블록 지정된 텍스트를 확실하게 안전 해제
                 self.postKeyEvent(keyCode: 124, modifiers: [])
             }
+            
+            // 🌟 [수복 완료] Task 블록이 자연스럽게 도달하는 최하단 종착지입니다.
+            // 이 구역은 원래의 defer 역할을 완벽하게 대체하면서도, 합법적으로 await 정산 처리가 가능합니다.
+            if self.correctionGeneration == myGeneration {
+                if Task.isCancelled {
+                    self.forceCancelAndCleanup()
+                } else {
+                    await self.cleanupAfterSuccess()
+                }
+            } else {
+                dprint("👻 [GenerationGuard] 구세대(#\(myGeneration)) 태스크의 뒤늦은 무단 장부 변경 시도를 차단했습니다. 현 세대: #\(self.correctionGeneration)")
+            }
         }
 
         let currentAppID = AppMonitor.shared.activeAppBundleID
@@ -208,15 +208,16 @@ class TypoConverter {
 
     // MARK: - 정리 및 초기화 로직 (동시성 레이스 컨디션 방어망 구축 완료)
 
-    private func cleanupAfterSuccess() {
+    private func cleanupAfterSuccess() async {
         self.timeoutTask?.cancel()
         self.timeoutTask = nil
+        self.correctionTask = nil
         
-        // 🌟 [수복] 현재 실행 중인 Task가 자기 자신을 즉시 nil 처리하지 않고,
-        // 클로저가 완전히 종료되어 반환되는 최후의 시점까지 지연(defer)시킵니다.
-        defer { self.correctionTask = nil }
+        // 🌟 [핵심 교정] 클립보드가 시스템 레이어에서 확실하게 100% 원상 복구될 때까지
+        // 다음 줄로 넘어가지 않고 비동기식으로 안전하게 웨이팅(await)합니다.
+        await self.restoreClipboard()
         
-        self.restoreClipboard()
+        // 🌟 오직 클립보드가 완벽하게 안전지대로 돌아온 '최후의 순간'에 비로소 다음 교정 게이트를 개방합니다.
         self.isConvertingInProgress = false
     }
 
@@ -227,15 +228,11 @@ class TypoConverter {
         self.correctionTask?.cancel()
         self.correctionTask = nil
         
-        // 🌟 [수복 핵심 1] 상태 플래그는 비동기로 미루지 않고 동기적으로 즉각 해제합니다!
-        // @MainActor 함수 내부이므로, Task를 닫는 순간과 팻말을 뒤집는 순간이
-        // 중간에 아무도 끼어들 수 없는 단일 턴(원자적)으로 완벽하게 묶입니다.
         self.isConvertingInProgress = false
         
-        // 🌟 [수복 핵심 2] 시스템 통신이 필요한 클립보드 복구 작업만 다음 런루프로 넘깁니다.
-        // 논리적 꼬임 없이 UI 스레드의 부하만 안전하게 분산시키는 최고의 패턴입니다.
+        // 🌟 restoreClipboard가 async 함수가 되었으므로 안전하게 await 호출 구조로 정돈합니다.
         Task { @MainActor [weak self] in
-            self?.restoreClipboard()
+            await self?.restoreClipboard()
         }
     }
 
@@ -243,11 +240,15 @@ class TypoConverter {
         self.savedClipboardString = NSPasteboard.general.string(forType: .string)
     }
 
-    private func restoreClipboard() {
+    // 🌟 [수복 완료] async 키워드를 주입하여 정식 비동기 계약 함수로 격상합니다.
+    private func restoreClipboard() async {
         if let saved = savedClipboardString {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(saved, forType: .string)
             savedClipboardString = nil // 메모리 캡처 자원 해제
+            
+            // 💡 OS 클립보드 서브시스템이 안착할 수 있도록 미세하게 스레드 양보(Yield) 처리
+            await Task.yield()
         }
     }
 

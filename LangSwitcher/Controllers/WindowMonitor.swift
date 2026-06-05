@@ -100,8 +100,16 @@ class WindowMonitor {
             // 2. 🌟 [수복 지점] 런루프 등록 직후, 찰나의 취소를 감지하는 최후의 검문소를 세웁니다.
             // 이 순간에 Task가 취소되었거나 창(PID)이 바뀌었다면, 즉시 런루프에서 끌어내려 좀비 누수를 막습니다.
             guard !Task.isCancelled, self.currentPID == pid else {
-                dprint("⚠️ [WindowMonitor] 런루프 등록 직후 취소 감지됨 — 옵저버를 안전하게 회수 및 폐기합니다.")
-                CFRunLoopRemoveSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
+                dprint("🧹 [WindowMonitor] observeApp 태스크 취소 감지. 등록된 시스템 AX 알림 후크를 강제 소각합니다.")
+                
+                // 1. OS 커널 장부에 등록된 3개의 후크를 명시적으로 파괴합니다.
+                AXObserverRemoveNotification(newObs, appElement, kAXFocusedWindowChangedNotification as CFString)
+                AXObserverRemoveNotification(newObs, appElement, kAXTitleChangedNotification as CFString)
+                AXObserverRemoveNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString)
+                
+                // 2. 런루프 소스를 안전하게 제거합니다.
+                let src = AXObserverGetRunLoopSource(newObs)
+                CFRunLoopRemoveSource(mainRunLoop, src, .commonModes)
                 return
             }
 
@@ -191,13 +199,20 @@ class WindowMonitor {
         }
     }
 
-    @objc private func inputSourceChanged() {
-        guard let element = activeWindowElement, let windowID = getWindowID(from: element),
+    // 분산 알림센터 등록 매핑 핸들러
+    @objc private func inputSourceChanged(_ notification: Notification) {
+        // 🌟 [Swift 6 순정 사양] Task와 글로벌 액터 선언을 결합하여 컴파일러에게
+        // "이 블록은 무조건 메인 액터 위에서 안전하게 돌릴 거야"라고 정식 보증합니다.
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+
+            guard let element = activeWindowElement, let windowID = getWindowID(from: element),
               let latestID = self.getCurrentInputSourceID() else { return }
 
-        let currentPID = self.currentPID
-        if self.windowMemory.getLanguage(for: windowID) != nil {
-            self.windowMemory.setLanguage(latestID, pid: currentPID, for: windowID)
+            let currentPID = self.currentPID
+            if self.windowMemory.getLanguage(for: windowID) != nil {
+                self.windowMemory.setLanguage(latestID, pid: currentPID, for: windowID)
+            }
         }
     }
 

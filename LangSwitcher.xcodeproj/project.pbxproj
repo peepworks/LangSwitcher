@@ -408,6 +408,7 @@
 				129E051C2F657B5200F34ABE /* Sources */,
 				129E051D2F657B5200F34ABE /* Frameworks */,
 				129E051E2F657B5200F34ABE /* Resources */,
+				1294CDBD2FD294D200F0DE11 /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -505,6 +506,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1294CDBD2FD294D200F0DE11 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# 🌟 Debug(개발) 빌드 모드일 때만 안전하게 TCC 장부를 포맷합니다.\nif [ \"$CONFIGURATION\" = \"Debug\" ]; then\n    echo \"🔄 [TCC_Reaper] 개발자 미서명 빌드로 인한 유령 권한 누적을 방지하기 위해 TCC 장부를 소각합니다.\"\n    \n    # 1. 손쉬운 사용(Accessibility) 권한 초기화\n    tccutil reset Accessibility \"$PRODUCT_BUNDLE_IDENTIFIER\"\n    \n    # 2. 입력 모니터링(Input Monitoring) 권한 초기화 (필요시 함께 동작)\n    tccutil reset ListenEvent \"$PRODUCT_BUNDLE_IDENTIFIER\"\n    tccutil reset PostEvent \"$PRODUCT_BUNDLE_IDENTIFIER\"\n    \n    echo \"✅ [TCC_Reaper] TCC 데이터베이스 초기화 완료: $PRODUCT_BUNDLE_IDENTIFIER\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		129E051C2F657B5200F34ABE /* Sources */ = {
@@ -744,7 +766,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.9.0;
+				MARKETING_VERSION = 0.9.1;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;
@@ -784,7 +806,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = 0.9.0;
+				MARKETING_VERSION = 0.9.1;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.peepboy.LangSwitcher;
