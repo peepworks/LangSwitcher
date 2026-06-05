@@ -20,12 +20,12 @@
 
 import Foundation
 
-/// 디버그 모드에서만 출력되는 커스텀 프린트 함수
-/// nonisolated 수식어를 통해 백그라운드 차트 연산이나 스레드 무관하게 어디서든 안전하게 호출됩니다.
-nonisolated func dprint(_ items: Any..., file: String = #file, line: Int = #line) {
+@inline(__always)
+nonisolated func dprint(_ message: @autoclosure () -> Any, file: String = #file, line: Int = #line) {
     #if DEBUG
+    // 💡 디버그 빌드일 때만 클로저(message())를 실행하여 실제 데이터를 구워냅니다.
     let fileName = (file as NSString).lastPathComponent
-    let output = items.map { "\($0)" }.joined(separator: " ")
+    let output = message()
     print("🐞 [\(fileName):\(line)] \(output)")
     #endif
 }

@@ -406,10 +406,16 @@ class SettingsManager: ObservableObject {
     // MARK: - 고성능 로그 주입 아키텍처
     @MainActor
     func addLog(_ log: ActionLog) {
+        // 1. 뒤에 붙이기는 언제나 비용이 없는 완벽한 O(1)
         self.recentLogs.append(log)
+        
+        // 2. 🌟 [최종 최적화 수복]
+        // 550개 임계치 도달 시, 완전히 새로운 배열을 힙에 할당하는 Array(suffix)를 버리고
+        // 기존 메모리 버퍼 내부에서 memmove 기반으로 앞의 50개만 즉시 밀어버립니다. (힙 할당 오버헤드 0%)
         if self.recentLogs.count > maxLogCount + 50 {
-            self.recentLogs = Array(self.recentLogs.suffix(maxLogCount))
-            dprint("🧹 [LogEngine] 버퍼 한도 유예 통과: 50건의 로그를 일괄 suffix 트리밍했습니다.")
+            self.recentLogs.removeFirst(50)
+            
+            dprint("🧹 [LogEngine] 메모리 재할당 없이 기존 버퍼 내에서 50건의 로그를 제자리(In-place) 트리밍했습니다.")
         }
     }
     

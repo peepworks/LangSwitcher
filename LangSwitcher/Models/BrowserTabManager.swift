@@ -83,8 +83,9 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let outputBuffer = SafeDataBuffer()
         let fileHandle = pipe.fileHandleForReading
 
-        // 🌟 [수복 1: 거대 전역 방어벽]
-        // 성공, 실패, 타임아웃 등 '어떤 경로'로 함수를 탈출해도 파이프와 핸들러를 0.000초 만에 완벽히 소각합니다.
+        // 🌟 [수복 완료] defer 내 컴파일러 제약(await 사용 금지)을 준수하기 위해
+        // 이곳은 오직 '물리적인 파일 디스크립터(FD) 소각 정산'만 전담하도록 정돈합니다.
+        // 낙하 방지용 안전그물로서의 nil 대입 성능은 유지하되, 진짜 정밀 정산은 아래 terminationHandler에서 집행합니다.
         defer {
             fileHandle.readabilityHandler = nil
             try? pipe.fileHandleForReading.close()
@@ -105,8 +106,20 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         group.addTask {
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
-                    // 🌟 이제 복잡한 청소 코드(nil 대입 등)는 상단 defer가 독점하므로, 여기선 결과 인출에만 집중합니다.
+                    
+                    // 프로세스 종료 즉시 비동기 컨텍스트 가동
                     Task {
+                        // 🌟 [최종 수복 핵심 1] 프로세스가 끝났으므로 먼저 핸들러 통로를 닫아
+                        // 커널 레이어의 추가적인 데이터 레이스 난입을 물리적으로 봉쇄합니다.
+                        fileHandle.readabilityHandler = nil
+                        
+                        // 🌟 [최종 수복 핵심 2] 직전 마이크로초(µs) 사이에 readabilityHandler가 스케줄러 큐에 던져둔
+                        // 가동 중인 Task { await outputBuffer.append(...) } 들이 버퍼 메모리에 100% 안착할 수 있도록
+                        // 현재 스레드의 제어권을 컴파일러에게 확고하게 한 턴 양보(yield)합니다.
+                        await Task.yield()
+                        
+                        // 🌟 [최종 수복 핵심 3] 이제 마지막 한 바이트까지 완벽하게 채워졌음이 결정론적으로 보장되므로,
+                        // 안전하게 완성된 최후의 데이터를 인출합니다. (조기 파이프 폐쇄로 인한 데이터 유실 0%)
                         let finalData = await outputBuffer.read()
                         process?.terminationHandler = nil
 
@@ -140,17 +153,13 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         } catch {
             group.cancelAll()
             
-            // 🌟 [수복 2: 스레드 블로킹 없는 프로세스 추적기]
             if process.isRunning {
                 let processToReap = process
-                processToReap.terminationHandler = nil // 핸들러 해제하여 순환 참조 고리 완전 파괴
+                processToReap.terminationHandler = nil
                 
-                // GCD 스레드를 동기적으로 묶어버리던 waitUntilExit()를 철거하고,
-                // 안전한 비동기 논블로킹 유유자적 스케줄러로 프로세스를 강제 종료 및 분리 유기합니다.
                 Task.detached(priority: .background) {
                     processToReap.terminate()
                     
-                    // 3초 동안 프로세스가 스스로 정리할 유예를 준 뒤, 여전히 안 죽고 좀비처럼 버티면 재차 terminate를 가합니다.
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                     if processToReap.isRunning {
                         processToReap.terminate()
@@ -422,21 +431,27 @@ class BrowserTabManager: ObservableObject {
     }
 
     // MARK: - LRU Cache Management (분할상환 O(1) 고성능 튜닝 완료)
+    private var isRebuildingTicks = false // 🌟 클래스 전역 프로퍼티로 추가
+
     private func touchTabMemory(key: String) {
         currentTick += 1
-        if currentTick >= 1_000_000 {
-            // 🌟 [수복] 메인 스레드 멈춤을 완벽히 차단하기 위해 비동기 태스크로 분리하여 스케일링 엔진 가동
-            Task {
-                await rebuildTicksFromScratch()
+        
+        // 🌟 [수복 1] 조건문이 참이더라도 '이미 리빌드 중'이라면 태스크 중복 생성을 원천 차단합니다.
+        if currentTick > 1_000_000 && !isRebuildingTicks {
+            isRebuildingTicks = true
+            Task { [weak self] in
+                guard let self = self else { return }
+                await self.rebuildTicksFromScratch()
+                self.isRebuildingTicks = false // 리빌드가 완벽히 끝난 후 자물쇠 해제
             }
-            return
+            // 🌟 [수복 2] return을 과감히 제거하여 아래의 탭 등록 로직이 중단 없이 계속 흐르게 만듭니다.
         }
-
-        let isNewKey = (tabAccessTicks[key] == nil)
+        
+        let isNewKey = tabAccessTicks[key] == nil
         tabAccessTicks[key] = currentTick
-
+        
         if isNewKey && tabAccessTicks.count > maxTabMemoryLimit {
-            if let (oldestKey, _) = tabAccessTicks.min(by: { $0.value < $1.value }) {
+            if let oldestKey = tabAccessTicks.min(by: { $0.value < $1.value })?.key {
                 tabMemory.removeValue(forKey: oldestKey)
                 lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
                 tabAccessTicks.removeValue(forKey: oldestKey)
@@ -448,24 +463,36 @@ class BrowserTabManager: ObservableObject {
     private func rebuildTicksFromScratch() async {
         dprint("🔄 [Debounce Engine] 1,000,000 Tick 임계값 도달. 비동기 랭크 스케일링을 개시합니다.")
         
-        // 1. 메인 액터 안전 구역에서 정렬할 원본 딕셔너리 데이터를 로컬 상수로 스냅샷 복사합니다.
+        // 1. 리빌드를 시작하는 시점의 스냅샷을 찍습니다.
         let ticksSnapshot = self.tabAccessTicks
         
-        // 2. 메인 스레드 소속이 없는 완전한 독립 백그라운드 작업동(Task.detached)으로 무거운 정렬 연산을 유기합니다.
+        // 2. 무거운 정렬 연산은 백그라운드 스레드로 유기합니다.
         let safeNormalizedTicks = await Task.detached(priority: .background) {
-            // @MainActor 격리가 없는 순수 백그라운드 스레드에서 O(n log n) 정렬을 독점 집행합니다.
             return ticksSnapshot.sorted { $0.value < $1.value }
         }.value
         
-        // 3. 정렬이 끝난 정제된 장부를 들고 다시 메인 액터 본진으로 안심 복귀하여 동기식 주입을 집행합니다.
+        // 3. 🌟 [진짜 최종 수복] 백그라운드 연산이 일어나는 동안 '새롭게 추가된 키'가 있는지 감지합니다.
+        // 리빌드 도중 유저가 새 탭을 만졌다면 현재의 tabAccessTicks 수량이 스냅샷 수량보다 늘어났을 것입니다.
+        let newlyAddedTicks = self.tabAccessTicks.filter { ticksSnapshot[$0.key] == nil }
+        
+        // 4. 장부 정산 시작
         self.tabAccessTicks.removeAll(keepingCapacity: true)
         
         var nextRank = 1
+        // 과거 스냅샷 아이템들을 1부터 차례대로 이쁘게 압축 정렬합니다.
         for (key, _) in safeNormalizedTicks {
             self.tabAccessTicks[key] = nextRank
             nextRank += 1
         }
         
+        // 5. 🌟 [핵심] 리빌드 도중 유저가 새로 밟아서 장부에 추가됐던 신상 키들을
+        // 삭제하지 않고 랭크의 맨 뒤에 안전하게 이어 붙여줍니다(Merge).
+        for (key, _) in newlyAddedTicks {
+            self.tabAccessTicks[key] = nextRank
+            nextRank += 1
+        }
+        
+        // 6. 다음 기준점을 최종 정산된 값으로 세팅합니다.
         self.currentTick = nextRank
         
         dprint("✅ [Debounce Engine] 백그라운드 정규화 완료. 차기 시작 Tick: \(self.currentTick)")

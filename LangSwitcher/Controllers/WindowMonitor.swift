@@ -37,6 +37,20 @@ class WindowMonitor {
     var currentPID: pid_t = 0
     var activeWindowElement: AXUIElement?
 
+    // 🌟 [최종 최적화 수복 1] 런타임 1회 평가 static 캐싱 저장소 구축
+    // Swift static let의 lazy 특성을 활용하여 dlsym 검색 연산을 최초 1회로 제한합니다.
+    // 파트너님 오리지널 코드의 언더바("_") 규격을 완벽하게 계승하여 링크 에러를 방지합니다.
+    private static let axGetWindowFunc: AXUIElementGetWindowFunc? = {
+        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
+        guard let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") else {
+            #if DEBUG
+            print("🚨 [WindowMonitor] Critical: _AXUIElementGetWindow 심볼 조회에 실패했습니다.")
+            #endif
+            return nil
+        }
+        return unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
+    }()
+
     private init() {
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(inputSourceChanged),
@@ -61,7 +75,7 @@ class WindowMonitor {
         guard self.currentPID != pid else { return }
         self.currentPID = pid
 
-        // 🌟 [안전망 1] 기존에 장부에 기록되어 있던 옵저버 자원이 있다면 메인 런루프에서 완벽히 퇴출
+        // [안전망 1] 기존에 장부에 기록되어 있던 옵저버 자원이 있다면 메인 런루프에서 완벽히 퇴출
         if let observer = self.axObserver, let rl = self.observerRunLoop {
             CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
             self.axObserver = nil
@@ -93,21 +107,18 @@ class WindowMonitor {
             AXObserverAddNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString, refCon)
 
             let mainRunLoop = CFRunLoopGetMain()
-                        
+                                
             // 1. 런루프(컨베이어 벨트)에 감시자를 먼저 올립니다.
             CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
 
-            // 2. 🌟 [수복 지점] 런루프 등록 직후, 찰나의 취소를 감지하는 최후의 검문소를 세웁니다.
-            // 이 순간에 Task가 취소되었거나 창(PID)이 바뀌었다면, 즉시 런루프에서 끌어내려 좀비 누수를 막습니다.
+            // 2. [수복 지점] 런루프 등록 직후, 찰나의 취소를 감지하는 최후의 검문소를 세웁니다.
             guard !Task.isCancelled, self.currentPID == pid else {
                 dprint("🧹 [WindowMonitor] observeApp 태스크 취소 감지. 등록된 시스템 AX 알림 후크를 강제 소각합니다.")
                 
-                // 1. OS 커널 장부에 등록된 3개의 후크를 명시적으로 파괴합니다.
                 AXObserverRemoveNotification(newObs, appElement, kAXFocusedWindowChangedNotification as CFString)
                 AXObserverRemoveNotification(newObs, appElement, kAXTitleChangedNotification as CFString)
                 AXObserverRemoveNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString)
                 
-                // 2. 런루프 소스를 안전하게 제거합니다.
                 let src = AXObserverGetRunLoopSource(newObs)
                 CFRunLoopRemoveSource(mainRunLoop, src, .commonModes)
                 return
@@ -151,7 +162,6 @@ class WindowMonitor {
         var traceToRecord: DecisionTrace? = nil
 
         if let data = self.windowMemory.getLanguage(for: windowID) {
-            // 1. 이미 장부에 기록이 있는 창인 경우 복구 또는 앱 규칙 분기 실행
             if snapshot.isWindowMemoryEnabled {
                 targetLang = data.language
                 traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
@@ -161,14 +171,12 @@ class WindowMonitor {
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
         } else {
-            // 2. 처음 발견된 새로운 창인 경우 앱 특정 규칙이 있는지 우선 대입
             if snapshot.isAppSpecificEnabled,
                let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
                 targetLang = appLang
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
 
-            // O(1) 성능 캐시 장부에 안전하게 단독 노드 신규 등록
             self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
         }
 
@@ -190,7 +198,6 @@ class WindowMonitor {
 
     func handleWindowTitleChanged(element: AXUIElement) {
         let snapshot = SettingsManager.shared.snapshot
-        // 🌟 [버그 수복] 브라우저 탭 장부 메모리 혹은 도메인 모드가 켜져있을 때 모두 신호가 통과하도록 라우터를 개방합니다.
         if snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled {
             if let app = NSRunningApplication(processIdentifier: self.currentPID),
                let bundleID = app.bundleIdentifier, let appName = app.localizedName {
@@ -199,10 +206,7 @@ class WindowMonitor {
         }
     }
 
-    // 분산 알림센터 등록 매핑 핸들러
     @objc private func inputSourceChanged(_ notification: Notification) {
-        // 🌟 [Swift 6 순정 사양] Task와 글로벌 액터 선언을 결합하여 컴파일러에게
-        // "이 블록은 무조건 메인 액터 위에서 안전하게 돌릴 거야"라고 정식 보증합니다.
         Task { @MainActor [weak self] in
             guard let self = self else { return }
 
@@ -226,11 +230,11 @@ class WindowMonitor {
         self.windowMemory.clear()
     }
 
+    // 🌟 [최종 최적화 수복 2] 0ms 레이턴시 심볼 무혈 정산 버전
+    // 기존에 매번 호출되던 dyld 수색 구문을 걷어내고, static 상수에 박혀있는 물리 주소로 직결 호출합니다.
     private func getWindowID(from element: AXUIElement) -> CGWindowID? {
         var windowID: CGWindowID = 0
-        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
-        if let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") {
-            let getWindow = unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
+        if let getWindow = Self.axGetWindowFunc {
             if getWindow(element, &windowID) == .success { return windowID }
         }
         return CGWindowID(element.hashValue)
