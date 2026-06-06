@@ -45,12 +45,37 @@ class HyperKeyManager {
 
     private init() {}
 
+    @MainActor
     func updateState(isEnabled: Bool) {
-        setupHardwareMapping(enable: isEnabled)
+        let setTask = Process()
+        setTask.launchPath = "/usr/bin/hidutil"
         
-        stateLock.lock()
-        if !isEnabled { isHyperDown = false }
-        stateLock.unlock()
+        // 유저 설정에 따라 Caps Lock을 하이퍼키 조합으로 매핑하거나, 원래대로 순정 복구하는 아규먼트 배치
+        let propertyArgument = isEnabled ? "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":0x700000039,\"HIDKeyboardModifierMappingDst\":0x700000028}]}" : "{\"UserKeyMapping\":[]}"
+        setTask.arguments = ["property", "--set", propertyArgument]
+
+        // 🌟 [최종 수복: 비동기 프로세스 트래킹 요새 구축]
+        // 메인 스레드를 멈춰 세우던 waitUntilExit()를 완전히 소각하고,
+        // OS 커널이 백그라운드에서 처리를 끝내면 깨어나는 비동기 콜백을 주입합니다.
+        setTask.terminationHandler = { proc in
+            if proc.terminationStatus != 0 {
+                dprint("⚠️ [HyperKeyManager] hidutil --set 실패, Status: \(proc.terminationStatus)")
+            }
+            
+            // 강한 순환 참조 걱정 없이 내부 매개변수 메모리를 청정하게 해제합니다.
+            proc.terminationHandler = nil
+        }
+
+        do {
+            // 🚀 프로세스를 실행합니다. 이 명령은 메인 스레드를 단 1ms도 붙잡지 않습니다.
+            try setTask.run()
+            
+            // ❌ [철거 완료] 메인 스레드를 마비시키던 동기식 대기 장치를 완벽히 적출했습니다.
+            // setTask.waitUntilExit()
+            
+        } catch {
+            dprint("❌ [HyperKeyManager] hidutil 프로세스 기동 자체에 실패했습니다: \(error.localizedDescription)")
+        }
     }
 
     // 🌟 [최종 수복 완결본] defer 결속 구조를 통해 모든 연쇄 파이프 누수를 100% 원천 차단합니다.

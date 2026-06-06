@@ -108,17 +108,40 @@ class EdgeGlowManager {
 
             guard let self = self, self.currentGlowID == myID else { return }
 
-            // Continuation 브릿지를 통해 비동기 애니메이션을 직렬 구조로 동기화
-            await withCheckedContinuation { continuation in
-                NSAnimationContext.runAnimationGroup({ context in
-                    context.duration = 0.3
-                    window.animator().alphaValue = 0
-                }, completionHandler: {
-                    // 💡 오직 애니메이션이 100% 완료된 '이 순간'에만 딱 한 번 resume을 선언합니다.
-                    continuation.resume()
-                })
-                
-                // ❌ [체크포인트] 이 구역(하단)에는 그 어떤 continuation.resume()도 절대 존재하면 안 됩니다!
+            // 🌟 [최종 최적화 수복 구역]
+            // CheckedContinuation의 이중 호출 크래시 및 영구 프리즈 트랩을 방어하기 위해
+            // 원자적 격리 플래그와 낙하산 타임아웃 레이싱 아키텍처를 결합 구축합니다.
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    // 메인 스레드 상주 이중 정산 방어 자물쇠
+                    var isResumed = false
+                    
+                    // 경로 A: AppKit 정상 애니메이션 완료 핸들러 진입점
+                    NSAnimationContext.runAnimationGroup({ context in
+                        context.duration = 0.3
+                        window.animator().alphaValue = 0
+                    }, completionHandler: {
+                        MainActor.assumeIsolated {
+                            // 타임아웃 가드가 먼저 스레드를 깨웠다면 중복 resume 없이 생략 퇴근합니다.
+                            guard !isResumed else { return }
+                            isResumed = true
+                            continuation.resume()
+                        }
+                    })
+                    
+                    // 경로 B: AppKit 완료 콜백 유실 방지용 0.5초 비상 타임아웃 가드
+                    // 애니메이션 시간(0.3초) 보다 약간의 버퍼를 둔 뒤, 런타임이 영구 동결되는 것을 막습니다.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        guard !isResumed else { return }
+                        isResumed = true
+                        
+                        continuation.resume(throwing: NSError(domain: "EdgeGlowManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "AppKit animation completion skipped safely via timeout safety net."]))
+                    }
+                }
+            } catch {
+                // OS 환경 변수로 완료 핸들러가 누락되었을 때 도달하는 안전지대
+                dprint("👻 [EdgeGlowManager] AppKit 애니메이션 완료 콜백 유실 감지: 세이프티 가드가 대기 스레드를 강제 구출했습니다.")
+                window.alphaValue = 0 // 창 투명도를 강제로 정산하여 물리적 연산 마무리
             }
 
             // 애니메이션이 무사히 끝난 후 메인 액터 보장 안전지대에서 최종 자원 반납

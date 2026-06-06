@@ -54,7 +54,7 @@ final class DecisionTraceManager: ObservableObject {
 
     /// 모든 기록을 삭제합니다.
     func clear() {
-        // 🌟 여기도 마찬가지로 DispatchQueue.main.async를 싹 지워버려도 됩니다.
-        self.recentTraces.removeAll()
+        self.recentTraces.removeAll(keepingCapacity: false)
+        dprint("🧹 [TraceManager] 메인 액터 동기 문맥에서 의사결정 추적 장부를 즉시 완전 소각했습니다.")
     }
 }

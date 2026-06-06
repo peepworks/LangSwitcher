@@ -40,8 +40,7 @@ class TypoConverter {
     func detectAndConvert(englishInput: String) -> String? {
         guard englishInput.count >= 2 else { return nil }
         
-        // 🌟 [핵심 수복 1] 영문자가 단 하나도 없다면 오타 교정 대상이 아니므로 즉시 차단!
-        // 이 가드가 없으면 변환된 '순수 한글'을 오타로 착각하여 스페이스바를 누를 때마다 백스페이스로 지워버립니다.
+        // 영문자가 단 하나도 없다면 오타 교정 대상이 아니므로 즉시 차단!
         let containsEnglish = englishInput.contains { $0.isASCII && $0.isLetter }
         guard containsEnglish else { return nil }
         
@@ -71,7 +70,7 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 수동 단축키 오타 교정 (문법 오류 수정 및 세대 레이스 컨디션 방어 완료)
+    // MARK: - 수동 단축키 오타 교정 (마스터 do-catch 요새 구축 완료)
     func executeCorrection() {
         // 1. 원자적 자물쇠 체크
         guard !isConvertingInProgress else {
@@ -96,96 +95,105 @@ class TypoConverter {
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
             
-            // ❌ [구형 defer 구역 철거] 'defer 내 await 금지' 제약을 피하기 위해 코드를 최하단으로 이동합니다.
+            var wasCancelled = false
             
-            let currentBuffer = EventMonitor.shared.typingBuffer
-            let localPB = NSPasteboard.general
-            var selectedText = ""
-            var didFallback = false
-            var currentChangeCount = initialCount
-            
-            // [전략 1] 정밀 타겟팅 (Shift + Left Arrow 기반 선택)
-            if !currentBuffer.isEmpty {
-                let length = currentBuffer.count
-                for _ in 0..<length {
-                    self.postKeyEvent(keyCode: 123, modifiers: .maskShift)
-                    try? await Task.sleep(nanoseconds: 2_000_000)
-                }
+            // 🌟 [최종 수복: 마스터 do-catch 통합 방어벽 수립]
+            // 내부의 모든 대기 구문을 'try await' 단일 규격으로 정산합니다.
+            // 어느 지점에서든 Task가 취소되면 즉시 catch 블록으로 탈출하여 좀비 연산을 0ms만에 소각합니다.
+            do {
+                let currentBuffer = EventMonitor.shared.typingBuffer
+                let localPB = NSPasteboard.general
+                var selectedText = ""
+                var didFallback = false
+                var currentChangeCount = initialCount
                 
-                self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
-                
-                for _ in 0..<30 {
-                    try? await Task.sleep(nanoseconds: 10_000_000)
-                    if localPB.changeCount != currentChangeCount { break }
-                }
-                
-                if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
-                    selectedText = text
-                    currentChangeCount = localPB.changeCount
-                } else {
-                    didFallback = true
-                }
-            } else {
-                // 버퍼가 비어있다면 마우스 드래그 상태 확인
-                self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
-                for _ in 0..<30 {
-                    try? await Task.sleep(nanoseconds: 10_000_000)
-                    if localPB.changeCount != currentChangeCount { break }
-                }
-                
-                if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
-                    if text.hasSuffix("\n") || text.hasSuffix("\r\n") { didFallback = true }
-                    else {
+                // [전략 1] 정밀 타겟팅 (Shift + Left Arrow 기반 선택)
+                if !currentBuffer.isEmpty {
+                    let length = currentBuffer.count
+                    for _ in 0..<length {
+                        self.postKeyEvent(keyCode: 123, modifiers: .maskShift)
+                        try await Task.sleep(nanoseconds: 2_000_000) // try? 제거 완료
+                    }
+                    
+                    self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
+                    
+                    for _ in 0..<30 {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                        if localPB.changeCount != currentChangeCount { break }
+                    }
+                    
+                    if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
                         selectedText = text
                         currentChangeCount = localPB.changeCount
+                    } else {
+                        didFallback = true
                     }
-                } else { didFallback = true }
-            }
-            
-            // [전략 2] 정밀 타겟팅 실패 시 네이티브 단어 선택 폴백
-            if didFallback && selectedText.isEmpty {
-                self.postKeyEvent(keyCode: 124, modifiers: [])
-                try? await Task.sleep(nanoseconds: 10_000_000)
-                
-                self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift]) // Opt+Shift+Left
-                try? await Task.sleep(nanoseconds: 20_000_000)
-                
-                self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
-                for _ in 0..<30 {
-                    try? await Task.sleep(nanoseconds: 10_000_000)
-                    if localPB.changeCount != currentChangeCount { break }
+                } else {
+                    // 버퍼가 비어있다면 마우스 드래그 상태 확인
+                    self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
+                    for _ in 0..<30 {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                        if localPB.changeCount != currentChangeCount { break }
+                    }
+                    
+                    if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
+                        if text.hasSuffix("\n") || text.hasSuffix("\r\n") { didFallback = true }
+                        else {
+                            selectedText = text
+                            currentChangeCount = localPB.changeCount
+                        }
+                    } else { didFallback = true }
                 }
                 
-                if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
-                    selectedText = text
+                // [전략 2] 정밀 타겟팅 실패 시 네이티브 단어 선택 폴백
+                if didFallback && selectedText.isEmpty {
+                    self.postKeyEvent(keyCode: 124, modifiers: [])
+                    try await Task.sleep(nanoseconds: 10_000_000) // try? 제거 완료
+                    
+                    self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift]) // Opt+Shift+Left
+                    try await Task.sleep(nanoseconds: 20_000_000) // try? 제거 완료
+                    
+                    self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
+                    
+                    // 🌟 [수복 지점] 폴백 경로 내부의 세 번째 루프까지 빠짐없이 try await 규격으로 교체
+                    for _ in 0..<30 {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                        if localPB.changeCount != currentChangeCount { break }
+                    }
+                    
+                    if localPB.changeCount != currentChangeCount, let text = localPB.string(forType: .string), !text.isEmpty {
+                        selectedText = text
+                    }
                 }
+                
+                // 4. 최종 변환 및 덮어쓰기 집행
+                if !selectedText.isEmpty {
+                    let convertedText = self.convertString(selectedText)
+                    localPB.clearContents()
+                    localPB.setString(convertedText, forType: .string)
+                    
+                    try await Task.sleep(nanoseconds: 20_000_000) // try? 제거 완료
+                    self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
+                    
+                    let delay = self.getClipboardRestoreDelay(for: AppMonitor.shared.activeAppBundleID)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) // try? 제거 완료
+                    
+                    EventMonitor.shared.clearTypingBuffer()
+                    for char in convertedText {
+                        EventMonitor.shared.appendToTypingBuffer(char)
+                    }
+                } else {
+                    self.postKeyEvent(keyCode: 124, modifiers: [])
+                }
+            } catch {
+                wasCancelled = true
+                dprint("🛑 [TypoConverter] 클립보드 폴링/대기 도중 태스크 취소가 감지되어 즉시 안전 탈출했습니다.")
             }
             
-            // 4. 최종 변환 및 덮어쓰기 집행
-            if !selectedText.isEmpty {
-                let convertedText = self.convertString(selectedText)
-                localPB.clearContents()
-                localPB.setString(convertedText, forType: .string)
-                
-                try? await Task.sleep(nanoseconds: 20_000_000)
-                self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
-                
-                let delay = self.getClipboardRestoreDelay(for: AppMonitor.shared.activeAppBundleID)
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                
-                EventMonitor.shared.clearTypingBuffer()
-                for char in convertedText {
-                    EventMonitor.shared.appendToTypingBuffer(char)
-                }
-            } else {
-                // 최후까지 실패 시 블록 지정된 텍스트를 확실하게 안전 해제
-                self.postKeyEvent(keyCode: 124, modifiers: [])
-            }
-            
-            // 🌟 [수복 완료] Task 블록이 자연스럽게 도달하는 최하단 종착지입니다.
-            // 이 구역은 원래의 defer 역할을 완벽하게 대체하면서도, 합법적으로 await 정산 처리가 가능합니다.
+            // 🌟 [최종 수복 종착지 정산 가드]
+            // 정상 종료했거나 에러를 통해 탈출했거나 관계없이, 현재 세대가 완벽하다면 원자적 후속 정산을 안전하게 집행합니다.
             if self.correctionGeneration == myGeneration {
-                if Task.isCancelled {
+                if Task.isCancelled || wasCancelled {
                     self.forceCancelAndCleanup()
                 } else {
                     await self.cleanupAfterSuccess()
@@ -207,17 +215,12 @@ class TypoConverter {
     }
 
     // MARK: - 정리 및 초기화 로직 (동시성 레이스 컨디션 방어망 구축 완료)
-
     private func cleanupAfterSuccess() async {
         self.timeoutTask?.cancel()
         self.timeoutTask = nil
         self.correctionTask = nil
         
-        // 🌟 [핵심 교정] 클립보드가 시스템 레이어에서 확실하게 100% 원상 복구될 때까지
-        // 다음 줄로 넘어가지 않고 비동기식으로 안전하게 웨이팅(await)합니다.
         await self.restoreClipboard()
-        
-        // 🌟 오직 클립보드가 완벽하게 안전지대로 돌아온 '최후의 순간'에 비로소 다음 교정 게이트를 개방합니다.
         self.isConvertingInProgress = false
     }
 
@@ -228,9 +231,11 @@ class TypoConverter {
         self.correctionTask?.cancel()
         self.correctionTask = nil
         
+        self.isInProgressCleanup()
+    }
+
+    private func isInProgressCleanup() {
         self.isConvertingInProgress = false
-        
-        // 🌟 restoreClipboard가 async 함수가 되었으므로 안전하게 await 호출 구조로 정돈합니다.
         Task { @MainActor [weak self] in
             await self?.restoreClipboard()
         }
@@ -240,14 +245,12 @@ class TypoConverter {
         self.savedClipboardString = NSPasteboard.general.string(forType: .string)
     }
 
-    // 🌟 [수복 완료] async 키워드를 주입하여 정식 비동기 계약 함수로 격상합니다.
     private func restoreClipboard() async {
         if let saved = savedClipboardString {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(saved, forType: .string)
-            savedClipboardString = nil // 메모리 캡처 자원 해제
+            savedClipboardString = nil
             
-            // 💡 OS 클립보드 서브시스템이 안착할 수 있도록 미세하게 스레드 양보(Yield) 처리
             await Task.yield()
         }
     }
@@ -286,9 +289,8 @@ class TypoConverter {
         return hasKorean ? convertToEn(text) : convertToKo(text)
     }
 
-    // MARK: - 두벌식 자모 오토마타 변환 코어 엔진 (이하 동일 유지)
+    // MARK: - 두벌식 자모 오토마타 변환 코어 엔진
     func convertToKo(_ englishText: String) -> String {
-        // 🌟 [배열 수복] 오염된 "CCc"를 제거하고 정확한 19개의 초성 규격으로 원복했습니다.
         let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
         let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
         let jongs = Array(" ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
@@ -376,18 +378,17 @@ class TypoConverter {
         let doubleJungsMap: [Character: String] = ["ㅘ":"hk", "ㅙ":"ho", "ㅚ":"hl", "ㅝ":"nj", "ㅞ":"np", "ㅟ":"nl", "ㅢ":"ml"]
 
         var result = ""
-            for char in koreanText {
-                let scalar = char.unicodeScalars.first?.value ?? 0
-                if scalar >= 0xAC00 && scalar <= 0xD7A3 {
-                    let index = Int(scalar) - 0xAC00
-                    let choIdx = index / (21 * 28); let jungIdx = (index % (21 * 28)) / 28; let jongIdx = index % 28
-                    
-                    // 🌟 [배열 수복] 오염된 분수 기호 "¼"를 제거하여 인덱스 밀림 현상을 박멸했습니다.
-                    let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
-                    let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
-                    let jongs = Array(" ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
+        for char in koreanText {
+            let scalar = char.unicodeScalars.first?.value ?? 0
+            if scalar >= 0xAC00 && scalar <= 0xD7A3 {
+                let index = Int(scalar) - 0xAC00
+                let choIdx = index / (21 * 28); let jungIdx = (index % (21 * 28)) / 28; let jongIdx = index % 28
+                
+                let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
+                let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
+                let jongs = Array(" ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
 
-                    result += engMap[chos[choIdx]] ?? ""
+                result += engMap[chos[choIdx]] ?? ""
                 result += doubleJungsMap[jungs[jungIdx]] ?? (engMap[jungs[jungIdx]] ?? "")
                 if jongIdx > 0 { result += doubleJongsMap[jongs[jongIdx]] ?? (engMap[jongs[jongIdx]] ?? "") }
             } else {

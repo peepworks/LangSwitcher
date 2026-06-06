@@ -30,7 +30,7 @@ struct DailyStat: Codable, Identifiable, Equatable, Sendable {
     var typoCorrections: Int
 }
 
-@MainActor
+@MainActor // 🌟 명시적 전역 액터 격리를 통해 인메모리 장부의 데이터 레이스를 원천 차단합니다.
 class StatsManager: ObservableObject {
     static let shared = StatsManager()
     
@@ -39,19 +39,20 @@ class StatsManager: ObservableObject {
     
     // UI 바인딩용 데이터 (메인 스레드 격리)
     @Published var dailyStats: [DailyStat] = []
-    
-    // 🌟 [수복 완료] 경고 문법 준수 및 외부 세터 충돌 방지를 위해 빈 딕셔너리 명세를 명확히 고정합니다.
     @Published var statsDict: [String: DailyStat] = [:]
     @Published private(set) var filteredStatsCache: [DailyStat] = []
     
-    // 인메모리 누적 딕셔너리
+    // 인메모리 누적 딕셔너리 (메인 액터의 완벽한 보호막 아래 상주)
     private var internalStatsDict: [String: DailyStat] = [:]
     
     private var saveTimer: Timer?
     private let defaultsKey = "LangSwitcher_DailyStats"
     
     private var isDirty: Bool = false
-    private var publishWorkItem: DispatchWorkItem?
+    
+    // 🌟 [최종 최적화 수복] 레거시 GCD DispatchWorkItem을 전면 적출하고
+    // Swift 6 사양의 취소 가능한 비동기 Task 구조로 고성능 디바운스 래퍼를 대체합니다.
+    private var publishTask: Task<Void, Never>?
     
     private init() {
         loadStats()
@@ -106,17 +107,11 @@ class StatsManager: ObservableObject {
     private func forceSave() {
         guard isDirty else { return }
         
-        // 1. 🌟 [핵심 수복] 딕셔너리 원본을 넘기지 않고, 메인 액터 안전 구역 내에서
-        // 완전히 독립된 메모리 버퍼를 가지는 일반 고정 배열([DailyStat])로 전치 및 정렬을 끝마칩니다.
-        // 이 순간, 백그라운드 태스크는 internalStatsDict의 내부 공유 버퍼를 절대 참조할 수 없게 됩니다.
         let statsArray = Array(self.internalStatsDict.values).sorted { $0.dateString < $1.dateString }
         let key = defaultsKey
         self.isDirty = false
         
-        // 2. 이제 딕셔너리와 완벽하게 절연된 statsArray만 들고 백그라운드로 떠납니다.
         Task.detached(priority: .background) {
-            // statsArray는 완벽하게 독립된 값 타입 배열이므로,
-            // 메인 스레드에서 타이핑 연타로 internalStatsDict가 조작되든 말든 100% 안전합니다.
             if let data = try? Self.encoder.encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: key)
                 dprint("💾 [StatsManager] CoW 데이터 레이스를 원천 차단하며 백그라운드 저장을 완료했습니다.")
@@ -131,7 +126,6 @@ class StatsManager: ObservableObject {
     
     private func loadStats() {
         if let data = UserDefaults.standard.data(forKey: defaultsKey),
-           // 🌟 [수복 2] 아직 남아있던 일회용 JSONDecoder()를 Self.decoder로 완벽하게 짝맞춤 교체!
            let decoded = try? Self.decoder.decode([DailyStat].self, from: data) {
             
             var tempDict: [String: DailyStat] = [:]
@@ -145,21 +139,27 @@ class StatsManager: ObservableObject {
     }
     
     private func publishUpdate() {
-        // 🌟 [수복 완료] 원자적 대입문 매칭 수정
         let snapshotArray = Array(internalStatsDict.values).sorted { $0.dateString < $1.dateString }
         self.dailyStats = snapshotArray
         self.statsDict = internalStatsDict
     }
     
+    // MARK: - 고성능 Modern Swift Concurrency 디바운스 엔진
     private func schedulePublishUpdate() {
-        publishWorkItem?.cancel()
+        // 1. 타이핑 연타 시 이전 예약되어 있던 발행 태스크를 빛의 속도로 취소시킵니다.
+        publishTask?.cancel()
         
-        let item = DispatchWorkItem { [weak self] in
-            self?.publishUpdate()
+        // 2. 🌟 [수복 완료] 레거시 C 기반의 asyncAfter를 지우고 순정 비동기 슬립 구조로 주기를 제어합니다.
+        // 클로저 캡처 부하와 무단 스레드 배리어 우회 현상이 완벽하게 치료됩니다.
+        publishTask = Task {
+            // 0.3초 디바운스 대기 집행
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            
+            // 대기하는 도중 유저가 다음 타건을 쳐서 취소 신호가 내려왔다면 즉시 처형(Exit)
+            guard !Task.isCancelled else { return }
+            
+            self.publishUpdate()
         }
-        
-        publishWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
 
     // 통계 날짜 정합성 추출 포매터 (메인 액터 전용 격리 상주)
@@ -187,7 +187,6 @@ class StatsManager: ObservableObject {
     func exportToCSV(to url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void) {
         let snapshot = internalStatsDict
         
-        // 🌟 [수복 완료] 무거운 문자열 조작 및 디스크 파일 I/O를 메인 스레드 스올(Stall) 없이 백그라운드 태스크로 유기합니다.
         Task.detached(priority: .userInitiated) {
             do {
                 var csvString = "Date,Type,Count\n"
@@ -197,9 +196,6 @@ class StatsManager: ObservableObject {
                 }
                 
                 try csvString.write(to: url, atomically: true, encoding: .utf8)
-                
-                // 🌟 콜백 함수가 이미 @MainActor 격리 사양이므로, await 호출 한 방으로
-                // DispatchQueue.main 없이 메인 스레드에 안전하게 정렬 배달됩니다.
                 await completion(true, nil)
             } catch {
                 await completion(false, error)
@@ -227,10 +223,8 @@ class StatsManager: ObservableObject {
         var result: [DailyStat] = []
         result.reserveCapacity(daysToFetch)
         
-        // 메인 액터 격리가 명시되었으므로 안전하게 인메모리 장부 참조
         let snapshot = internalStatsDict
         
-        // 🌟 순정 역순 루프 사양 보존 ((0..<daysToFetch).reversed() 구조 유지)
         for i in (0..<daysToFetch).reversed() {
             if let date = calendar.date(byAdding: .day, value: -i, to: today) {
                 let dateString = Self.todayFormatter.string(from: date)
@@ -242,7 +236,6 @@ class StatsManager: ObservableObject {
             }
         }
         
-        // @Published UI 바인딩 변수에 최종 원자적 안착
         self.filteredStatsCache = result
     }
 }
