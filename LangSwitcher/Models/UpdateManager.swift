@@ -23,9 +23,8 @@ import AppKit
 import Combine
 import SwiftUI
 
-// 🌟 SwiftUI 알럿 충돌을 방지하기 위한 단일 상태 정의
-// 🌟 [수정됨] onChange에서 상태 변화를 감지할 수 있도록 Equatable 프로토콜 추가
-enum UpdateAlertItem: Identifiable, Equatable { // 🌟 Equatable 추가
+// SwiftUI 알럿 충돌을 방지하기 위한 단일 상태 정의
+enum UpdateAlertItem: Identifiable, Equatable {
     case updateAvailable(version: String, url: URL)
     case upToDate
     case error(String)
@@ -39,22 +38,23 @@ enum UpdateAlertItem: Identifiable, Equatable { // 🌟 Equatable 추가
     }
 }
 
+// 🌟 [최종 수복: Swift 6 전역 격리 수립]
+@MainActor
 class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
 
     @Published var isChecking = false
-    @Published var activeAlert: UpdateAlertItem? // 🌟 알럿 상태를 하나로 통합하여 씹힘 방지
+    @Published var activeAlert: UpdateAlertItem?
     
-    // 🌟 사용자 설정: 자동 업데이트 확인 여부
     @AppStorage("isAutoUpdateEnabled") var isAutoUpdateEnabled: Bool = true
-    // 🌟 마지막으로 업데이트를 확인한 시간 (Unix Timestamp)
     @AppStorage("lastUpdateCheckDate") var lastUpdateCheckDate: Double = 0
 
     private let apiURL = "https://api.github.com/repos/peepworks/LangSwitcher/releases/latest"
-    private var timer: Timer?
+    
+    // 🌟 [최종 수복: RunLoop 종속성 타이머 탈출]
+    private var updateCheckTask: Task<Void, Never>?
 
     private init() {
-        // 🌟 [수정됨] 앱이 꺼지기 직전(willTerminate)에 알림을 받도록 등록합니다.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillTerminate),
@@ -63,118 +63,112 @@ class UpdateManager: ObservableObject {
         )
     }
     
-    // 🌟 [추가됨] 앱이 닫힐 때 시스템이 이 함수를 호출하여 안전하게 타이머를 멈춥니다.
     @objc private func appWillTerminate() {
-        dprint("UpdateManager is stopping before app termination") // 필요하다면 주석 해제
         stopAutoUpdateCheck()
     }
 
-    // 앱 실행 시 백그라운드 체크 시작
+    /// 앱 실행 시 백그라운드 영구 순환 체크 엔진을 가동합니다.
     func setupAutoUpdateCheck() {
-        checkIfAutoUpdateNeeded()
-
-        // 1시간(3600초)마다 타이머를 돌면서 24시간 경과 여부 체크
-        timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
-            self?.checkIfAutoUpdateNeeded()
+        updateCheckTask?.cancel() // 중복 실행 원천 차단
+        
+        updateCheckTask = Task {
+            while !Task.isCancelled {
+                self.checkIfAutoUpdateNeeded()
+                
+                do {
+                    // 1시간(3600초)마다 스레드 블로킹 없이 정밀 대기
+                    try await Task.sleep(nanoseconds: 3600 * 1_000_000_000)
+                } catch {
+                    // 외부 가드 취소(App 종료 등) 시에만 루프를 깔끔하게 브레이크
+                    break
+                }
+            }
         }
     }
 
-    // 🌟 [리뷰 반영] 앱 종료 시 RunLoop에서 타이머를 안전하게 제거하여 자원을 반환하는 함수
+    /// 예약되어 있던 업데이트 감시 태스크를 완전히 소각합니다.
     func stopAutoUpdateCheck() {
-        timer?.invalidate()
-        timer = nil
-        dprint("✅ [UpdateManager] Auto update timer invalidated.")
+        updateCheckTask?.cancel()
+        updateCheckTask = nil
+        #if DEBUG
+        dprint("✅ [UpdateManager] Auto update task successfully cancelled.")
+        #endif
     }
 
     private func checkIfAutoUpdateNeeded() {
         guard isAutoUpdateEnabled else { return }
 
         let now = Date().timeIntervalSince1970
-        let twentyFourHours: TimeInterval = 24 * 60 * 60 // 24시간
+        let twentyFourHours: TimeInterval = 24 * 60 * 60
 
         if now - lastUpdateCheckDate >= twentyFourHours {
             checkForUpdates(isAutomatic: true)
         }
     }
 
-    // isAutomatic 파라미터로 수동/자동 여부 구분
+    /// GitHub Releases 코어를 통해 최신 릴리즈 정보를 분석합니다.
     func checkForUpdates(isAutomatic: Bool = false) {
         guard !isChecking else { return }
         
-        DispatchQueue.main.async {
-            self.isChecking = true
-            if !isAutomatic { self.activeAlert = nil } // 수동 체크 시 기존 알럿 초기화
-        }
+        self.isChecking = true
+        if !isAutomatic { self.activeAlert = nil }
 
         guard let url = URL(string: apiURL) else {
-            DispatchQueue.main.async {
-                self.isChecking = false
-                if !isAutomatic { self.activeAlert = .error("Invalid URL") }
-            }
+            self.isChecking = false
+            if !isAutomatic { self.activeAlert = .error("Invalid URL") }
             return
         }
 
-        // 🌟 캐시를 무시하고 항상 최신 상태를 강제 확인
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        
+        // 🌟 [최종 수복: async/await 네트워크 파이프라인 전치]
+        Task {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                self.isChecking = false
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                self?.isChecking = false
-
-                if let error = error {
-                    dprint("Update check failed: \(error.localizedDescription)")
-                    if !isAutomatic { self?.activeAlert = .error(error.localizedDescription) }
+                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 403 {
+                    if !isAutomatic { self.activeAlert = .error("GitHub API rate limit exceeded. Please try again later.") }
                     return
+                }
+
+                struct GitHubRelease: Codable {
+                    let tagName: String
+                    let htmlUrl: String
+
+                    enum CodingKeys: String, CodingKey {
+                        case tagName = "tag_name"
+                        case htmlUrl = "html_url"
+                    }
+                }
+
+                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                let fetchedVersion = release.tagName.replacingOccurrences(of: "v", with: "")
+                let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+
+                self.lastUpdateCheckDate = Date().timeIntervalSince1970
+                guard let releaseURL = URL(string: release.htmlUrl) else { return }
+
+                if fetchedVersion.compare(currentVersion, options: .numeric) == .orderedDescending {
+                    self.activeAlert = .updateAvailable(version: fetchedVersion, url: releaseURL)
+                } else {
+                    if !isAutomatic { self.activeAlert = .upToDate }
                 }
                 
-                // GitHub API 호출 제한 에러 처리
-                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 403 {
-                    if !isAutomatic { self?.activeAlert = .error("GitHub API rate limit exceeded. Please try again later.") }
-                    return
-                }
-
-                guard let data = data else { return }
-
-                do {
-                    struct GitHubRelease: Codable {
-                        let tagName: String
-                        let htmlUrl: String
-
-                        enum CodingKeys: String, CodingKey {
-                            case tagName = "tag_name"
-                            case htmlUrl = "html_url"
-                        }
-                    }
-
-                    // 정상적인 릴리즈 데이터 파싱
-                    let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-                    let fetchedVersion = release.tagName.replacingOccurrences(of: "v", with: "")
-                    let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-
-                    // 체크 성공 시 시간 갱신
-                    self?.lastUpdateCheckDate = Date().timeIntervalSince1970
-                    guard let releaseURL = URL(string: release.htmlUrl) else { return }
-
-                    if fetchedVersion.compare(currentVersion, options: .numeric) == .orderedDescending {
-                        // 업데이트 있음! (자동/수동 모두 알림창 띄움)
-                        self?.activeAlert = .updateAvailable(version: fetchedVersion, url: releaseURL)
-                    } else {
-                        // 최신 버전임! (수동으로 눌렀을 때만 알림)
-                        if !isAutomatic {
-                            self?.activeAlert = .upToDate
-                        }
-                    }
-                } catch {
-                    // GitHub에서 릴리즈 정보 대신 에러 메시지(Not Found 등)를 보냈을 경우
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let message = json["message"] as? String {
-                        if !isAutomatic { self?.activeAlert = .error("GitHub API: \(message)") }
-                    } else {
-                        if !isAutomatic { self?.activeAlert = .error("Failed to parse GitHub response.") }
-                    }
+            } catch {
+                self.isChecking = false
+                #if DEBUG
+                dprint("Update check failed: \(error.localizedDescription)")
+                #endif
+                
+                if let httpError = error as? URLError, httpError.code != .cancelled {
+                    if !isAutomatic { self.activeAlert = .error(error.localizedDescription) }
+                } else if !isAutomatic {
+                    self.activeAlert = .error("Failed to fetch or parse GitHub release data.")
                 }
             }
-        }.resume()
+        }
     }
 }
