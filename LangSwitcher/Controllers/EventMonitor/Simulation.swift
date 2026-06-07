@@ -1,5 +1,7 @@
 //
+//  Simulation.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -176,28 +178,26 @@ extension EventMonitor {
     
     // 🌟 [완벽 리팩토링] 순환 참조(Retain Cycle)와 배열 누수를 완벽히 차단한 버전
     func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
-        // 1. 새로운 텍스트 대치가 시작되기 전, 기존에 남아있는 모든 예약 태스크를 완전히 취소 및 청소합니다.
+        // 1. 새로운 대치가 시작되므로 기존 예약된 장부를 청소 및 취소 명령 전달
         self.pendingInsertTasks.forEach { $0.cancel() }
         self.pendingInsertTasks.removeAll()
-        
+
         let chars = Array(text.utf16)
         if chars.isEmpty { completion(); return }
-        
+
         let chunkSize = 20
         var chunks: [[UTF16.CodeUnit]] = []
         for i in stride(from: 0, to: chars.count, by: chunkSize) {
             let end = min(i + chunkSize, chars.count)
             chunks.append(Array(chars[i..<end]))
         }
-        
+
         let chunkDelay: TimeInterval = 0.015
-        
-        // 2. 각 청크별 이벤트를 DispatchWorkItem으로 감싸서 예약합니다.
+
+        // 2. 각 청크별 이벤트를 DispatchWorkItem으로 예약
         for (index, chunk) in chunks.enumerated() {
             let delay = Double(index) * chunkDelay
-            
-            // ✅ [핵심 1] 클로저 내부에서 item 자체를 호출하지 않습니다. (순환 참조 원천 차단)
-            // 취소 명령(cancel)이 들어오면 GCD 시스템이 알아서 이 블록의 실행을 스킵합니다.
+
             let item = DispatchWorkItem {
                 var localChunk = chunk
                 if let eventDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
@@ -211,24 +211,33 @@ extension EventMonitor {
                     eventUp.post(tap: .cghidEventTap)
                 }
             }
-            
+
             self.pendingInsertTasks.append(item)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
-        
-        // 3. 최종 완료(Completion) 핸들러
+
+        // 3. 최종 완료(Completion) 핸들러 조립 구역
         let lastChunkIndex = max(0, chunks.count - 1)
         let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.05
-        
-        // ✅ [핵심 2] completionItem 역시 자기 자신을 호출하지 않게 만듭니다.
-        let completionItem = DispatchWorkItem { [weak self] in
+
+        // 🌟 [우주 방어 수복 포인트] 유령 실행을 원천 차단하기 위해 무명 인스턴스를 먼저 선언합니다.
+        var completionItem: DispatchWorkItem!
+
+        completionItem = DispatchWorkItem { [weak self] in
+            // 🌟 [핵심 가드] GCD 스케줄러가 취소 명령을 무시하고 무단으로 이 클로저를 실행시켰더라도,
+            // 현재 인스턴스가 취소 상태(isCancelled == true)인 것을 인입 시점에 정밀 검문하여 즉사(Exit)시킵니다.
+            guard let self = self, !completionItem.isCancelled else {
+                dprint("👻 [Ghost Guard] 찰나의 타이밍에 취소를 무회하고 무단 진입한 구세대 완료 핸들러를 성공적으로 격추했습니다.")
+                return
+            }
+
+            // 최후 검문을 통과한 청정 세대만 실제 후속 동작(커서 이동 등)을 집행합니다.
             completion()
-            
-            // 이 블록이 실행되었다는 것은 앞선 모든 타이핑 작업이
-            // 취소 없이 무사히 끝났다는 뜻이므로, 안심하고 배열을 통째로 비워 메모리를 회수합니다.
-            self?.pendingInsertTasks.removeAll()
+
+            // 정산이 끝났으므로 안전하게 장부 비우기
+            self.pendingInsertTasks.removeAll()
         }
-        
+
         self.pendingInsertTasks.append(completionItem)
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay, execute: completionItem)
     }

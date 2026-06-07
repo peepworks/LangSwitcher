@@ -29,7 +29,14 @@ struct TextExpansionSettingsView: View {
     private var payload: Binding<ProfileSettingsPayload> {
         Binding(
             get: { settings.activeProfile.payload },
-            set: { settings.activeProfile.payload = $0 }
+            set: { newValue in
+                // 🌟 [도킹 3] 스니펫 On/Off 및 규칙 변경 시 O(1) 딕셔너리 캐시(`textExpansionDict`) 즉시 재생성 트리거
+                settings.activeProfile.payload = newValue
+                
+                guard !settings.isBatchUpdating else { return }
+                settings.updateSnapshot()
+                settings.scheduleSave()
+            }
         )
     }
 

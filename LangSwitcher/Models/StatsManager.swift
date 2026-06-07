@@ -105,21 +105,32 @@ class StatsManager: ObservableObject {
     
     @MainActor
     private func forceSave() {
+        // 1차 방어선: 바뀐 데이터가 없다면 무의미한 I/O를 발생시키지 않고 즉시 리턴
         guard isDirty else { return }
-        
+
+        // 🌟 [우주 방어 수복 포인트 1] 백그라운드로 유기하기 직전,
+        // 현재 시점의 깨끗한 인메모리 장부 데이터를 CoW 사양으로 완벽하게 스냅샷을 구워냅니다.
         let statsArray = Array(self.internalStatsDict.values).sorted { $0.dateString < $1.dateString }
         let key = defaultsKey
-        self.isDirty = false
-        
+
+        // 🚨 기존 코드의 'self.isDirty = false' 선행 해제 라인은 완전히 제거(소각)합니다.
+
         Task.detached(priority: .background) {
             if let data = try? Self.encoder.encode(statsArray) {
                 UserDefaults.standard.set(data, forKey: key)
-                dprint("💾 [StatsManager] CoW 데이터 레이스를 원천 차단하며 백그라운드 저장을 완료했습니다.")
+                
+                // 🌟 [수복 포인트 2] 디스크에 물리적으로 파일 쓰기가 100% 완료된 시점에만
+                // 메인 액터 요새로 안전하게 홉(Hop)하여 저장 자물쇠를 공식 해제(Commit)합니다.
+                await MainActor.run {
+                    StatsManager.shared.isDirty = false
+                    dprint("💾 [StatsManager] 디스크 저장 완료 확인. 트랜잭션 커밋을 승인하고 isDirty를 false로 정산했습니다.")
+                }
             } else {
+                // 인코딩 실패 시에는 안전하게 장부를 더티 상태로 유지하여 다음 타이머 때 재시도 유도
                 await MainActor.run {
                     StatsManager.shared.isDirty = true
                 }
-                dprint("🚨 [StatsManager] 통계 데이터 인코딩 실패로 인해 isDirty 상태를 롤백했습니다.")
+                dprint("🚨 [StatsManager] 통계 데이터 인코딩 실패. 차기 저장을 위해 더티 상태를 강제 유지합니다.")
             }
         }
     }

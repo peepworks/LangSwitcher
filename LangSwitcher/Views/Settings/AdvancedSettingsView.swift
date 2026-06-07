@@ -242,36 +242,54 @@ struct AdvancedSettingsView: View {
     
     // MARK: - Actions
     
-    // 🌟 [수정] 파일명 생성 및 메시지 알림을 프로필(Profiles) 맥락으로 변경
     private func exportSettings() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        
+
         if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             panel.directoryURL = docsURL
         }
-        
+
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmm"
-        // 파일명을 Profiles로 변경
         panel.nameFieldStringValue = "LangSwitcher_Profiles_\(formatter.string(from: Date())).json"
+        
         NSApp.activate(ignoringOtherApps: true)
 
-        if panel.runModal() == .OK, let url = panel.url {
+        // 🌟 [수복] 설정 창 윈도우 주소를 안전하게 확보하여 시트를 올릴 앵커로 사용합니다.
+        let targetWindow = NSApp.windows.first { $0.title.contains("LangSwitcher Settings") } ?? NSApp.keyWindow
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            
+            // SettingsManager의 백그라운드 I/O 트랜잭션 가동
             settings.exportBackup(to: url) { success, error in
-                if success {
-                    DispatchQueue.main.async {
-                        let alert = NSAlert()
-                        alert.messageText = String(localized: "Profiles Backup Successful")
-                        alert.informativeText = String(localized: "All profiles and associated settings have been exported successfully.")
-                        if let appIcon = NSImage(named: NSImage.applicationIconName) {
-                            alert.icon = appIcon
-                        }
-                        NSApp.activate(ignoringOtherApps: true)
-                        alert.runModal()
+                guard success else {
+                    if let error = error {
+                        dprint("❌ Export failed: \(error.localizedDescription)")
                     }
-                } else if let error = error {
-                    dprint("Export failed: \(error.localizedDescription)")
+                    return
+                }
+                
+                // 🌟 [Swift 6 교정] 백그라운드에서 복귀 시 메인 액터 격리를 명시적으로 확약합니다.
+                Task { @MainActor in
+                    let alert = NSAlert()
+                    alert.messageText = String(localized: "Profiles Backup Successful")
+                    alert.informativeText = String(localized: "All profiles and associated settings have been exported successfully.")
+                    alert.alertStyle = .informational
+                    
+                    if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                        alert.icon = appIcon
+                    }
+                    
+                    for button in alert.buttons { button.focusRingType = .none }
+                    
+                    // 🌟 [우주 방어] runModal()을 폐기하고 스레드 무해한 비동기 시트 모달을 집행합니다.
+                    if let window = targetWindow {
+                        alert.beginSheetModal(for: window, completionHandler: nil)
+                    } else {
+                        alert.runModal() // Fallback 스레드가 메인 액터 안이므로 안전
+                    }
                 }
             }
         }
@@ -280,24 +298,46 @@ struct AdvancedSettingsView: View {
     private func importSettings() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
-        
-        NSApp.activate(ignoringOtherApps: true)
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.title = String(localized: "Import Profiles Backup")
 
-        if panel.runModal() == .OK, let url = panel.url {
+        NSApp.activate(ignoringOtherApps: true)
+        
+        let targetWindow = NSApp.windows.first { $0.title.contains("LangSwitcher Settings") } ?? NSApp.keyWindow
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            
             settings.importBackup(from: url) { success, error in
-                if success {
-                    DispatchQueue.main.async {
-                        let alert = NSAlert()
+                // 🌟 [Swift 6 교정] UI 변경 및 알럿 개시는 무조건 메인 액터 요새 안에서 처리
+                Task { @MainActor in
+                    let alert = NSAlert()
+                    
+                    if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                        alert.icon = appIcon
+                    }
+                    for button in alert.buttons { button.focusRingType = .none }
+                    
+                    if success {
                         alert.messageText = String(localized: "Profiles Restore Successful")
                         alert.informativeText = String(localized: "Your profiles and settings have been imported successfully.")
-                        if let appIcon = NSImage(named: NSImage.applicationIconName) {
-                            alert.icon = appIcon
-                        }
-                        NSApp.activate(ignoringOtherApps: true)
+                        alert.alertStyle = .informational
+                    } else {
+                        let errMsg = error?.localizedDescription ?? "Unknown context error."
+                        dprint("❌ Import failed: \(errMsg)")
+                        alert.messageText = String(localized: "Import Failed")
+                        alert.informativeText = String(localized: "Failed to read the backup file. It might be corrupted or in an unsupported format.\n\nError: \(errMsg)")
+                        alert.alertStyle = .critical
+                    }
+                    
+                    // 🌟 [우주 방어] 중첩 블로킹 런루프 프리즈를 차단하는 비동기 시트 가동
+                    if let window = targetWindow {
+                        alert.beginSheetModal(for: window, completionHandler: nil)
+                    } else {
                         alert.runModal()
                     }
-                } else if let error = error {
-                    dprint("Import failed: \(error.localizedDescription)")
                 }
             }
         }

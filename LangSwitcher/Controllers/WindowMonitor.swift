@@ -43,9 +43,7 @@ class WindowMonitor {
     private static let axGetWindowFunc: AXUIElementGetWindowFunc? = {
         let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
         guard let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") else {
-            #if DEBUG
             print("🚨 [WindowMonitor] Critical: _AXUIElementGetWindow 심볼 조회에 실패했습니다.")
-            #endif
             return nil
         }
         return unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
@@ -63,9 +61,28 @@ class WindowMonitor {
     }
 
     func observeApp(pid: pid_t) {
-        // 1차 방어선: 진입 전 태스크 취소 감지
-        guard !Task.isCancelled else { return }
-        
+        // ----------------------------------------------------------------
+        // 🌟 [우주 방어 수복 포인트 1]
+        // 태스크 취소 검사보다 '기존 시스템 옵저버 자원의 해제'를 최우선 순위로 격상합니다.
+        // 태스크가 취소되어 돌아나가더라도, 이전 세대의 좀비 소스는 무조건 런루프에서 뜯어냅니다.
+        // ----------------------------------------------------------------
+        if let observer = self.axObserver, let rl = self.observerRunLoop {
+            let src = AXObserverGetRunLoopSource(observer)
+            CFRunLoopRemoveSource(rl, src, .commonModes)
+            
+            dprint("🧹 [WindowMonitor] 선제적 자원 퍼지: 이전 세대의 AXObserver 런루프 소스를 물리적으로 차단했습니다.")
+            
+            // 장부 포인터 즉시 초기화로 대기 스레드 중복 참조 원천 차단
+            self.axObserver = nil
+            self.observerRunLoop = nil
+        }
+
+        // 🌟 [수복 포인트 2] 장부 청소가 완벽히 끝난 시점에 안전하게 태스크 취소 체크를 집행합니다.
+        guard !Task.isCancelled else {
+            dprint("🧹 [WindowMonitor] observeApp 태스크 취소 상태 진입 확인. 장부 청소 후 안전 퇴근합니다.")
+            return
+        }
+
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isWindowMemoryEnabled ||
               snapshot.isAppSpecificEnabled ||
@@ -75,12 +92,8 @@ class WindowMonitor {
         guard self.currentPID != pid else { return }
         self.currentPID = pid
 
-        // [안전망 1] 기존에 장부에 기록되어 있던 옵저버 자원이 있다면 메인 런루프에서 완벽히 퇴출
-        if let observer = self.axObserver, let rl = self.observerRunLoop {
-            CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
-            self.axObserver = nil
-            self.observerRunLoop = nil
-        }
+        // 💡 [참고] 기존에 이 하단에 중복 상주하던 `if let observer = self.axObserver ...` 블록은
+        // 위에서 선제 집행하므로 완전히 걷어내어(삭제) 청정 코드로 유지하시면 됩니다.
 
         var observer: AXObserver?
         let callback: AXObserverCallback = { (obs, el, notif, ref) in
@@ -152,7 +165,10 @@ class WindowMonitor {
         guard snapshot.isAppSpecificEnabled || snapshot.isWindowMemoryEnabled else { return }
 
         self.activeWindowElement = element
-        guard let windowID = getWindowID(from: element) else { return }
+        guard let windowID = getWindowID(from: element) else {
+            dprint("🛡️ [Graceful Degradation] AXWindow ID 인출 실패로 인해 해당 창의 윈도우 메모리 추적을 안전하게 바이패스합니다.")
+            return
+        }
 
         let latestAppID = AppMonitor.shared.activeAppBundleID
         let latestInputSource = self.getCurrentInputSourceID() ?? ""
@@ -161,7 +177,9 @@ class WindowMonitor {
         var targetLang: String? = nil
         var traceToRecord: DecisionTrace? = nil
 
+        // ── [의사결정 파이프라인 정형화] ──
         if let data = self.windowMemory.getLanguage(for: windowID) {
+            // 1) 장부에 기존 window 언어 기록이 상주하는 경우
             if snapshot.isWindowMemoryEnabled {
                 targetLang = data.language
                 traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
@@ -171,15 +189,18 @@ class WindowMonitor {
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
         } else {
+            // 2) 🌟 [수복] 장부에 없는 '신상 윈도우'가 포커스를 받은 경우 (중복 else if 서치 엔진 전량 소각)
             if snapshot.isAppSpecificEnabled,
                let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
                 targetLang = appLang
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
 
+            // 새 창의 컨텍스트를 캐시 장부에 최초 등록 (O(1) LRU)
             self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
         }
 
+        // ── [언어 변환 명령 비동기 집행] ──
         if let lang = targetLang {
             let delay = snapshot.appDelays.first(where: { $0.bundleIdentifier == latestAppID })?.delay ?? 0.05
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
@@ -210,8 +231,10 @@ class WindowMonitor {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
 
-            guard let element = activeWindowElement, let windowID = getWindowID(from: element),
-              let latestID = self.getCurrentInputSourceID() else { return }
+            // 🌟 [수복 3] 입력 소스 변경 노티피케이션 정산 구역에서도 nil 가드를 결속하여 장부 오염을 철저히 차단합니다.
+            guard let element = activeWindowElement,
+                  let windowID = getWindowID(from: element),
+                  let latestID = self.getCurrentInputSourceID() else { return }
 
             let currentPID = self.currentPID
             if self.windowMemory.getLanguage(for: windowID) != nil {
@@ -235,9 +258,14 @@ class WindowMonitor {
     private func getWindowID(from element: AXUIElement) -> CGWindowID? {
         var windowID: CGWindowID = 0
         if let getWindow = Self.axGetWindowFunc {
-            if getWindow(element, &windowID) == .success { return windowID }
+            if getWindow(element, &windowID) == .success {
+                return windowID
+            }
         }
-        return CGWindowID(element.hashValue)
+        
+        // 🚨 [우주 방어] 충돌 위험이 있는 구식 포인터 hashValue 폴백을 완전히 제거합니다.
+        // 확실하지 않은 ID를 들고 장부를 오염시키느니, 안전하게 무효(nil) 처리를 집행합니다.
+        return nil
     }
 
     private func getCurrentInputSourceID() -> String? {

@@ -36,7 +36,15 @@ struct TypoCorrectionSettingsView: View {
     private var payload: Binding<ProfileSettingsPayload> {
         Binding(
             get: { settings.activeProfile.payload },
-            set: { settings.activeProfile.payload = $0 }
+            set: { newValue in
+                // 🌟 [도킹 2] 유저가 스위치를 바꾸는 순간, 활성 프로필 장부에 대입함과 동시에
+                // 백엔드 타건 스레드의 로컬 캐시 스냅샷까지 한 프레임의 오차도 없이 즉시 갱신합니다.
+                settings.activeProfile.payload = newValue
+                
+                guard !settings.isBatchUpdating else { return }
+                settings.updateSnapshot()
+                settings.scheduleSave()
+            }
         )
     }
 

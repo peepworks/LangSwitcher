@@ -1,5 +1,7 @@
 //
+//  Handlers.swift
 //  LangSwitcher
+//
 //  Copyright (C) 2026 peepboy
 //
 //  This program is free software: you can redistribute it and/or modify
@@ -119,80 +121,108 @@ extension EventMonitor {
     }
 
     func handleKeyDown(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        
+
         EventMonitor.shared.snapshotLock.lock()
         defer { EventMonitor.shared.snapshotLock.unlock() }
-        
+
+        // 🌟 오직 localSnapshot만을 단일 공급원으로 취급합니다.
         guard let snapshot = EventMonitor.shared.localSnapshot else {
             return Unmanaged.passUnretained(event)
         }
-        
-        var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
-        var isToggle = false; var appliedRule = ""
+
+        var targetLang: String? = nil
+        var targetAppBundleID: String? = nil
+        var targetAppName: String? = nil
+        var isToggle = false
+        var appliedRule = ""
 
         self.markOtherKeyPressed()
         let flags = modifierFlags.intersection([.command, .control, .option, .shift])
         let flagsRaw = UInt64(flags.rawValue)
 
+        // 1. 수동/자동 오타 교정 트리거 검사
         if snapshot.isTypoCorrectionEnabled &&
            snapshot.typoKeyCode == keyCode &&
            NSEvent.ModifierFlags(rawValue: UInt(snapshot.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
            !snapshot.typoDisplayString.isEmpty {
-            TypoConverter.shared.executeCorrection()
+            
+            // 🌟 [안전 가드] 오타 교정 집행부 역시 메인 액터 지대이므로 락 내부 동기 호출을 차단하고
+            // 비동기 홉으로 안전하게 밀어 올려 실행합니다.
+            DispatchQueue.main.async {
+                TypoConverter.shared.executeCorrection()
+            }
             return nil
         }
 
+        // 2. 입력 소스 토글 키 검사
         if snapshot.toggleKeyCode == keyCode && !snapshot.toggleDisplayString.isEmpty {
             let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(snapshot.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
-            if flags == savedModifierFlags { isToggle = true; appliedRule = "Toggle Key" }
+            if flags == savedModifierFlags {
+                isToggle = true
+                appliedRule = "Toggle Key"
+            }
         }
 
         let searchKey = makeShortcutKey(keyCode: keyCode, modifiers: flagsRaw)
 
+        // 3. 앱 실행 단축키 규칙 검사
         if !isToggle && snapshot.isAppLaunchEnabled {
             if let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
                 let isSingleModifier = globalModifierKeyCodes.contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
                 let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
-                    targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
+                    targetAppBundleID = appLaunch.bundleIdentifier
+                    targetAppName = appLaunch.appName
+                    appliedRule = "App Launch"
                 }
             }
         }
 
+        // 4. 커스텀 단축키 규칙 검사
         if !isToggle && targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
             if let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
                 let isSingleModifier = globalModifierKeyCodes.contains(shortcut.keyCode) && shortcut.modifierFlags == 0
                 let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
                 if !isSingleModifier && !isMultiModifierOnly {
-                    targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
+                    targetLang = shortcut.targetLanguage
+                    appliedRule = "Custom Shortcut"
                 }
             }
         }
 
+        // 5. 기본 조합 단축키 검사 (Ctrl / Cmd / Opt + Space)
         if !isToggle && targetAppBundleID == nil && targetLang == nil && keyCode == 49 {
             if flags == .control && snapshot.isCtrlActive { targetLang = snapshot.ctrlLang; appliedRule = "Default Shortcut" }
             else if flags == .command && snapshot.isCmdActive { targetLang = snapshot.cmdLang; appliedRule = "Default Shortcut" }
             else if flags == .option && snapshot.isOptActive { targetLang = snapshot.optLang; appliedRule = "Default Shortcut" }
         }
 
-         // [수정된 코드]
-         // 1. 실제 언어 전환이 일어나는 경우
-         if isToggle || targetAppBundleID != nil || targetLang != nil {
-             EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-             
-             if isToggle { return nil }
-             if targetAppBundleID != nil { return nil }
-             return Unmanaged.passUnretained(event)
-         }
-         // 2. 🌟 [신규] 언어 전환은 없지만, 단축키 입력은 감지된 경우 (이미 같은 언어인 상황)
-         else if let _ = targetLangIfPressed(keyCode: keyCode, flags: flags),
-                   SettingsManager.shared.snapshot.isCursorHUDEnabled {
-             
-             // InputSourceManager에서 현재 사용 중인 이름을 가져와 사용합니다.
-             let langName = InputSourceManager.shared.currentInputSourceName
-             HUDManager.shared.showHUD(languageName: langName)
-         }
+        // ----------------------------------------------------------------
+        // 🌟 [최종 정산 및 수복 구역: 데드락 프리 패스포트 수립]
+        // ----------------------------------------------------------------
+        
+        // 1) 실제 액션(언어 전환 또는 앱 실행)이 발동해야 하는 경우
+        if isToggle || targetAppBundleID != nil || targetLang != nil {
+            EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
 
-         return Unmanaged.passUnretained(event)
+            if isToggle { return nil }
+            if targetAppBundleID != nil { return nil }
+            return Unmanaged.passUnretained(event)
+        }
+        
+        // 2) 🌟 [수복 구역] 언어 전환은 없으나 동일 언어 단축키 입력으로 HUD Flag만 갱신해야 하는 상황
+        else if let _ = targetLangIfPressed(keyCode: keyCode, flags: flags), snapshot.isCursorHUDEnabled {
+
+            // 🔧 [우주 방어 & 2프레임 지연 소각]
+            // 불필요한 중첩 래핑과 assumeIsolated 블록을 청정 소각하고,
+            // 락 해제용 단일 비동기 파이프라인(DispatchQueue.main.async)으로 직결 정산합니다.
+            DispatchQueue.main.async {
+                // 이미 메인 스레드(Main Queue) 내부이므로 요새 가드 없이 즉시 안전하게 자원 인출
+                let langName = InputSourceManager.shared.currentInputSourceName
+                HUDManager.shared.showHUD(languageName: langName)
+            }
+        }
+
+        return Unmanaged.passUnretained(event)
     }
 }

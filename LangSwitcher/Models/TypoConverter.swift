@@ -189,9 +189,10 @@ class TypoConverter {
                 wasCancelled = true
                 dprint("🛑 [TypoConverter] 클립보드 폴링/대기 도중 태스크 취소가 감지되어 즉시 안전 탈출했습니다.")
             }
-            
-            // 🌟 [최종 수복 종착지 정산 가드]
-            // 정상 종료했거나 에러를 통해 탈출했거나 관계없이, 현재 세대가 완벽하다면 원자적 후속 정산을 안전하게 집행합니다.
+
+            // ----------------------------------------------------------------
+            // 🌟 [수복 구역] 정상, 예외, 취소, 구세대 낙오자 분기까지 예외 없이 플래그를 해제합니다.
+            // ----------------------------------------------------------------
             if self.correctionGeneration == myGeneration {
                 if Task.isCancelled || wasCancelled {
                     self.forceCancelAndCleanup()
@@ -199,7 +200,12 @@ class TypoConverter {
                     await self.cleanupAfterSuccess()
                 }
             } else {
-                dprint("👻 [GenerationGuard] 구세대(#\(myGeneration)) 태스크의 뒤늦은 무단 장부 변경 시도를 차단했습니다. 현 세대: #\(self.correctionGeneration)")
+                // 🌟 [우주 방어] 세대가 어긋나 장부 오염 방지를 위해 클립보드 원상복구는 패스하더라도,
+                // 트랜잭션 자물쇠(isConvertingInProgress)는 반드시 해제하여 엔진을 다시 가동 가능한 상태로 힐링합니다.
+                dprint("👻 [GenerationGuard] 구세대(#\(myGeneration)) 태스크 퇴출. 차기 트랜잭션 가동을 위해 잠금 플래그를 강제 해제합니다.")
+                
+                // TypoConverter가 @MainActor 클래스이므로 비동기 홉 없이 즉시 제자리 정산 (비용 0)
+                self.isConvertingInProgress = false
             }
         }
 

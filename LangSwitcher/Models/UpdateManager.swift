@@ -90,9 +90,7 @@ class UpdateManager: ObservableObject {
     func stopAutoUpdateCheck() {
         updateCheckTask?.cancel()
         updateCheckTask = nil
-        #if DEBUG
         dprint("✅ [UpdateManager] Auto update task successfully cancelled.")
-        #endif
     }
 
     private func checkIfAutoUpdateNeeded() {
@@ -159,9 +157,7 @@ class UpdateManager: ObservableObject {
                 
             } catch {
                 self.isChecking = false
-                #if DEBUG
                 dprint("Update check failed: \(error.localizedDescription)")
-                #endif
                 
                 if let httpError = error as? URLError, httpError.code != .cancelled {
                     if !isAutomatic { self.activeAlert = .error(error.localizedDescription) }

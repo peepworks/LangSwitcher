@@ -152,6 +152,7 @@ class SettingsManager: ObservableObject {
 
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet {
+            // 🌟 [도킹 1] 하드웨어 맵핑 엔진 실시간 On/Off 커널 반영
             HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled)
             guard !isBatchUpdating else { return }
             updateSnapshot()
@@ -163,17 +164,41 @@ class SettingsManager: ObservableObject {
     @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true { didSet { updateSnapshot() } }
     @AppStorage("isExcludedAppsEnabled") var isExcludedAppsEnabled: Bool = true { didSet { updateSnapshot() } }
     
-    @AppStorage("isWindowMemoryEnabled") var isWindowMemoryEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isWindowMemoryEnabled") var isWindowMemoryEnabled: Bool = false {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
     @AppStorage("isWindowMemoryCleanupEnabled") var isWindowMemoryCleanupEnabled: Bool = true { didSet { updateSnapshot(); syncToCloud() } }
-    @AppStorage("isCursorHUDEnabled") var isCursorHUDEnabled: Bool = true { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isCursorHUDEnabled") var isCursorHUDEnabled: Bool = true {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
     
     @AppStorage("isCloudSyncEnabled") var isCloudSyncEnabled: Bool = false {
         didSet { updateSnapshot(); if isCloudSyncEnabled { syncToCloud() } }
     }
     @AppStorage("isHapticFeedbackEnabled") var isHapticFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
     @AppStorage("isSoundFeedbackEnabled") var isSoundFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
-    @AppStorage("isEdgeGlowEnabled") var isEdgeGlowEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
-    @AppStorage("isBrowserTabMemoryEnabled") var isBrowserTabMemoryEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isEdgeGlowEnabled") var isEdgeGlowEnabled: Bool = false {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
+    @AppStorage("isBrowserTabMemoryEnabled") var isBrowserTabMemoryEnabled: Bool = false {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
     @AppStorage("newTabDefaultLanguage") var newTabDefaultLanguage: String = "None" { didSet { updateSnapshot(); syncToCloud() } }
     
 
@@ -398,6 +423,10 @@ class SettingsManager: ObservableObject {
         )
         
         newSnapshot.buildCaches()
+        
+        EventMonitor.shared.snapshotLock.lock()
+        EventMonitor.shared.localSnapshot = newSnapshot
+        EventMonitor.shared.snapshotLock.unlock()
         
         EventMonitor.shared.updateSettingsSnapshot(newSnapshot)
         self._snapshot = newSnapshot

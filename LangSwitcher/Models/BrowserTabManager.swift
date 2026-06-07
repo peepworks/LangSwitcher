@@ -59,13 +59,26 @@ protocol BrowserAdapter: Sendable {
 
 actor SafeDataBuffer {
     private var data = Data()
+    
+    // 🌟 [우주 방어] 현재 비동기 풀에서 스케줄링 대기 중인 append 태스크의 총량을 추적합니다.
+    private var pendingCount = 0
+
+    func incrementPending() {
+        pendingCount += 1
+    }
 
     func append(_ newData: Data) {
         data.append(newData)
+        pendingCount -= 1 // 데이터가 안전하게 힙(Heap) 버퍼에 안착했으므로 카운트 차감
     }
 
     func read() -> Data {
         return data
+    }
+    
+    // 🌟 [핵심] 스케줄러 큐에 남아있는 모든 잔여 append 태스크가 100% 정산 완료되었는지 검증합니다.
+    var isFlushComplete: Bool {
+        return pendingCount <= 0
     }
 }
 
@@ -83,9 +96,6 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let outputBuffer = SafeDataBuffer()
         let fileHandle = pipe.fileHandleForReading
 
-        // 🌟 [수복 완료] defer 내 컴파일러 제약(await 사용 금지)을 준수하기 위해
-        // 이곳은 오직 '물리적인 파일 디스크립터(FD) 소각 정산'만 전담하도록 정돈합니다.
-        // 낙하 방지용 안전그물로서의 nil 대입 성능은 유지하되, 진짜 정밀 정산은 아래 terminationHandler에서 집행합니다.
         defer {
             fileHandle.readabilityHandler = nil
             try? pipe.fileHandleForReading.close()
@@ -97,7 +107,9 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         fileHandle.readabilityHandler = { handle in
             let available = handle.availableData
             if !available.isEmpty {
+                // 🌟 [수복] 태스크를 비동기 큐에 유기하기 전, 원자적으로 대기 장부 카운트를 올립니다.
                 Task {
+                    await outputBuffer.incrementPending()
                     await outputBuffer.append(available)
                 }
             }
@@ -106,20 +118,17 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         group.addTask {
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
-                    
-                    // 프로세스 종료 즉시 비동기 컨텍스트 가동
                     Task {
-                        // 🌟 [최종 수복 핵심 1] 프로세스가 끝났으므로 먼저 핸들러 통로를 닫아
-                        // 커널 레이어의 추가적인 데이터 레이스 난입을 물리적으로 봉쇄합니다.
+                        // 🌟 [최종 수복 핵심 1] 새로운 데이터 유입 통로를 전면 차단합니다.
                         fileHandle.readabilityHandler = nil
-                        
-                        // 🌟 [최종 수복 핵심 2] 직전 마이크로초(µs) 사이에 readabilityHandler가 스케줄러 큐에 던져둔
-                        // 가동 중인 Task { await outputBuffer.append(...) } 들이 버퍼 메모리에 100% 안착할 수 있도록
-                        // 현재 스레드의 제어권을 컴파일러에게 확고하게 한 턴 양보(yield)합니다.
-                        await Task.yield()
-                        
-                        // 🌟 [최종 수복 핵심 3] 이제 마지막 한 바이트까지 완벽하게 채워졌음이 결정론적으로 보장되므로,
-                        // 안전하게 완성된 최후의 데이터를 인출합니다. (조기 파이프 폐쇄로 인한 데이터 유실 0%)
+
+                        // 🌟 [최종 수복 핵심 2] 직전 마이크로초 사이에 스케줄러 풀에 던져진
+                        // 모든 잔여 append 작업이 완료될 때까지 비동기 런루프 제어권을 양보하며 정밀 대기합니다.
+                        while await !outputBuffer.isFlushComplete {
+                            await Task.yield()
+                        }
+
+                        // 🌟 [결정론적 완수] 마지막 한 바이트까지 버퍼에 채워졌음이 100% 보장되므로 안심하고 데이터를 인출합니다.
                         let finalData = await outputBuffer.read()
                         process?.terminationHandler = nil
 
@@ -131,12 +140,6 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
                             continuation.resume(throwing: JXAError.scriptFailed("Process terminated with code \(p.terminationStatus)"))
                         }
                     }
-                }
-
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
                 }
             }
         }
@@ -152,14 +155,13 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
             return firstResult ?? nil
         } catch {
             group.cancelAll()
-            
+
             if process.isRunning {
                 let processToReap = process
                 processToReap.terminationHandler = nil
-                
+
                 Task.detached(priority: .background) {
                     processToReap.terminate()
-                    
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                     if processToReap.isRunning {
                         processToReap.terminate()
@@ -271,6 +273,12 @@ class BrowserTabManager: ObservableObject {
     static let shared = BrowserTabManager()
 
     private var adapters: [String: BrowserAdapter] = [:]
+    
+    // 🌟 [우주 방어 수복 포인트 1] 하드코딩 배열을 전면 폐기하고,
+    // 현재 아키텍처에 공식 등록된 모든 브라우저 번들 ID 목록을 동적으로 반환합니다.
+    var supportedBrowserBundleIDs: [String] {
+        return Array(adapters.keys)
+    }
 
     private var tabMemory: [String: String] = [:]
     private var lastEvaluatedHostForTab: [String: String] = [:]

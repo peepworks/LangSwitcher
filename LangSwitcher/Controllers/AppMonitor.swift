@@ -83,17 +83,18 @@ class AppMonitor {
             object: nil,
             queue: .main
         ) { notification in
-            
-            // 🌟 Swift 6 가드: 비활성화 콜백 영역 동시성 검증 통과
+
             MainActor.assumeIsolated {
                 guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       let bundleID = app.bundleIdentifier else { return }
 
                 HUDManager.shared.hideCursorMiniHUD()
 
-                let browserIDs = ["com.apple.Safari", "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"]
-                
-                if browserIDs.contains(bundleID) {
+                // 🌟 [우주 방어 수복 포인트 2] 레거시 하드코딩 상수를 완전히 청정 소각하고,
+                // BrowserTabManager의 실시간 등록 장부와 파이프라인을 다이렉트로 결속합니다.
+                let registeredBrowsers = BrowserTabManager.shared.supportedBrowserBundleIDs
+
+                if registeredBrowsers.contains(bundleID) {
                     Task { @MainActor in
                         BrowserTabManager.shared.handleBrowserDeactivated()
                     }
