@@ -654,7 +654,12 @@ class SettingsManager: ObservableObject {
     
     @MainActor
     func clearLogs() {
-        self.recentLogs.removeAll(keepingCapacity: false)
-        dprint("🧹 [SettingsManager] 메인 액터 보호막 안에서 안전하게 전체 로그를 소각했습니다.")
+        // 🌟 [우주 방어 수복 포인트]
+        // 레거시 false 플래그를 청정 소각하고 keepingCapacity: true 명세를 결속합니다.
+        // 최대 500건의 로그가 담겨있던 고성능 힙 공간 버퍼를 커널에 반납하지 않고 그대로 예약 유지하여,
+        // 차기 타건 로그 인입 시 발생할 수 있는 메인 스레드 재할당 오버헤드를 물리적으로 완전 차단($0ms$)합니다.
+        self.recentLogs.removeAll(keepingCapacity: true)
+        
+        dprint("🧹 [LogEngine] 기존 힙 할당 캐파(Capacity)를 완벽히 유지한 채 인메모리 액션 로그만 청정 포맷 완료.")
     }
 }

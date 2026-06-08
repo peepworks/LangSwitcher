@@ -43,7 +43,7 @@ class WindowMonitor {
     private static let axGetWindowFunc: AXUIElementGetWindowFunc? = {
         let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
         guard let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") else {
-            print("🚨 [WindowMonitor] Critical: _AXUIElementGetWindow 심볼 조회에 실패했습니다.")
+            dprint("🚨 [WindowMonitor] Critical: _AXUIElementGetWindow 심볼 조회에 실패했습니다.")
             return nil
         }
         return unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
@@ -165,6 +165,9 @@ class WindowMonitor {
         guard snapshot.isAppSpecificEnabled || snapshot.isWindowMemoryEnabled else { return }
 
         self.activeWindowElement = element
+        
+        // 🌟 [12번 리뷰 수복] 충돌 위험이 상존하던 구식 hashValue 폴백 경로 청정 소각
+        // 확실하지 않은 ID인 경우 윈도우 메모리 추적을 안전하게 건너뛰는 우아한 성능 저하(Graceful Degradation) 집행
         guard let windowID = getWindowID(from: element) else {
             dprint("🛡️ [Graceful Degradation] AXWindow ID 인출 실패로 인해 해당 창의 윈도우 메모리 추적을 안전하게 바이패스합니다.")
             return
@@ -177,9 +180,9 @@ class WindowMonitor {
         var targetLang: String? = nil
         var traceToRecord: DecisionTrace? = nil
 
-        // ── [의사결정 파이프라인 정형화] ──
+        // 🌟 [10번 리뷰 수복: 의사결정 파이프라인 단일화 및 유령 중복 else if 전량 제거]
         if let data = self.windowMemory.getLanguage(for: windowID) {
-            // 1) 장부에 기존 window 언어 기록이 상주하는 경우
+            // ── [경로 A] 윈도우 메모리 장부에 기존 기억이 엄연히 상주하는 컨텍스트 ──
             if snapshot.isWindowMemoryEnabled {
                 targetLang = data.language
                 traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
@@ -189,18 +192,19 @@ class WindowMonitor {
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
         } else {
-            // 2) 🌟 [수복] 장부에 없는 '신상 윈도우'가 포커스를 받은 경우 (중복 else if 서치 엔진 전량 소각)
+            // ── [경로 B] 장부에 없는 '새내기 신상 윈도우'가 최초 포커스된 컨텍스트 ──
+            // 데드 코드처럼 오해받던 2중 제어 흐름을 무결하게 파괴하고 청정하게 캡슐화 정산 완료
             if snapshot.isAppSpecificEnabled,
                let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
                 targetLang = appLang
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
 
-            // 새 창의 컨텍스트를 캐시 장부에 최초 등록 (O(1) LRU)
+            // 새 창의 언어 컨텍스트를 O(1) LRU 기억 장부에 원자적으로 최초 등록 집행
             self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
         }
 
-        // ── [언어 변환 명령 비동기 집행] ──
+        // ── [언어 변환 명령 및 추적 로그 비동기 일괄 집행] ──
         if let lang = targetLang {
             let delay = snapshot.appDelays.first(where: { $0.bundleIdentifier == latestAppID })?.delay ?? 0.05
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {

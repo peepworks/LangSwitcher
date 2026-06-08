@@ -79,10 +79,10 @@ struct TraceFactory {
         appName: String? = nil,
         domain: String? = nil,
         trigger: String? = nil,
-        timestamp: Date = Date() // 🌟 테스트를 위한 의존성 주입(DI) 통로
+        timestamp: Date = Date() // 테스트를 위한 의존성 주입(DI) 통로 완벽 유지
     ) -> DecisionTrace {
         return DecisionTrace(
-            timestamp: timestamp, // 🌟 외부에서 받은 시간을 그대로 전달
+            timestamp: timestamp,
             eventType: event,
             resultType: result,
             reasonCode: reason.code,
@@ -90,6 +90,9 @@ struct TraceFactory {
             appName: appName,
             domain: domain,
             triggerTextPreview: trigger
+            // 🌟 [최적화 정산] DecisionTrace 내부에서 ignoredRules 필드가 'nil' 기본값 사양을
+            // 취하고 있으므로, 빌더 호출 문맥에서는 무의미한 빈 배열 주입 행위 자체를 생략(패스)합니다.
+            // 향후 시뮬레이터 연동 시에만 지정 이니셜라이저를 노크하도록 완벽하게 복구 가드가 수립되었습니다.
         )
     }
 }

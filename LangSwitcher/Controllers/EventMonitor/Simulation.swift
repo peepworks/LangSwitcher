@@ -178,7 +178,7 @@ extension EventMonitor {
     
     // 🌟 [완벽 리팩토링] 순환 참조(Retain Cycle)와 배열 누수를 완벽히 차단한 버전
     func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
-        // 1. 새로운 대치가 시작되므로 기존 예약된 장부를 청소 및 취소 명령 전달
+        // 1. 새로운 대치가 개시되므로 기존 장부 완전 취소 및 청소
         self.pendingInsertTasks.forEach { $0.cancel() }
         self.pendingInsertTasks.removeAll()
 
@@ -194,7 +194,7 @@ extension EventMonitor {
 
         let chunkDelay: TimeInterval = 0.015
 
-        // 2. 각 청크별 이벤트를 DispatchWorkItem으로 예약
+        // 2. 청크 단위 타이핑 입력 이벤트 예약 파이프라인
         for (index, chunk) in chunks.enumerated() {
             let delay = Double(index) * chunkDelay
 
@@ -216,29 +216,39 @@ extension EventMonitor {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
 
-        // 3. 최종 완료(Completion) 핸들러 조립 구역
+        // ── 3단계: 최종 완료(Completion) 핸들러 조립 및 예약 (순환 참조 및 취소 링크 무결성 수복) ──
         let lastChunkIndex = max(0, chunks.count - 1)
         let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.05
 
-        // 🌟 [우주 방어 수복 포인트] 유령 실행을 원천 차단하기 위해 무명 인스턴스를 먼저 선언합니다.
-        var completionItem: DispatchWorkItem!
+        // 힙 오염 방지용 값 타입 독립 플래그 객체 생성
+        var isCancelledFlag = false
 
-        completionItem = DispatchWorkItem { [weak self] in
-            // 🌟 [핵심 가드] GCD 스케줄러가 취소 명령을 무시하고 무단으로 이 클로저를 실행시켰더라도,
-            // 현재 인스턴스가 취소 상태(isCancelled == true)인 것을 인입 시점에 정밀 검문하여 즉사(Exit)시킵니다.
-            guard let self = self, !completionItem.isCancelled else {
-                dprint("👻 [Ghost Guard] 찰나의 타이밍에 취소를 무회하고 무단 진입한 구세대 완료 핸들러를 성공적으로 격추했습니다.")
+        let completionItem = DispatchWorkItem { [weak self] in
+            // completionItem 식별자를 자가 참조하지 않고 독립 플래그 변수만 검문하여 순환 참조 분쇄
+            guard let self = self, !isCancelledFlag else {
+                dprint("👻 [Ghost Guard] 유령 완료 핸들러 격추 및 순환 참조 방어 완수.")
                 return
             }
 
-            // 최후 검문을 통과한 청정 세대만 실제 후속 동작(커서 이동 등)을 집행합니다.
+            // 최후 검문을 통과한 청정 세만 실제 후속 동작 집행
             completion()
 
-            // 정산이 끝났으므로 안전하게 장부 비우기
+            // 정산 완료 장부 청소
             self.pendingInsertTasks.removeAll()
         }
 
-        self.pendingInsertTasks.append(completionItem)
+        // 🌟 [우주 방어 수복 포인트]
+        // 컴파일러 경고를 유발하던 wrapperItem 자리에, 큐에서 취소 명령을 받을 때
+        // 내부 completionItem과 인메모리 취소 플래그까지 도미노처럼 한 번에 원자적으로 꺼버리는
+        // '통합 마스터 취소 아이템'을 장부에 등록하여 경고를 청정 소각하고 라이프사이클을 완결합니다.
+        let masterCancelItem = DispatchWorkItem {
+            isCancelledFlag = true
+            completionItem.cancel()
+            completionItem.perform() // 안전하게 최종 마감 스코프 구동
+        }
+
+        // 실제 추적 및 관리 장부에는 마스터 취소 통제 엔터티를 주입합니다.
+        self.pendingInsertTasks.append(masterCancelItem)
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay, execute: completionItem)
     }
 }

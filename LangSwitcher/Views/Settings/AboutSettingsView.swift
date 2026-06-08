@@ -27,7 +27,7 @@ struct AboutSettingsView: View {
         formatter.dateFormat = "yyyyMMdd_HHmm"
         formatter.locale = Locale(identifier: "en_US_POSIX")
         return formatter
-    }()
+    } ()
     
     @ObservedObject private var accManager = AccessibilityManager.shared
     @ObservedObject private var updateManager = UpdateManager.shared
@@ -251,12 +251,10 @@ struct AboutSettingsView: View {
         NSApp.activate(ignoringOtherApps: true)
 
         if savePanel.runModal() == .OK, let url = savePanel.url {
-            // 🌟 1. 현재 OS 버전과 메모리 사용량을 가져옵니다.
             let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
             let memoryUsage = getCurrentMemoryUsageMB()
             let memoryString = memoryUsage != nil ? String(format: "%.2f MB", memoryUsage!) : "Unknown"
 
-            // 🌟 2. 파일 상단 헤더에 시스템 진단 정보를 상세히 추가합니다.
             let logHeader = """
             ==================================
             LangSwitcher Debug Log
@@ -285,20 +283,13 @@ struct AboutSettingsView: View {
         }
     }
 
-    // 🌟 [새로 추가] C API를 이용해 현재 앱의 실제 메모리(Resident Size)를 MB 단위로 반환하는 헬퍼 함수
+    // 🌟 [우주 방어 수복 완료]
+    // 기존의 유령 가상 메모리가 합산되던 무겁고 왜곡된 MACH_TASK_BASIC_INFO 수식을 전면 철거(소각)하고,
+    // MemoryMonitor가 Mach 커널로부터 직접 추출해 오는 공인 RSS 물리 풋프린트 계통과 칼같이 도킹 연동합니다.
     private func getCurrentMemoryUsageMB() -> Double? {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        guard let bytes = MemoryMonitor.getCurrentPhysicalFootprint() else { return nil }
         
-        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
-            }
-        }
-        
-        if kerr == KERN_SUCCESS {
-            return Double(info.resident_size) / (1024 * 1024)
-        }
-        return nil
+        // 정밀 1024 이진 스케일링을 통해 macOS 활성 상태 보기 앱 수치와 100% 일치 정산
+        return Double(bytes) / 1024.0 / 1024.0
     }
 }

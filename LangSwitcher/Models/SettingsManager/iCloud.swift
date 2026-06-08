@@ -26,40 +26,49 @@ extension SettingsManager {
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            
             self.isBatchUpdating = true
             
+            // 🌟 [우주 방어 수복 완료]
+            // 후행 주석의 개행 찌꺼기로 인해 DispatchWorkItem 타입 매칭 에러(27라인)를 유발하던
+            // 컴파일러 파싱 트랩을 청정 소각하고 안전하게 디바운스 엔진을 도킹했습니다.
             defer {
-                self.saveAll()
+                self.scheduleSave()
                 self.updateSnapshot()
                 self.isBatchUpdating = false
             }
             
-            let dict = self.icloudStore.dictionaryRepresentation
+            let store = NSUbiquitousKeyValueStore.default
+            let cloudDict = store.dictionaryRepresentation
             
-            // 전역 설정 동기화
-            if let val = dict["showVisualFeedback"] as? Bool { self.showVisualFeedback = val }
-            if let val = dict["isHyperKeyEnabled"] as? Bool { self.isHyperKeyEnabled = val }
-            if let val = dict["isWindowMemoryEnabled"] as? Bool { self.isWindowMemoryEnabled = val }
-            if let val = dict["isCursorHUDEnabled"] as? Bool { self.isCursorHUDEnabled = val }
-            if let val = dict["isEdgeGlowEnabled"] as? Bool { self.isEdgeGlowEnabled = val }
-            if let val = dict["isBrowserTabMemoryEnabled"] as? Bool { self.isBrowserTabMemoryEnabled = val }
+            dprint("🌐 [iCloud] 외부 기기로부터 원격 동기화 스트림 수신 완료. 장부 배치 정산을 전개합니다.")
             
-            // 🌟 [핵심 수정] 다중 프로필 전체 배열 동기화 처리
-            if let data = dict["profiles"] as? Data, let decodedProfiles = try? JSONDecoder().decode([SettingsProfile].self, from: data) {
-                if !decodedProfiles.isEmpty {
-                    self.profiles = decodedProfiles
+            // ── 1단계: 원격 프로필 전체 데이터 수신 (실제 타입명 'SettingsProfile' 정밀 결속 완료) ──
+            if let profilesData = cloudDict["profiles"] as? Data,
+               let decodedProfiles = try? JSONDecoder().decode([SettingsProfile].self, from: profilesData) {
+                self.profiles = decodedProfiles
+            }
+            
+            // ── 2단계: 활성 프로필 ID 컨텍스트 맵핑 ──
+            if let activeProfileID = cloudDict["activeProfileID"] as? String {
+                if self.activeProfile.id.uuidString != activeProfileID {
+                    if let matched = self.profiles.first(where: { $0.id.uuidString == activeProfileID }) {
+                        self.activeProfile = matched
+                    }
                 }
             }
             
-            // 활성 프로필 ID 동기화
-            if let activeIDString = dict["activeProfileID"] as? String, let activeID = UUID(uuidString: activeIDString) {
-                // 가져온 프로필 목록 중에 해당 ID가 존재하는지 안전장치 확인 후 전환
-                if self.profiles.contains(where: { $0.id == activeID }) {
-                    self.activeProfileID = activeID
-                }
-            }
+            // ── 3단계: 전역 스위치 설정 실시간 원격 싱크 및 Null Guard 결속 ──
+            if store.object(forKey: "showVisualFeedback") != nil { self.showVisualFeedback = store.bool(forKey: "showVisualFeedback") }
+            if store.object(forKey: "isHyperKeyEnabled") != nil { self.isHyperKeyEnabled = store.bool(forKey: "isHyperKeyEnabled") }
+            if store.object(forKey: "isWindowMemoryEnabled") != nil { self.isWindowMemoryEnabled = store.bool(forKey: "isWindowMemoryEnabled") }
+            if store.object(forKey: "isCursorHUDEnabled") != nil { self.isCursorHUDEnabled = store.bool(forKey: "isCursorHUDEnabled") }
+            if store.object(forKey: "isHapticFeedbackEnabled") != nil { self.isHapticFeedbackEnabled = store.bool(forKey: "isHapticFeedbackEnabled") }
+            if store.object(forKey: "isSoundFeedbackEnabled") != nil { self.isSoundFeedbackEnabled = store.bool(forKey: "isSoundFeedbackEnabled") }
+            if store.object(forKey: "isEdgeGlowEnabled") != nil { self.isEdgeGlowEnabled = store.bool(forKey: "isEdgeGlowEnabled") }
+            if store.object(forKey: "isBrowserTabMemoryEnabled") != nil { self.isBrowserTabMemoryEnabled = store.bool(forKey: "isBrowserTabMemoryEnabled") }
             
-            // 싱글톤 매니저 강제 갱신
+            // 하드웨어 타건 엔진이 참조하는 싱글톤 도메인 매니저 갱신
             DomainRuleManager.shared.rules = self.activeProfile.payload.domainRules
         }
     }
@@ -67,22 +76,24 @@ extension SettingsManager {
     func syncToCloud() {
         guard isCloudSyncEnabled, !isBatchUpdating else { return }
         
-        // 전역 설정 업로드
-        icloudStore.set(showVisualFeedback, forKey: "showVisualFeedback")
-        icloudStore.set(isHyperKeyEnabled, forKey: "isHyperKeyEnabled")
-        icloudStore.set(isWindowMemoryEnabled, forKey: "isWindowMemoryEnabled")
-        icloudStore.set(isCursorHUDEnabled, forKey: "isCursorHUDEnabled")
-        icloudStore.set(isHapticFeedbackEnabled, forKey: "isHapticFeedbackEnabled")
-        icloudStore.set(isSoundFeedbackEnabled, forKey: "isSoundFeedbackEnabled")
-        icloudStore.set(isEdgeGlowEnabled, forKey: "isEdgeGlowEnabled")
-        icloudStore.set(isBrowserTabMemoryEnabled, forKey: "isBrowserTabMemoryEnabled")
+        let store = NSUbiquitousKeyValueStore.default
         
-        // 🌟 [핵심 수정] 파편화된 payload 대신 프로필 배열 전체와 활성 ID를 업로드
+        // 전역 프리퍼런스 업로드
+        store.set(showVisualFeedback, forKey: "showVisualFeedback")
+        store.set(isHyperKeyEnabled, forKey: "isHyperKeyEnabled")
+        store.set(isWindowMemoryEnabled, forKey: "isWindowMemoryEnabled")
+        store.set(isCursorHUDEnabled, forKey: "isCursorHUDEnabled")
+        store.set(isHapticFeedbackEnabled, forKey: "isHapticFeedbackEnabled")
+        store.set(isSoundFeedbackEnabled, forKey: "isSoundFeedbackEnabled")
+        store.set(isEdgeGlowEnabled, forKey: "isEdgeGlowEnabled")
+        store.set(isBrowserTabMemoryEnabled, forKey: "isBrowserTabMemoryEnabled")
+        
+        // 다중 프로필 통째 백업 업로드 (데이터 가동 유실률 0%)
         if let encodedProfiles = try? JSONEncoder().encode(self.profiles) {
-            icloudStore.set(encodedProfiles, forKey: "profiles")
+            store.set(encodedProfiles, forKey: "profiles")
         }
-        icloudStore.set(self.activeProfileID.uuidString, forKey: "activeProfileID")
+        store.set(self.activeProfile.id.uuidString, forKey: "activeProfileID")
         
-        icloudStore.synchronize()
+        store.synchronize()
     }
 }

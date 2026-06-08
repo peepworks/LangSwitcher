@@ -27,11 +27,10 @@ class AppMonitor {
     
     private var observer: NSObjectProtocol?
     private var deactivateObserver: NSObjectProtocol?
-        
+    
     private var pendingObservationTask: Task<Void, Never>?
-        
+    
     // 🌟 [최적화] 클래스가 @MainActor이므로 복잡한 수동 DispatchQueue barrier를 완전히 도려냅니다.
-    // 컴파일러가 메인 액터 격리를 통해 이 변수의 동시성 안전성을 빌드 타임에 100% 보장합니다.
     var activeAppBundleID: String = ""
 
     private init() {} // 싱글톤 보호
@@ -52,7 +51,6 @@ class AppMonitor {
             queue: .main
         ) { notification in
             
-            // 🌟 Swift 6 가드: 알림 콜백 내부를 메인 액터 지대로 안전하게 바인딩
             MainActor.assumeIsolated {
                 guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       let bundleID = app.bundleIdentifier else { return }
@@ -69,7 +67,6 @@ class AppMonitor {
                     guard !Task.isCancelled else { return }
                     guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID else { return }
                     
-                    // observeApp이 동기 함수이므로 앞에 무의미한 await를 제거합니다.
                     WindowMonitor.shared.observeApp(pid: app.processIdentifier)
                 }
             }
@@ -90,8 +87,6 @@ class AppMonitor {
 
                 HUDManager.shared.hideCursorMiniHUD()
 
-                // 🌟 [우주 방어 수복 포인트 2] 레거시 하드코딩 상수를 완전히 청정 소각하고,
-                // BrowserTabManager의 실시간 등록 장부와 파이프라인을 다이렉트로 결속합니다.
                 let registeredBrowsers = BrowserTabManager.shared.supportedBrowserBundleIDs
 
                 if registeredBrowsers.contains(bundleID) {
@@ -117,8 +112,6 @@ class AppMonitor {
     }
 }
 
-// 🌟 [최적화] 타이머 제어, 로그 추가, 셀프 힐링 메서드 호출은 모두 메인 스레드 기반이므로
-// 클래스 전체를 @MainActor로 격리하여 싱글톤 shared 참조 에러를 깔끔하게 해결합니다.
 @MainActor
 class MemoryMonitor {
     static let shared = MemoryMonitor()
@@ -130,7 +123,6 @@ class MemoryMonitor {
     
     func startMonitoring() {
         timer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
-            // 🌟 타이머 블록이 깨어날 때 메인 액터 격리 상태임을 증명
             MainActor.assumeIsolated {
                 self?.checkMemoryUsage()
             }
@@ -139,9 +131,9 @@ class MemoryMonitor {
 
     // MARK: - 능동적 메모리 자기치유 커널 (즉시 동기 집행 사양)
 
-    @MainActor
     private func checkMemoryUsage() {
-        guard let currentMemory = reportMemoryUsage() else { return }
+        // 🌟 [수복] 아래에서 통합 조율된 청정 SSOT 계통 함수를 다이렉트로 라우팅합니다.
+        guard let currentMemory = Self.getCurrentPhysicalFootprint() else { return }
     
         if currentMemory > thresholdInBytes {
             let memoryInMB = currentMemory / 1024 / 1024
@@ -152,12 +144,11 @@ class MemoryMonitor {
                 targetApp: "LangSwitcher System",
                 appliedRule: "Memory Alert",
                 finalInputSource: "\(memoryInMB) MB",
-                result: .failure,
-                failureReason: .unknown
+                result: .success, // 시스템 치유 동작의 성공 기록이므로 정합성 수정
+                failureReason: .none
             )
             SettingsManager.shared.addLog(log)
     
-            // ✅ 중첩 비동기 껍데기 완전 철거 완료! 지연 없이 즉시 동기 실행됩니다.
             BrowserTabManager.shared.clearMemory()
             DecisionTraceManager.shared.clear()
             SettingsManager.shared.clearLogs()
@@ -166,20 +157,23 @@ class MemoryMonitor {
         }
     }
 
-    // 시스템 내장 구조체를 읽는 가벼운 함수이므로 메인 스레드에서 동기식 실행해도 안전합니다.
-    private func reportMemoryUsage() -> UInt64? {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size) / 4
+    // 🌟 [우주 방어 수복 포인트]
+    // 전형적인 하드코딩 4바이트 정산 오류(size / 4)를 스위프트 표준 타입 메모리 레이아웃으로 완벽히 개조하고,
+    // 외부 UI 뷰(`AboutSettingsView`)에서도 공용 참조할 수 있도록 public 전역 계산 창구로 격상 노출합니다.
+    public static func getCurrentPhysicalFootprint() -> UInt64? {
+        var info = task_vm_info()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info>.size / MemoryLayout<integer_t>.size)
         
-        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+        let kerr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
                 task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
             }
         }
         
-        if kerr == KERN_SUCCESS {
-            return info.phys_footprint
+        guard kerr == KERN_SUCCESS else {
+            return nil
         }
-        return nil
+        
+        return info.phys_footprint // 가상 주소가 완전히 배제된 macOS 공인 순수 물리 RSS 반환
     }
 }

@@ -44,7 +44,7 @@ struct DecisionTrace: Identifiable, Codable, Hashable {
     let eventType: EventType
     let resultType: ResultType
     
-    // 🌟 핵심: 분석용 코드와 표시용 메시지 분리
+    // 🌟 분석용 코드와 표시용 메시지 분리
     let reasonCode: String
     let reasonMessage: String
     
@@ -57,12 +57,30 @@ struct DecisionTrace: Identifiable, Codable, Hashable {
     
     let matchedRuleID: UUID?
     let matchedRuleName: String?
-    let ignoredRules: [IgnoredRuleTrace]
+    
+    // 🌟 [최적화 수복] 룰 시뮬레이터 연동 전까지 무의미한 빈 배열 메타데이터 힙 할당을 영구 차단합니다.
+    let ignoredRules: [IgnoredRuleTrace]?
     let metadata: [String: String]
     
-    // 🌟 [핵심 수정] timestamp 파라미터의 기본값(= Date())을 제거했습니다!
-    // 이제 무조건 TraceFactory가 건네주는 시간만 받아들입니다.
-    init(id: UUID = UUID(), timestamp: Date, eventType: EventType, resultType: ResultType, reasonCode: String, reasonMessage: String, appBundleID: String? = nil, appName: String? = nil, windowTitlePreview: String? = nil, domain: String? = nil, triggerTextPreview: String? = nil, matchedRuleID: UUID? = nil, matchedRuleName: String? = nil, ignoredRules: [IgnoredRuleTrace] = [], metadata: [String : String] = [:]) {
+    // 🌟 [통합 정산] init 매개변수의 타입을 상단 선언부와 일치하도록 명시적 옵셔널([IgnoredRuleTrace]?)로 격상하고,
+    // 기본값을 'nil'로 결속하여 팩토리 빌더 호출 문맥에서 낭비되는 메모리 및 인코딩 연산 오버헤드를 물리적으로 0% 소각합니다.
+    init(
+        id: UUID = UUID(),
+        timestamp: Date,
+        eventType: EventType,
+        resultType: ResultType,
+        reasonCode: String,
+        reasonMessage: String,
+        appBundleID: String? = nil,
+        appName: String? = nil,
+        windowTitlePreview: String? = nil,
+        domain: String? = nil,
+        triggerTextPreview: String? = nil,
+        matchedRuleID: UUID? = nil,
+        matchedRuleName: String? = nil,
+        ignoredRules: [IgnoredRuleTrace]? = nil, // 🌟 [교정] 일반 배열 default [] 에서 옵셔널 default nil 로 정정 완료
+        metadata: [String : String] = [:]
+    ) {
         self.id = id
         self.timestamp = timestamp
         self.eventType = eventType

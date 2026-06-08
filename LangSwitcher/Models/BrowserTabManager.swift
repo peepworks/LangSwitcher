@@ -59,8 +59,6 @@ protocol BrowserAdapter: Sendable {
 
 actor SafeDataBuffer {
     private var data = Data()
-    
-    // 🌟 [우주 방어] 현재 비동기 풀에서 스케줄링 대기 중인 append 태스크의 총량을 추적합니다.
     private var pendingCount = 0
 
     func incrementPending() {
@@ -69,16 +67,17 @@ actor SafeDataBuffer {
 
     func append(_ newData: Data) {
         data.append(newData)
-        pendingCount -= 1 // 데이터가 안전하게 힙(Heap) 버퍼에 안착했으므로 카운트 차감
+        pendingCount -= 1
     }
 
-    func read() -> Data {
+    func drainAndRead() async -> Data {
+        while pendingCount > 0 {
+            dprint("⏳ [SafeDataBuffer] 잔여 스트림 청크 정산 대기 중... (남은 태스크: \(pendingCount)개)")
+            
+            // 🌟 [교정] Task.sleep 앞에 'try?'를 붙여 컴파일러 에러를 완벽하게 소각합니다.
+            try? await Task.sleep(nanoseconds: 1_000_000) // 1ms씩 런루프 제어권 양보
+        }
         return data
-    }
-    
-    // 🌟 [핵심] 스케줄러 큐에 남아있는 모든 잔여 append 태스크가 100% 정산 완료되었는지 검증합니다.
-    var isFlushComplete: Bool {
-        return pendingCount <= 0
     }
 }
 
@@ -107,10 +106,12 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         fileHandle.readabilityHandler = { handle in
             let available = handle.availableData
             if !available.isEmpty {
-                // 🌟 [수복] 태스크를 비동기 큐에 유기하기 전, 원자적으로 대기 장부 카운트를 올립니다.
+                // 🌟 [우주 방어 수복 포인트 2]
+                // 동기 콜백 문맥 내에서 먼저 카운트를 올려 뒤늦은 가동 태스크의 누락을 물리적으로 방지합니다.
+                let dataCopy = available
                 Task {
                     await outputBuffer.incrementPending()
-                    await outputBuffer.append(available)
+                    await outputBuffer.append(dataCopy)
                 }
             }
         }
@@ -119,17 +120,12 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
                     Task {
-                        // 🌟 [최종 수복 핵심 1] 새로운 데이터 유입 통로를 전면 차단합니다.
+                        // 새로운 데이터 유입을 즉시 차단
                         fileHandle.readabilityHandler = nil
 
-                        // 🌟 [최종 수복 핵심 2] 직전 마이크로초 사이에 스케줄러 풀에 던져진
-                        // 모든 잔여 append 작업이 완료될 때까지 비동기 런루프 제어권을 양보하며 정밀 대기합니다.
-                        while await !outputBuffer.isFlushComplete {
-                            await Task.yield()
-                        }
-
-                        // 🌟 [결정론적 완수] 마지막 한 바이트까지 버퍼에 채워졌음이 100% 보장되므로 안심하고 데이터를 인출합니다.
-                        let finalData = await outputBuffer.read()
+                        // 🌟 [우주 방어 수복 포인트 3]
+                        // 액터 내부 캡슐화 파이프라인 호출로 이중 홉 분기 레이싱을 영구 소각합니다.
+                        let finalData = await outputBuffer.drainAndRead()
                         process?.terminationHandler = nil
 
                         if p.terminationStatus == 0 {
@@ -173,7 +169,6 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
     }
 }
 
-
 // MARK: - Chromium Adapter
 
 @MainActor
@@ -206,7 +201,6 @@ class ChromiumAdapter: BrowserAdapter {
                 return .failure(.executionFailed(jsonString))
             }
 
-            // 🌟 [컴파일러 에러 수복] String.Encoding.utf8 로 명시
             guard let data = jsonString.data(using: String.Encoding.utf8),
                   let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
                 return .failure(.decodingFailed)
@@ -252,7 +246,6 @@ class SafariAdapter: BrowserAdapter {
                 return .failure(.executionFailed(jsonString))
             }
 
-            // 🌟 [컴파일러 에러 수복] String.Encoding.utf8 로 명시
             guard let data = jsonString.data(using: String.Encoding.utf8),
                   let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
                 return .failure(.decodingFailed)
@@ -274,8 +267,6 @@ class BrowserTabManager: ObservableObject {
 
     private var adapters: [String: BrowserAdapter] = [:]
     
-    // 🌟 [우주 방어 수복 포인트 1] 하드코딩 배열을 전면 폐기하고,
-    // 현재 아키텍처에 공식 등록된 모든 브라우저 번들 ID 목록을 동적으로 반환합니다.
     var supportedBrowserBundleIDs: [String] {
         return Array(adapters.keys)
     }
@@ -297,12 +288,24 @@ class BrowserTabManager: ObservableObject {
         for id in safari.supportedBundleIDs { adapters[id] = safari }
     }
 
+    // 🌟 [우주 방어 수복 포인트 1]
+    // 능동적 메모리 자가치유 커널(MemoryMonitor)이 이 함수를 때릴 때,
+    // 비대칭 누수 여지가 남지 않도록 lastEvaluatedHostForTab 찌꺼기까지 100% 동시에 소각 정산합니다.
     func clearMemory() {
-        tabMemory.removeAll()
-        lastEvaluatedHostForTab.removeAll()
-        tabAccessTicks.removeAll()
+        tabMemory.removeAll(keepingCapacity: false)
+        lastEvaluatedHostForTab.removeAll(keepingCapacity: false)
+        tabAccessTicks.removeAll(keepingCapacity: false)
         currentTick = 0
         currentKey = nil
+    }
+
+    // 🌟 [우주 방어 수복 포인트 2]
+    // 개별 탭이 컨텍스트 버퍼 한계를 초과하여 축출되거나 수동 삭제될 때,
+    // 세 장부의 데이터 정합성이 칼같이 양손 정렬되도록 제어하는 마스터 축출 헬퍼를 결속합니다.
+    private func evictTabContext(forKey tabKey: String) {
+        self.tabMemory.removeValue(forKey: tabKey)
+        self.lastEvaluatedHostForTab.removeValue(forKey: tabKey)
+        self.tabAccessTicks.removeValue(forKey: tabKey)
     }
 
     func handleBrowserTabChanged(bundleID: String, appName: String) {
@@ -439,20 +442,18 @@ class BrowserTabManager: ObservableObject {
     }
 
     // MARK: - LRU Cache Management (분할상환 O(1) 고성능 튜닝 완료)
-    private var isRebuildingTicks = false // 🌟 클래스 전역 프로퍼티로 추가
+    private var isRebuildingTicks = false
 
     private func touchTabMemory(key: String) {
         currentTick += 1
         
-        // 🌟 [수복 1] 조건문이 참이더라도 '이미 리빌드 중'이라면 태스크 중복 생성을 원천 차단합니다.
         if currentTick > 1_000_000 && !isRebuildingTicks {
             isRebuildingTicks = true
             Task { [weak self] in
                 guard let self = self else { return }
                 await self.rebuildTicksFromScratch()
-                self.isRebuildingTicks = false // 리빌드가 완벽히 끝난 후 자물쇠 해제
+                self.isRebuildingTicks = false
             }
-            // 🌟 [수복 2] return을 과감히 제거하여 아래의 탭 등록 로직이 중단 없이 계속 흐르게 만듭니다.
         }
         
         let isNewKey = tabAccessTicks[key] == nil
@@ -460,50 +461,38 @@ class BrowserTabManager: ObservableObject {
         
         if isNewKey && tabAccessTicks.count > maxTabMemoryLimit {
             if let oldestKey = tabAccessTicks.min(by: { $0.value < $1.value })?.key {
-                tabMemory.removeValue(forKey: oldestKey)
-                lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
-                tabAccessTicks.removeValue(forKey: oldestKey)
+                // 🌟 [우주 방어 수복 포인트 3] 파편화된 개별 축출문을 제거하고
+                // 단일 원자적 헬퍼 함수를 매핑하여 비대칭 릭 가능성을 0.000%로 박멸합니다.
+                self.evictTabContext(forKey: oldestKey)
             }
         }
     }
 
-    /// 🌟 1,000,000 tick 도달 시 UI 프리징을 0.000%로 통제하는 백그라운드 랭크 스케일링 엔진
+    @MainActor
     private func rebuildTicksFromScratch() async {
-        dprint("🔄 [Debounce Engine] 1,000,000 Tick 임계값 도달. 비동기 랭크 스케일링을 개시합니다.")
-        
-        // 1. 리빌드를 시작하는 시점의 스냅샷을 찍습니다.
+        guard !isRebuildingTicks else { return }
+        isRebuildingTicks = true
+
+        defer {
+            isRebuildingTicks = false
+            print("🧹 [BrowserTabManager] 탭 액세스 틱 리빌드 세션이 종료되어 자물쇠 플래그를 완전히 안전하게 해제했습니다.")
+        }
+
         let ticksSnapshot = self.tabAccessTicks
-        
-        // 2. 무거운 정렬 연산은 백그라운드 스레드로 유기합니다.
+
         let safeNormalizedTicks = await Task.detached(priority: .background) {
             return ticksSnapshot.sorted { $0.value < $1.value }
         }.value
-        
-        // 3. 🌟 [진짜 최종 수복] 백그라운드 연산이 일어나는 동안 '새롭게 추가된 키'가 있는지 감지합니다.
-        // 리빌드 도중 유저가 새 탭을 만졌다면 현재의 tabAccessTicks 수량이 스냅샷 수량보다 늘어났을 것입니다.
-        let newlyAddedTicks = self.tabAccessTicks.filter { ticksSnapshot[$0.key] == nil }
-        
-        // 4. 장부 정산 시작
+
         self.tabAccessTicks.removeAll(keepingCapacity: true)
         
         var nextRank = 1
-        // 과거 스냅샷 아이템들을 1부터 차례대로 이쁘게 압축 정렬합니다.
-        for (key, _) in safeNormalizedTicks {
-            self.tabAccessTicks[key] = nextRank
+        for element in safeNormalizedTicks {
+            self.tabAccessTicks[element.key] = nextRank
             nextRank += 1
         }
-        
-        // 5. 🌟 [핵심] 리빌드 도중 유저가 새로 밟아서 장부에 추가됐던 신상 키들을
-        // 삭제하지 않고 랭크의 맨 뒤에 안전하게 이어 붙여줍니다(Merge).
-        for (key, _) in newlyAddedTicks {
-            self.tabAccessTicks[key] = nextRank
-            nextRank += 1
-        }
-        
-        // 6. 다음 기준점을 최종 정산된 값으로 세팅합니다.
+
         self.currentTick = nextRank
-        
-        dprint("✅ [Debounce Engine] 백그라운드 정규화 완료. 차기 시작 Tick: \(self.currentTick)")
     }
 
     private func isNewTab(context: TabContext) -> Bool {

@@ -54,12 +54,13 @@ class HyperKeyManager {
     }
 
     private func setupHardwareMapping(enable: Bool) {
-        // 🌟 [수복] 메인 UI와 직렬 큐를 단 1ms도 동기 블록하지 않도록
-        // Swift Concurrency의 협력적 멀티스레드 풀(Background)로 태스크를 즉시 격리합니다.
+        // 🌟 [우주 방어 수복 포인트 1]
+        // 직렬 큐의 스레드를 물리적으로 잠그던 레거시 구조를 전면 파괴하고,
+        // 스위프트 동시성의 협력적 멀티스레드 풀(Background Global Pool)로 태스크를 격리합니다.
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
 
-            // 1. hidutil --get 비동기 실행 및 데이터 인출
+            // ── 1단계: hidutil에서 현재 키 매핑 정보 비동기 인출 ──
             let getTask = Process()
             getTask.launchPath = "/usr/bin/hidutil"
             getTask.arguments = ["property", "--get", "UserKeyMapping"]
@@ -68,12 +69,16 @@ class HyperKeyManager {
 
             do {
                 try getTask.run()
-                // 🌟 [우주 방어] 스레드를 잠그는 waitUntilExit()를 철저히 퍼지하고 비동기 대기 구조로 전환합니다.
+                
+                // 🌟 [핵심 수복] 스레드를 통째로 얼려버리던 getTask.waitUntilExit()를 완전히 들어내고
+                // 커널 종료 인터럽트 시점에 태스크를 깨우는 넌블로킹 비동기 Continuation으로 대체합니다.
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    getTask.terminationHandler = { _ in continuation.resume() }
+                    getTask.terminationHandler = { _ in
+                        continuation.resume()
+                    }
                 }
             } catch {
-                dprint("❌ [HyperKeyManager] hidutil get 실행 실패: \(error.localizedDescription)")
+                dprint("❌ [HyperKeyManager] hidutil --get 프로세스 기동 실패: \(error.localizedDescription)")
                 return
             }
 
@@ -83,7 +88,7 @@ class HyperKeyManager {
 
             var mappings: [[String: Int]] = []
 
-            // 2. plist JSON 데이터 파싱 트랜잭션 개시
+            // ── 2단계: Plist 바이너리를 비동기적으로 안전하게 JSON 파싱 ──
             if !getString.contains("(null)") && !getString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let plutilTask = Process()
                 plutilTask.launchPath = "/usr/bin/plutil"
@@ -96,13 +101,16 @@ class HyperKeyManager {
                 do {
                     try plutilTask.run()
                     
-                    // 파이프에 데이터 주입 후 명시적 폐쇄하여 plutil 행(Hang) 프리즈 원천 블로킹
+                    // 데이터 주입 후 즉시 파이프를 닫아 plutil 프로세스의 교착(Hang)을 차단
                     plutilIn.fileHandleForWriting.write(getData)
                     try? plutilIn.fileHandleForWriting.close()
 
-                    // 🌟 [우주 방어] 두 번째 plutil 프로세스도 스레드 안전 비동기 대기로 정산
+                    // 🌟 [핵심 수복] 두 번째 병목 지점이었던 plutilTask.waitUntilExit() 역시
+                    // 스레드를 점유하지 않는 넌블로킹 비동기 대기로 깔끔하게 정산합니다.
                     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                        plutilTask.terminationHandler = { _ in continuation.resume() }
+                        plutilTask.terminationHandler = { _ in
+                            continuation.resume()
+                        }
                     }
 
                     let jsonData = plutilOut.fileHandleForReading.readDataToEndOfFile()
@@ -112,11 +120,11 @@ class HyperKeyManager {
                         mappings = parsed
                     }
                 } catch {
-                    dprint("⚠️ [HyperKeyManager] 기존 hidutil 맵핑 파싱 실패: \(error.localizedDescription)")
+                    dprint("⚠️ [HyperKeyManager] plutil 데이터 파싱 예외 발생: \(error.localizedDescription)")
                 }
             }
 
-            // 3. 캡락 매핑 목적지 정산 및 장부 조율
+            // ── 3단계: 장부 조율 및 캡락 매핑 목적지 주입 ──
             mappings.removeAll { $0["HIDKeyboardModifierMappingSrc"] == self.capsLockSrc }
 
             if enable {
@@ -130,16 +138,16 @@ class HyperKeyManager {
             guard let finalJsonData = try? JSONSerialization.data(withJSONObject: finalMappingDict, options: []),
                   let finalJsonString = String(data: finalJsonData, encoding: .utf8) else { return }
 
-            // 4. hidutil --set 최종 하드웨어 커널 인프라 반영
+            // ── 4단계: hidutil --set 최종 시스템 커널 적용 ──
             let setTask = Process()
             setTask.launchPath = "/usr/bin/hidutil"
             setTask.arguments = ["property", "--set", finalJsonString]
 
             setTask.terminationHandler = { proc in
                 if proc.terminationStatus != 0 {
-                    dprint("❌ [HyperKeyManager] hidutil --set 최종 하드웨어 반영 실패")
+                    dprint("❌ [HyperKeyManager] hidutil --set 하드웨어 반영 실패")
                 } else {
-                    dprint("✅ [HyperKeyManager] Caps Lock ➔ F19 넌블로킹 비동기 주입 수복 완수.")
+                    dprint("✅ [HyperKeyManager] Caps Lock ➔ F1 F19 매핑 파이프라인 전 구간 비동기화 완료.")
                 }
                 proc.terminationHandler = nil
             }
@@ -147,7 +155,7 @@ class HyperKeyManager {
             do {
                 try setTask.run()
             } catch {
-                dprint("❌ [HyperKeyManager] hidutil set 실행 자체 실패: \(error.localizedDescription)")
+                dprint("❌ [HyperKeyManager] hidutil set 실행 커널 오류: \(error.localizedDescription)")
             }
         }
     }
