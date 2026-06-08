@@ -25,29 +25,26 @@ import Foundation
 
 typealias AXUIElementGetWindowFunc = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
 
-@MainActor // 🌟 클래스 전체를 메인 액터로 격리하여 수동 배리어 동시성 큐를 전면 제거합니다.
 class WindowMonitor {
     static let shared = WindowMonitor()
 
     private let windowMemory = WindowLRUCache(capacity: 200)
-    
+
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
-    
-    var currentPID: pid_t = 0
-    var activeWindowElement: AXUIElement?
+    private let stateQueue = DispatchQueue(label: "com.peepworks.langswitcher.windowstate", attributes: .concurrent)
 
-    // 🌟 [최종 최적화 수복 1] 런타임 1회 평가 static 캐싱 저장소 구축
-    // Swift static let의 lazy 특성을 활용하여 dlsym 검색 연산을 최초 1회로 제한합니다.
-    // 파트너님 오리지널 코드의 언더바("_") 규격을 완벽하게 계승하여 링크 에러를 방지합니다.
-    private static let axGetWindowFunc: AXUIElementGetWindowFunc? = {
-        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
-        guard let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") else {
-            dprint("🚨 [WindowMonitor] Critical: _AXUIElementGetWindow 심볼 조회에 실패했습니다.")
-            return nil
-        }
-        return unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
-    }()
+    private var _currentPID: pid_t = 0
+    var currentPID: pid_t {
+        get { stateQueue.sync { _currentPID } }
+        set { stateQueue.async(flags: .barrier) { self._currentPID = newValue } }
+    }
+
+    private var _activeWindowElement: AXUIElement?
+    var activeWindowElement: AXUIElement? {
+        get { stateQueue.sync { _activeWindowElement } }
+        set { stateQueue.async(flags: .barrier) { self._activeWindowElement = newValue } }
+    }
 
     private init() {
         DistributedNotificationCenter.default().addObserver(
@@ -60,93 +57,163 @@ class WindowMonitor {
         )
     }
 
-    func observeApp(pid: pid_t) {
-        // ----------------------------------------------------------------
-        // 🌟 [우주 방어 수복 포인트 1]
-        // 태스크 취소 검사보다 '기존 시스템 옵저버 자원의 해제'를 최우선 순위로 격상합니다.
-        // 태스크가 취소되어 돌아나가더라도, 이전 세대의 좀비 소스는 무조건 런루프에서 뜯어냅니다.
-        // ----------------------------------------------------------------
-        if let observer = self.axObserver, let rl = self.observerRunLoop {
-            let src = AXObserverGetRunLoopSource(observer)
-            CFRunLoopRemoveSource(rl, src, .commonModes)
-            
-            dprint("🧹 [WindowMonitor] 선제적 자원 퍼지: 이전 세대의 AXObserver 런루프 소스를 물리적으로 차단했습니다.")
-            
-            // 장부 포인터 즉시 초기화로 대기 스레드 중복 참조 원천 차단
-            self.axObserver = nil
-            self.observerRunLoop = nil
+    private func getWindowID(from element: AXUIElement) -> CGWindowID? {
+        var windowID: CGWindowID = 0
+        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
+        if let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") {
+            let getWindow = unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
+            if getWindow(element, &windowID) == .success { return windowID }
         }
+        return CGWindowID(element.hashValue)
+    }
 
-        // 🌟 [수복 포인트 2] 장부 청소가 완벽히 끝난 시점에 안전하게 태스크 취소 체크를 집행합니다.
-        guard !Task.isCancelled else {
-            dprint("🧹 [WindowMonitor] observeApp 태스크 취소 상태 진입 확인. 장부 청소 후 안전 퇴근합니다.")
+    @objc private func appTerminated(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        let terminatedPID = app.processIdentifier
+        stateQueue.async(flags: .barrier) { [weak self] in
+            self?.windowMemory.removeWindowsForPID(terminatedPID)
+        }
+    }
+
+    func handleWindowFocusChanged(element: AXUIElement) {
+        let snapshot = SettingsManager.shared.snapshot
+        guard snapshot.isAppSpecificEnabled || snapshot.isWindowMemoryEnabled else { return }
+
+        self.activeWindowElement = element
+        guard let windowID = getWindowID(from: element) else { return }
+
+        let latestAppID = AppMonitor.shared.activeAppBundleID
+        
+        // 🌟 [교통정리 1: 브라우저 충돌 방어]
+        // 전면에 뜬 앱이 브라우저라면, 윈도우 메모리가 탭 메모리를 덮어쓰지(Overwrite) 못하도록 여기서 실행을 강제 종료(return)시킵니다.
+        if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
+            BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
+            if let app = NSRunningApplication(processIdentifier: self.currentPID), let appName = app.localizedName {
+                BrowserTabManager.shared.handleBrowserTabChanged(bundleID: latestAppID, appName: appName)
+            }
             return
         }
 
+        let latestInputSource = self.getCurrentInputSourceID() ?? ""
+        let pid = self.currentPID
+
+        var targetLang: String? = nil
+        var traceToRecord: DecisionTrace? = nil
+
+        stateQueue.sync(flags: .barrier) {
+            if let data = self.windowMemory.getLanguage(for: windowID) {
+                if snapshot.isWindowMemoryEnabled {
+                    targetLang = data.language
+                    traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
+                } else if snapshot.isAppSpecificEnabled,
+                          let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
+                    targetLang = appLang
+                    traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
+                }
+            } else {
+                if snapshot.isAppSpecificEnabled,
+                   let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
+                    targetLang = appLang
+                    traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
+                }
+                self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
+            }
+        }
+
+        if let lang = targetLang {
+            let delay = snapshot.appDelays.first(where: { $0.bundleIdentifier == latestAppID })?.delay ?? 0.05
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                InputSourceManager.shared.switchLanguage(to: lang)
+                if let trace = traceToRecord { DecisionTraceManager.shared.record(trace) }
+            }
+        } else if let trace = traceToRecord {
+            DispatchQueue.main.async { DecisionTraceManager.shared.record(trace) }
+        }
+    }
+
+    func handleWindowDestroyed(element: AXUIElement) {
+        guard let windowID = getWindowID(from: element) else { return }
+        stateQueue.async(flags: .barrier) { [weak self] in
+            self?.windowMemory.removeWindow(windowID)
+        }
+    }
+
+    @objc private func inputSourceChanged() {
+        guard let element = activeWindowElement, let windowID = getWindowID(from: element),
+              let latestID = self.getCurrentInputSourceID() else { return }
+
+        let latestAppID = AppMonitor.shared.activeAppBundleID
+        
+        // 🌟 [교통정리 2: 수동 언어 변경 바인딩]
+        // 사용자가 브라우저 안에서 한영 전환을 누르면 윈도우 장부가 아니라 탭 장부에 실시간 저장합니다.
+        if (SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled || SettingsManager.shared.snapshot.isBrowserDomainModeEnabled) &&
+            BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
+            BrowserTabManager.shared.updateManualLanguageChange(latestID)
+            return
+        }
+
+        stateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            let currentPID = self._currentPID
+            if self.windowMemory.getLanguage(for: windowID) != nil {
+                self.windowMemory.setLanguage(latestID, pid: currentPID, for: windowID)
+            }
+        }
+    }
+
+    private func getCurrentInputSourceID() -> String? {
+        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+    }
+
+    func clearMemory() {
+        stateQueue.async(flags: .barrier) { [weak self] in
+            self?.windowMemory.clear()
+        }
+    }
+
+    func observeApp(pid: pid_t) {
         let snapshot = SettingsManager.shared.snapshot
-        guard snapshot.isWindowMemoryEnabled ||
-              snapshot.isAppSpecificEnabled ||
-              snapshot.isBrowserTabMemoryEnabled ||
-              snapshot.isBrowserDomainModeEnabled else { return }
+        guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled || snapshot.isBrowserTabMemoryEnabled else { return }
 
-        guard self.currentPID != pid else { return }
-        self.currentPID = pid
+        stateQueue.sync(flags: .barrier) {
+            guard self._currentPID != pid else { return }
+            self._currentPID = pid
 
-        // 💡 [참고] 기존에 이 하단에 중복 상주하던 `if let observer = self.axObserver ...` 블록은
-        // 위에서 선제 집행하므로 완전히 걷어내어(삭제) 청정 코드로 유지하시면 됩니다.
+            if let observer = self.axObserver, let rl = self.observerRunLoop {
+                CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
+                self.axObserver = nil
+                self.observerRunLoop = nil
+            }
 
-        var observer: AXObserver?
-        let callback: AXObserverCallback = { (obs, el, notif, ref) in
-            guard let ref = ref else { return }
-            MainActor.assumeIsolated {
+            var observer: AXObserver?
+            let callback: AXObserverCallback = { (obs, el, notif, ref) in
+                guard let ref = ref else { return }
                 let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
                 let nsNotif = notif as String
                 if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
                 else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
                 else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
             }
-        }
 
-        if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
-            
-            // 2차 방어선: 옵저버 생성 직후 취소 또는 PID 변동 감지 체크
-            guard !Task.isCancelled, self.currentPID == pid else { return }
+            if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
+                self.axObserver = newObs
+                let appRef = AXUIElementCreateApplication(pid)
+                let refcon = Unmanaged.passUnretained(self).toOpaque()
+                AXObserverAddNotification(newObs, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
+                AXObserverAddNotification(newObs, appRef, kAXTitleChangedNotification as CFString, refcon)
 
-            let appElement = AXUIElementCreateApplication(pid)
-            let refCon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-            
-            AXObserverAddNotification(newObs, appElement, kAXFocusedWindowChangedNotification as CFString, refCon)
-            AXObserverAddNotification(newObs, appElement, kAXTitleChangedNotification as CFString, refCon)
-            AXObserverAddNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString, refCon)
-
-            let mainRunLoop = CFRunLoopGetMain()
-                                
-            // 1. 런루프(컨베이어 벨트)에 감시자를 먼저 올립니다.
-            CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
-
-            // 2. [수복 지점] 런루프 등록 직후, 찰나의 취소를 감지하는 최후의 검문소를 세웁니다.
-            guard !Task.isCancelled, self.currentPID == pid else {
-                dprint("🧹 [WindowMonitor] observeApp 태스크 취소 감지. 등록된 시스템 AX 알림 후크를 강제 소각합니다.")
-                
-                AXObserverRemoveNotification(newObs, appElement, kAXFocusedWindowChangedNotification as CFString)
-                AXObserverRemoveNotification(newObs, appElement, kAXTitleChangedNotification as CFString)
-                AXObserverRemoveNotification(newObs, appElement, kAXUIElementDestroyedNotification as CFString)
-                
-                let src = AXObserverGetRunLoopSource(newObs)
-                CFRunLoopRemoveSource(mainRunLoop, src, .commonModes)
-                return
+                let mainRunLoop = CFRunLoopGetMain()
+                CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
+                self.observerRunLoop = mainRunLoop
             }
-
-            // 3. 최후의 검문까지 무사히 통과했다면, 장부에 공식 기록합니다.
-            self.axObserver = newObs
-            self.observerRunLoop = mainRunLoop
-            dprint("🎯 [WindowMonitor] PID \(pid) 알림 명세 구독 및 commonModes 런루프 최종 안전 등록 성공")
         }
 
-        // 포커스 윈도우 추적을 위한 초기 딜레이 트리거 (이하 동일)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self = self else { return }
-            guard self.currentPID == pid else { return }
+            let currentPIDInMain = self.currentPID
+            guard currentPIDInMain == pid else { return }
 
             let appElement = AXUIElementCreateApplication(pid)
             var focusedWindow: CFTypeRef?
@@ -157,129 +224,15 @@ class WindowMonitor {
         }
     }
 
-    // MARK: - 윈도우 메모리 & 앱 특정 규칙 제어 비즈니스 코어
-
-    @MainActor
-    func handleWindowFocusChanged(element: AXUIElement) {
-        let snapshot = SettingsManager.shared.snapshot
-        guard snapshot.isAppSpecificEnabled || snapshot.isWindowMemoryEnabled else { return }
-
-        self.activeWindowElement = element
-        
-        // 🌟 [12번 리뷰 수복] 충돌 위험이 상존하던 구식 hashValue 폴백 경로 청정 소각
-        // 확실하지 않은 ID인 경우 윈도우 메모리 추적을 안전하게 건너뛰는 우아한 성능 저하(Graceful Degradation) 집행
-        guard let windowID = getWindowID(from: element) else {
-            dprint("🛡️ [Graceful Degradation] AXWindow ID 인출 실패로 인해 해당 창의 윈도우 메모리 추적을 안전하게 바이패스합니다.")
-            return
-        }
-
-        let latestAppID = AppMonitor.shared.activeAppBundleID
-        let latestInputSource = self.getCurrentInputSourceID() ?? ""
-        let pid = self.currentPID
-
-        var targetLang: String? = nil
-        var traceToRecord: DecisionTrace? = nil
-
-        // 🌟 [10번 리뷰 수복: 의사결정 파이프라인 단일화 및 유령 중복 else if 전량 제거]
-        if let data = self.windowMemory.getLanguage(for: windowID) {
-            // ── [경로 A] 윈도우 메모리 장부에 기존 기억이 엄연히 상주하는 컨텍스트 ──
-            if snapshot.isWindowMemoryEnabled {
-                targetLang = data.language
-                traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
-            } else if snapshot.isAppSpecificEnabled,
-                      let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
-                targetLang = appLang
-                traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
-            }
-        } else {
-            // ── [경로 B] 장부에 없는 '새내기 신상 윈도우'가 최초 포커스된 컨텍스트 ──
-            // 데드 코드처럼 오해받던 2중 제어 흐름을 무결하게 파괴하고 청정하게 캡슐화 정산 완료
-            if snapshot.isAppSpecificEnabled,
-               let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
-                targetLang = appLang
-                traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
-            }
-
-            // 새 창의 언어 컨텍스트를 O(1) LRU 기억 장부에 원자적으로 최초 등록 집행
-            self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
-        }
-
-        // ── [언어 변환 명령 및 추적 로그 비동기 일괄 집행] ──
-        if let lang = targetLang {
-            let delay = snapshot.appDelays.first(where: { $0.bundleIdentifier == latestAppID })?.delay ?? 0.05
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                InputSourceManager.shared.switchLanguage(to: lang)
-                if let trace = traceToRecord { DecisionTraceManager.shared.record(trace) }
-            }
-        } else if let trace = traceToRecord {
-            DecisionTraceManager.shared.record(trace)
-        }
-    }
-
-    func handleWindowDestroyed(element: AXUIElement) {
-        guard let windowID = getWindowID(from: element) else { return }
-        self.windowMemory.removeWindow(windowID)
-    }
-
     func handleWindowTitleChanged(element: AXUIElement) {
-        let snapshot = SettingsManager.shared.snapshot
-        if snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled {
+        if SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled {
             if let app = NSRunningApplication(processIdentifier: self.currentPID),
                let bundleID = app.bundleIdentifier, let appName = app.localizedName {
                 BrowserTabManager.shared.handleBrowserTabChanged(bundleID: bundleID, appName: appName)
             }
         }
     }
-
-    @objc private func inputSourceChanged(_ notification: Notification) {
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-
-            // 🌟 [수복 3] 입력 소스 변경 노티피케이션 정산 구역에서도 nil 가드를 결속하여 장부 오염을 철저히 차단합니다.
-            guard let element = activeWindowElement,
-                  let windowID = getWindowID(from: element),
-                  let latestID = self.getCurrentInputSourceID() else { return }
-
-            let currentPID = self.currentPID
-            if self.windowMemory.getLanguage(for: windowID) != nil {
-                self.windowMemory.setLanguage(latestID, pid: currentPID, for: windowID)
-            }
-        }
-    }
-
-    @objc private func appTerminated(_ notification: Notification) {
-        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-        let terminatedPID = app.processIdentifier
-        self.windowMemory.removeWindowsForPID(terminatedPID)
-    }
-
-    func clearMemory() {
-        self.windowMemory.clear()
-    }
-
-    // 🌟 [최종 최적화 수복 2] 0ms 레이턴시 심볼 무혈 정산 버전
-    // 기존에 매번 호출되던 dyld 수색 구문을 걷어내고, static 상수에 박혀있는 물리 주소로 직결 호출합니다.
-    private func getWindowID(from element: AXUIElement) -> CGWindowID? {
-        var windowID: CGWindowID = 0
-        if let getWindow = Self.axGetWindowFunc {
-            if getWindow(element, &windowID) == .success {
-                return windowID
-            }
-        }
-        
-        // 🚨 [우주 방어] 충돌 위험이 있는 구식 포인터 hashValue 폴백을 완전히 제거합니다.
-        // 확실하지 않은 ID를 들고 장부를 오염시키느니, 안전하게 무효(nil) 처리를 집행합니다.
-        return nil
-    }
-
-    private func getCurrentInputSourceID() -> String? {
-        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
-              let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return nil }
-        return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
-    }
 }
-
-// MARK: - 완벽한 O(1) 성능 보장 구조적 연결 컴포넌트 레이어
 
 class WindowNode {
     let windowID: CGWindowID
@@ -319,12 +272,9 @@ class WindowLRUCache {
     func setLanguage(_ language: String, pid: pid_t, for windowID: CGWindowID) {
         if let existingNode = cache[windowID] {
             existingNode.language = language
-
             if existingNode.pid != pid {
                 pidIndex[existingNode.pid]?.remove(windowID)
-                if pidIndex[existingNode.pid]?.isEmpty == true {
-                    pidIndex.removeValue(forKey: existingNode.pid)
-                }
+                if pidIndex[existingNode.pid]?.isEmpty == true { pidIndex.removeValue(forKey: existingNode.pid) }
                 existingNode.pid = pid
                 pidIndex[pid, default: []].insert(windowID)
             }
@@ -333,16 +283,12 @@ class WindowLRUCache {
             let newNode = WindowNode(windowID: windowID, language: language, pid: pid)
             cache[windowID] = newNode
             addNode(newNode)
-
             pidIndex[pid, default: []].insert(windowID)
-
             if cache.count > capacity {
                 if let tailNode = popTail() {
                     cache.removeValue(forKey: tailNode.windowID)
                     pidIndex[tailNode.pid]?.remove(tailNode.windowID)
-                    if pidIndex[tailNode.pid]?.isEmpty == true {
-                        pidIndex.removeValue(forKey: tailNode.pid)
-                    }
+                    if pidIndex[tailNode.pid]?.isEmpty == true { pidIndex.removeValue(forKey: tailNode.pid) }
                 }
             }
         }
@@ -352,11 +298,8 @@ class WindowLRUCache {
         guard let node = cache[windowID] else { return }
         removeNode(node)
         cache.removeValue(forKey: windowID)
-
         pidIndex[node.pid]?.remove(windowID)
-        if pidIndex[node.pid]?.isEmpty == true {
-            pidIndex.removeValue(forKey: node.pid)
-        }
+        if pidIndex[node.pid]?.isEmpty == true { pidIndex.removeValue(forKey: node.pid) }
     }
 
     func removeWindowsForPID(_ pid: pid_t) {
@@ -377,22 +320,17 @@ class WindowLRUCache {
     }
 
     private func addNode(_ node: WindowNode) {
-        node.prev = head
-        node.next = head.next
-        head.next?.prev = node
-        head.next = node
+        node.prev = head; node.next = head.next
+        head.next?.prev = node; head.next = node
     }
 
     private func removeNode(_ node: WindowNode) {
-        let prev = node.prev
-        let next = node.next
-        prev?.next = next
-        next?.prev = prev
+        let prev = node.prev; let next = node.next
+        prev?.next = next; next?.prev = prev
     }
 
     private func moveToHead(_ node: WindowNode) {
-        removeNode(node)
-        addNode(node)
+        removeNode(node); addNode(node)
     }
 
     private func popTail() -> WindowNode? {

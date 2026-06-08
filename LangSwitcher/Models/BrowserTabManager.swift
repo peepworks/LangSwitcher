@@ -18,9 +18,9 @@
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
+import Cocoa
 import Foundation
-import AppKit
-import Combine
+import OSAKit
 
 // MARK: - Data Models
 
@@ -55,29 +55,16 @@ protocol BrowserAdapter: Sendable {
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError>
 }
 
-// MARK: - JXA 아웃프로세스 제어 커널 (Swift 6 넌아이솔레이티드 완전 수복 사양)
+// MARK: - JXA Execution Engine
 
-actor SafeDataBuffer {
-    private var data = Data()
-    private var pendingCount = 0
+private let jxaExecutionQueue = DispatchQueue(label: "com.peepboy.LangSwitcher.JXAQueue", qos: .userInitiated)
 
-    func incrementPending() {
-        pendingCount += 1
-    }
-
-    func append(_ newData: Data) {
-        data.append(newData)
-        pendingCount -= 1
-    }
-
-    func drainAndRead() async -> Data {
-        while pendingCount > 0 {
-            dprint("⏳ [SafeDataBuffer] 잔여 스트림 청크 정산 대기 중... (남은 태스크: \(pendingCount)개)")
-            
-            // 🌟 [교정] Task.sleep 앞에 'try?'를 붙여 컴파일러 에러를 완벽하게 소각합니다.
-            try? await Task.sleep(nanoseconds: 1_000_000) // 1ms씩 런루프 제어권 양보
-        }
-        return data
+actor JXARaceManager {
+    private var isCompleted = false
+    func complete() -> Bool {
+        if isCompleted { return false }
+        isCompleted = true
+        return true
     }
 }
 
@@ -92,56 +79,34 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let errorPipe = Pipe()
         process.standardError = errorPipe
 
-        let outputBuffer = SafeDataBuffer()
-        let fileHandle = pipe.fileHandleForReading
-
-        defer {
-            fileHandle.readabilityHandler = nil
-            try? pipe.fileHandleForReading.close()
-            try? pipe.fileHandleForWriting.close()
-            try? errorPipe.fileHandleForReading.close()
-            try? errorPipe.fileHandleForWriting.close()
-        }
-
-        fileHandle.readabilityHandler = { handle in
-            let available = handle.availableData
-            if !available.isEmpty {
-                // 🌟 [우주 방어 수복 포인트 2]
-                // 동기 콜백 문맥 내에서 먼저 카운트를 올려 뒤늦은 가동 태스크의 누락을 물리적으로 방지합니다.
-                let dataCopy = available
-                Task {
-                    await outputBuffer.incrementPending()
-                    await outputBuffer.append(dataCopy)
-                }
-            }
-        }
-
         group.addTask {
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
-                    Task {
-                        // 새로운 데이터 유입을 즉시 차단
-                        fileHandle.readabilityHandler = nil
-
-                        // 🌟 [우주 방어 수복 포인트 3]
-                        // 액터 내부 캡슐화 파이프라인 호출로 이중 홉 분기 레이싱을 영구 소각합니다.
-                        let finalData = await outputBuffer.drainAndRead()
+                    defer {
+                        pipe.fileHandleForReading.closeFile()
+                        errorPipe.fileHandleForReading.closeFile()
                         process?.terminationHandler = nil
-
-                        if p.terminationStatus == 0 {
-                            let output = String(data: finalData, encoding: String.Encoding.utf8)?
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                            continuation.resume(returning: output)
-                        } else {
-                            continuation.resume(throwing: JXAError.scriptFailed("Process terminated with code \(p.terminationStatus)"))
-                        }
                     }
+
+                    if p.terminationStatus == 0 {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        continuation.resume(returning: output)
+                    } else {
+                        continuation.resume(throwing: JXAError.scriptFailed("Process terminated or failed"))
+                    }
+                }
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
                 }
             }
         }
 
         group.addTask { () -> String? in
-            try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+            try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
             throw JXAError.timeout
         }
 
@@ -151,19 +116,7 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
             return firstResult ?? nil
         } catch {
             group.cancelAll()
-
-            if process.isRunning {
-                let processToReap = process
-                processToReap.terminationHandler = nil
-
-                Task.detached(priority: .background) {
-                    processToReap.terminate()
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    if processToReap.isRunning {
-                        processToReap.terminate()
-                    }
-                }
-            }
+            if process.isRunning { process.terminate() }
             throw error
         }
     }
@@ -171,105 +124,56 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
 
 // MARK: - Chromium Adapter
 
-@MainActor
 class ChromiumAdapter: BrowserAdapter {
     let supportedBundleIDs = ["com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"]
 
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError> {
-        let script = """
-        function run(argv) {
-            try {
-                var browser = Application("\(appName)");
-                if (browser.windows.length === 0) return "ERROR:NO_WINDOW";
-                var tab = browser.windows[0].activeTab();
-                return JSON.stringify({ "id": tab.id().toString(), "url": tab.url() });
-            } catch(e) {
-                if (e.message.includes("Not authorized")) return "ERROR:PERMISSION";
-                return "ERROR:" + e.message;
-            }
-        }
-        """
-
+        let script = "function run(argv) { try { var browser = Application(\"\(appName)\"); if (browser.windows.length === 0) return \"ERROR:NO_WINDOW\"; var tab = browser.windows[0].activeTab(); return JSON.stringify({ \"id\": tab.id().toString(), \"url\": tab.url() }); } catch(e) { if (e.message.includes(\"Not authorized\")) return \"ERROR:PERMISSION\"; return \"ERROR:\" + e.message; } }"
         do {
-            guard let jsonString = try await executeJXAWithTimeout(script: script) else {
-                return .failure(.executionFailed("No result from JXA"))
-            }
-
+            guard let jsonString = try await executeJXAWithTimeout(script: script) else { return .failure(.executionFailed("No result from JXA")) }
             if jsonString.hasPrefix("ERROR:") {
                 if jsonString.contains("NO_WINDOW") { return .failure(.noWindow) }
                 if jsonString.contains("PERMISSION") { return .failure(.permissionDenied) }
                 return .failure(.executionFailed(jsonString))
             }
-
-            guard let data = jsonString.data(using: String.Encoding.utf8),
-                  let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
-                return .failure(.decodingFailed)
-            }
+            guard let data = jsonString.data(using: .utf8), let context = try? JSONDecoder().decode(TabContext.self, from: data) else { return .failure(.decodingFailed) }
             return .success(context)
-        } catch JXAError.timeout {
-            return .failure(.timeout)
-        } catch {
-            return .failure(.executionFailed(error.localizedDescription))
-        }
+        } catch JXAError.timeout { return .failure(.timeout) }
+        catch JXAError.scriptFailed(let errorMessage) { return .failure(.executionFailed(errorMessage)) }
+        catch { return .failure(.executionFailed(error.localizedDescription)) }
     }
 }
 
 // MARK: - Safari Adapter
 
-@MainActor
 class SafariAdapter: BrowserAdapter {
     let supportedBundleIDs = ["com.apple.Safari"]
 
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError> {
-        let script = """
-        function run(argv) {
-            try {
-                var browser = Application("Safari");
-                if (browser.windows.length === 0) return "ERROR:NO_WINDOW";
-                var tab = browser.windows[0].currentTab();
-                return JSON.stringify({ "id": null, "url": tab.url() });
-            } catch(e) {
-                if (e.message.includes("Not authorized")) return "ERROR:PERMISSION";
-                return "ERROR:" + e.message;
-            }
-        }
-        """
-
+        let script = "function run(argv) { try { var browser = Application(\"Safari\"); if (browser.windows.length === 0) return \"ERROR:NO_WINDOW\"; var tab = browser.windows[0].currentTab(); return JSON.stringify({ \"id\": null, \"url\": tab.url() }); } catch(e) { if (e.message.includes(\"Not authorized\")) return \"ERROR:PERMISSION\"; return \"ERROR:\" + e.message; } }"
         do {
-            guard let jsonString = try await executeJXAWithTimeout(script: script) else {
-                return .failure(.executionFailed("No result from JXA"))
-            }
-
+            guard let jsonString = try await executeJXAWithTimeout(script: script) else { return .failure(.executionFailed("No result from JXA")) }
             if jsonString.hasPrefix("ERROR:") {
                 if jsonString.contains("NO_WINDOW") { return .failure(.noWindow) }
                 if jsonString.contains("PERMISSION") { return .failure(.permissionDenied) }
                 return .failure(.executionFailed(jsonString))
             }
-
-            guard let data = jsonString.data(using: String.Encoding.utf8),
-                  let context = try? JSONDecoder().decode(TabContext.self, from: data) else {
-                return .failure(.decodingFailed)
-            }
+            guard let data = jsonString.data(using: .utf8), let context = try? JSONDecoder().decode(TabContext.self, from: data) else { return .failure(.decodingFailed) }
             return .success(context)
-        } catch JXAError.timeout {
-            return .failure(.timeout)
-        } catch {
-            return .failure(.executionFailed(error.localizedDescription))
-        }
+        } catch JXAError.timeout { return .failure(.timeout) }
+        catch JXAError.scriptFailed(let errorMessage) { return .failure(.executionFailed(errorMessage)) }
+        catch { return .failure(.executionFailed(error.localizedDescription)) }
     }
 }
 
 // MARK: - Core Manager
 
 @MainActor
-class BrowserTabManager: ObservableObject {
+class BrowserTabManager {
     static let shared = BrowserTabManager()
 
     private var adapters: [String: BrowserAdapter] = [:]
-    
-    var supportedBrowserBundleIDs: [String] {
-        return Array(adapters.keys)
-    }
+    var supportedBrowserBundleIDs: [String] { return Array(adapters.keys) }
 
     private var tabMemory: [String: String] = [:]
     private var lastEvaluatedHostForTab: [String: String] = [:]
@@ -283,29 +187,23 @@ class BrowserTabManager: ObservableObject {
     private init() {
         let chromium = ChromiumAdapter()
         for id in chromium.supportedBundleIDs { adapters[id] = chromium }
-
         let safari = SafariAdapter()
         for id in safari.supportedBundleIDs { adapters[id] = safari }
     }
 
-    // 🌟 [우주 방어 수복 포인트 1]
-    // 능동적 메모리 자가치유 커널(MemoryMonitor)이 이 함수를 때릴 때,
-    // 비대칭 누수 여지가 남지 않도록 lastEvaluatedHostForTab 찌꺼기까지 100% 동시에 소각 정산합니다.
     func clearMemory() {
-        tabMemory.removeAll(keepingCapacity: false)
-        lastEvaluatedHostForTab.removeAll(keepingCapacity: false)
-        tabAccessTicks.removeAll(keepingCapacity: false)
+        tabMemory.removeAll()
+        lastEvaluatedHostForTab.removeAll()
+        tabAccessTicks.removeAll()
         currentTick = 0
         currentKey = nil
     }
 
-    // 🌟 [우주 방어 수복 포인트 2]
-    // 개별 탭이 컨텍스트 버퍼 한계를 초과하여 축출되거나 수동 삭제될 때,
-    // 세 장부의 데이터 정합성이 칼같이 양손 정렬되도록 제어하는 마스터 축출 헬퍼를 결속합니다.
-    private func evictTabContext(forKey tabKey: String) {
-        self.tabMemory.removeValue(forKey: tabKey)
-        self.lastEvaluatedHostForTab.removeValue(forKey: tabKey)
-        self.tabAccessTicks.removeValue(forKey: tabKey)
+    // 🌟 [추가됨] 사용자가 브라우저 안에서 한영전환을 했을 때 탭 장부 동기화
+    func updateManualLanguageChange(_ languageID: String) {
+        guard let key = currentKey else { return }
+        self.tabMemory[key] = languageID
+        self.touchTabMemory(key: key)
     }
 
     func handleBrowserTabChanged(bundleID: String, appName: String) {
@@ -316,24 +214,20 @@ class BrowserTabManager: ObservableObject {
         fetchTask?.cancel()
 
         fetchTask = Task(priority: .userInitiated) { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 150_000_000)
-                try Task.checkCancellation()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
 
-                let result = await adapter.fetchActiveTabInfo(appName: appName)
-                
-                guard let self = self, !Task.isCancelled else { return }
-                
+            let result = await adapter.fetchActiveTabInfo(appName: appName)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                guard let self = self else { return }
                 switch result {
                 case .success(let context):
                     self.processTabContext(context, bundleID: bundleID)
                 case .failure(let error):
                     self.handleFetchFailure(error: error, appName: appName)
                 }
-                
-            } catch {
-                dprint("🧹 [BrowserTabManager] 디바운스 대기 중 태스크가 정석적으로 취소되어 안전하게 퇴출되었습니다.")
-                return
             }
         }
     }
@@ -343,7 +237,9 @@ class BrowserTabManager: ObservableObject {
 
         self.touchTabMemory(key: newKey)
         let isTabSwitched = (self.currentKey != newKey)
+        let currentOSSource = InputSourceManager.shared.currentInputSourceID()
 
+        // 1. 도메인 규칙
         if SettingsManager.shared.snapshot.isBrowserDomainModeEnabled, let urlString = context.url, let host = context.host {
             let lastHost = self.lastEvaluatedHostForTab[newKey]
 
@@ -353,16 +249,13 @@ class BrowserTabManager: ObservableObject {
                 if let matchedRule = DomainRuleManager.shared.findMatchingRule(for: urlString, browserBundleID: bundleID) {
                     let hasManualMemory = (self.tabMemory[newKey] != nil)
                     if isTabSwitched && SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled && hasManualMemory {
-                        // 수동 탭 메모리에 양보
+                        // 수동 기억 양보
                     } else {
-                        InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
-
-                        let trace = TraceFactory.create(
-                            event: .languageSwitch, result: .switched,
-                            reason: .domainRule(domain: host), appName: bundleID, domain: host
-                        )
-                        DecisionTraceManager.shared.record(trace)
-                        
+                        Task { @MainActor in
+                            InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
+                            let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .domainRule(domain: host), appName: bundleID, domain: host)
+                            DecisionTraceManager.shared.record(trace)
+                        }
                         self.currentKey = newKey
                         self.tabMemory[newKey] = matchedRule.targetInputSourceID
                         return
@@ -373,25 +266,31 @@ class BrowserTabManager: ObservableObject {
 
         if !isTabSwitched { return }
 
+        // 🌟 2. 새 탭 규칙 (논리 복구)
         if self.isNewTab(context: context) {
             let defaultLang = SettingsManager.shared.snapshot.newTabDefaultLanguage
             if defaultLang != "None" && !defaultLang.isEmpty {
-                InputSourceManager.shared.switchLanguage(to: defaultLang)
-
-                let trace = TraceFactory.create(
-                    event: .languageSwitch, result: .switched,
-                    reason: .browserTabRestore, appName: bundleID
-                )
-                DecisionTraceManager.shared.record(trace)
+                // 아직 장부에 언어 기록이 없다면 기본값 할당
+                if self.tabMemory[newKey] == nil {
+                    self.tabMemory[newKey] = defaultLang
+                }
                 
+                // 만약 현재 시스템 언어와 탭 장부의 언어가 다르다면 변경 실행
+                if currentOSSource != self.tabMemory[newKey] {
+                    Task { @MainActor in
+                        InputSourceManager.shared.switchLanguage(to: self.tabMemory[newKey]!)
+                        let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .newTabDefault, appName: bundleID)
+                        DecisionTraceManager.shared.record(trace)
+                    }
+                }
                 self.currentKey = newKey
-                self.tabMemory[newKey] = defaultLang
                 return
             }
         }
 
         self.currentKey = newKey
 
+        // 3. 탭 메모리 복구
         if SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled {
             self.restoreContext(for: newKey, bundleID: bundleID)
         }
@@ -399,13 +298,19 @@ class BrowserTabManager: ObservableObject {
 
     private func restoreContext(for key: String, bundleID: String) {
         if let savedSourceID = tabMemory[key] {
-            InputSourceManager.shared.switchLanguage(to: savedSourceID)
-
-            let trace = TraceFactory.create(
-                event: .restore, result: .restored,
-                reason: .browserTabRestore, appName: bundleID
-            )
-            DecisionTraceManager.shared.record(trace)
+            let currentOSSource = InputSourceManager.shared.currentInputSourceID()
+            
+            // 🌟 탭 복원 시, 현재 언어와 다를 때만 전환명령을 때려줍니다.
+            if currentOSSource != savedSourceID {
+                Task { @MainActor in
+                    InputSourceManager.shared.switchLanguage(to: savedSourceID)
+                    let trace = TraceFactory.create(event: .restore, result: .restored, reason: .browserTabRestore, appName: bundleID)
+                    DecisionTraceManager.shared.record(trace)
+                }
+            }
+        } else {
+            // 이 탭에 처음 들어왔다면 현재 OS 언어를 마스터로 최초 등록
+            self.tabMemory[key] = InputSourceManager.shared.currentInputSourceID()
         }
     }
 
@@ -414,85 +319,42 @@ class BrowserTabManager: ObservableObject {
         let logMessage: String
 
         switch error {
-        case .timeout:
-            failureReason = .unknown
-            logMessage = "JXA Timeout (1.5s exceeded)"
-        case .permissionDenied:
-            failureReason = .permissionIssue
-            logMessage = "Automation Permission Denied"
-        case .noWindow:
-            failureReason = .conditionMismatch
-            logMessage = "No Active Windows Found"
-        case .unsupportedBrowser:
-            failureReason = .conditionMismatch
-            logMessage = "Unsupported Browser Structure"
-        case .executionFailed(let msg):
-            failureReason = .unknown
-            logMessage = "JXA Error: \(msg)"
-        case .decodingFailed:
-            failureReason = .unknown
-            logMessage = "JSON Decoding Failed"
+        case .timeout: failureReason = .unknown; logMessage = "JXA Timeout (1.5s exceeded)"
+        case .permissionDenied: failureReason = .permissionIssue; logMessage = "Automation Permission Denied"
+        case .noWindow: failureReason = .conditionMismatch; logMessage = "No Active Windows Found"
+        case .unsupportedBrowser: failureReason = .conditionMismatch; logMessage = "Unsupported Browser Structure"
+        case .executionFailed(let msg): failureReason = .unknown; logMessage = "JXA Error: \(msg)"
+        case .decodingFailed: failureReason = .unknown; logMessage = "JSON Decoding Failed"
         }
 
-        let log = ActionLog(
-            timestamp: Date(), targetApp: appName, appliedRule: "Tab Memory Fallback",
-            finalInputSource: logMessage, result: .failure, failureReason: failureReason
-        )
+        let log = ActionLog(timestamp: Date(), targetApp: appName, appliedRule: "Tab Memory Fallback", finalInputSource: logMessage, result: .failure, failureReason: failureReason)
         SettingsManager.shared.addLog(log)
     }
 
-    // MARK: - LRU Cache Management (분할상환 O(1) 고성능 튜닝 완료)
-    private var isRebuildingTicks = false
+    // MARK: - LRU Cache Management
 
     private func touchTabMemory(key: String) {
         currentTick += 1
-        
-        if currentTick > 1_000_000 && !isRebuildingTicks {
-            isRebuildingTicks = true
-            Task { [weak self] in
-                guard let self = self else { return }
-                await self.rebuildTicksFromScratch()
-                self.isRebuildingTicks = false
-            }
+        if currentTick >= 1_000_000 {
+            rebuildTicksFromScratch()
+            return
         }
-        
-        let isNewKey = tabAccessTicks[key] == nil
         tabAccessTicks[key] = currentTick
-        
-        if isNewKey && tabAccessTicks.count > maxTabMemoryLimit {
-            if let oldestKey = tabAccessTicks.min(by: { $0.value < $1.value })?.key {
-                // 🌟 [우주 방어 수복 포인트 3] 파편화된 개별 축출문을 제거하고
-                // 단일 원자적 헬퍼 함수를 매핑하여 비대칭 릭 가능성을 0.000%로 박멸합니다.
-                self.evictTabContext(forKey: oldestKey)
+
+        if tabAccessTicks.count > maxTabMemoryLimit {
+            if let oldestKey = tabAccessTicks.keys.first {
+                tabMemory.removeValue(forKey: oldestKey)
+                lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
+                tabAccessTicks.removeValue(forKey: oldestKey)
             }
         }
     }
 
-    @MainActor
-    private func rebuildTicksFromScratch() async {
-        guard !isRebuildingTicks else { return }
-        isRebuildingTicks = true
-
-        defer {
-            isRebuildingTicks = false
-            print("🧹 [BrowserTabManager] 탭 액세스 틱 리빌드 세션이 종료되어 자물쇠 플래그를 완전히 안전하게 해제했습니다.")
-        }
-
-        let ticksSnapshot = self.tabAccessTicks
-
-        let safeNormalizedTicks = await Task.detached(priority: .background) {
-            return ticksSnapshot.sorted { $0.value < $1.value }
-        }.value
-
-        self.tabAccessTicks.removeAll(keepingCapacity: true)
-        
-        var nextRank = 1
-        for element in safeNormalizedTicks {
-            self.tabAccessTicks[element.key] = nextRank
-            nextRank += 1
-        }
-
-        self.currentTick = nextRank
+    private func rebuildTicksFromScratch() {
+        currentTick = 0
+        tabMemory.removeAll()
+        tabAccessTicks.removeAll()
+        lastEvaluatedHostForTab.removeAll()
     }
 
     private func isNewTab(context: TabContext) -> Bool {
