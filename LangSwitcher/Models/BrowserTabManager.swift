@@ -342,10 +342,16 @@ class BrowserTabManager {
         tabAccessTicks[key] = currentTick
 
         if tabAccessTicks.count > maxTabMemoryLimit {
-            if let oldestKey = tabAccessTicks.keys.first {
+            // 🌟 딕셔너리 내부를 스캔하여 틱 가동률이 가장 낮은(가장 오래된) 청정 키를 선별
+            if let oldestKey = tabAccessTicks.min(by: { $0.value < $1.value })?.key {
+                // 1. 실물 탭 캐시 소각
                 tabMemory.removeValue(forKey: oldestKey)
-                lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
+                
+                // 2. 타임스탬프 및 메타데이터 동형 장부 일괄 청소 (메모리 누수 백퍼센트 방어)
                 tabAccessTicks.removeValue(forKey: oldestKey)
+                lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
+
+                dprint("🧹 [BrowserTab] LRU 만료 가동 — 가장 오랫동안 참조되지 않은 구형 탭 [Key: \(oldestKey)] 자원을 완벽히 정산했습니다.")
             }
         }
     }

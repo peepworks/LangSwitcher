@@ -38,12 +38,16 @@ class SettingsManager: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted // 줄바꿈/들여쓰기 포맷 사양 고정
         return encoder
-    }()
+    } ()
     nonisolated private static let profileDecoder = JSONDecoder()
     
     let icloudStore = NSUbiquitousKeyValueStore.default
     private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
-    private var saveWorkItem: DispatchWorkItem?
+    
+    // ── 🌟 [8번 리뷰 수복 포인트 1: 레거시 GCD 디바운서 폐기] ──
+    // 추적이 불가능하여 앱 종료 시 데이터 유실을 유발하던 DispatchWorkItem을 전면 소각하고,
+    // 생명주기를 완벽히 통제할 수 있는 단일 소스 Task 참조선으로 전치합니다.
+    private var saveTask: Task<Void, Never>?
     
     nonisolated private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.save", qos: .background)
     
@@ -55,7 +59,6 @@ class SettingsManager: ObservableObject {
     @Published var selectedTab: SettingsTab? = .general
     @MainActor var isBatchUpdating: Bool = false
     
-    // 🌟 [교정] 중복 선언되었던 recentLogs를 한 곳으로 깔끔하게 통합했습니다.
     @Published private(set) var recentLogs: [ActionLog] = []
     
     // 딕셔너리 캐시는 전역으로 관리하되, 활성 프로필 데이터를 굽습니다.
@@ -156,7 +159,6 @@ class SettingsManager: ObservableObject {
 
     @AppStorage("isHyperKeyEnabled") var isHyperKeyEnabled: Bool = false {
         didSet {
-            // 🌟 [도킹 1] 하드웨어 맵핑 엔진 실시간 On/Off 커널 반영
             HyperKeyManager.shared.updateState(isEnabled: isHyperKeyEnabled)
             guard !isBatchUpdating else { return }
             updateSnapshot()
@@ -222,7 +224,6 @@ class SettingsManager: ObservableObject {
             NotificationCenter.default.post(name: .profileDidSwitch, object: nil)
 
             Task { @MainActor in
-                // 🌟 [수복 완료] async 메서드로 승격된 saveAll() 앞에 명시적으로 await를 결속합니다.
                 await self.saveAll()
                 self.syncToCloud()
                 
@@ -327,8 +328,6 @@ class SettingsManager: ObservableObject {
         self.applyActiveProfile()
         
         if needsMigration {
-            // 🌟 [수복 완료] 동기 컨텍스트인 생성자(init) 내부에서 async 함수를 안전하게 격리 집행하기 위해
-            // Task 구조적 동시성 래퍼를 씌우고 내부에서 await를 락온합니다.
             Task { @MainActor in
                 await self.saveAll()
             }
@@ -338,6 +337,15 @@ class SettingsManager: ObservableObject {
                 dprint("🧹 [Storage Engine] UserDefaults 내 레거시 무거운 profiles 배열 파괴 성공.")
             }
         }
+        
+        // ── 🌟 [우주 방어 수복 포인트 2: 앱 예기치 못한 즉사 방어선 구축] ──
+        // OS 셧다운 알림 커널 스트림을 수신하기 위해 옵저버를 결속합니다.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
         
         NotificationCenter.default.addObserver(
             self,
@@ -359,10 +367,6 @@ class SettingsManager: ObservableObject {
         let directoryURL = self.applicationSupportDirectoryURL
         let fileURL = self.profilesFileURL
         
-        // 🌟 [우주 방어 수복 포인트 2]
-        // 외부 호출 주체(scheduleSave 등)는 await를 통해 기다리되,
-        // 실제 파일 시스템 operations는 com.peepworks.langswitcher.save 직렬 큐를 경유하게 만들어
-        // 100개의 태스크가 겹치더라도 파일 쓰기가 칼같이 한 줄로 줄을 서서 순차 집행되도록 보장합니다.
         await withCheckedContinuation { continuation in
             saveQueue.async {
                 do {
@@ -370,24 +374,18 @@ class SettingsManager: ObservableObject {
                         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
                     }
                     let data = try Self.profileEncoder.encode(profilesToSave)
-                    
-                    // 직렬화가 보장된 상태에서 .atomic 옵션을 적용하므로
-                    // 임시 파일명 충돌 및 rename() 경합 시나리오가 수학적으로 완전히 소각(0.000%)됩니다.
                     try data.write(to: fileURL, options: .atomic)
-                    
+
                     dprint("✅ [Storage Engine] 직렬화 큐 통과 — profiles.json 원자적 저장 무결성 확약.")
                 } catch {
                     dprint("❌ [Storage Engine] 직렬화 큐 디스크 저장 실패: \(error.localizedDescription)")
                 }
-                
-                // 쓰기 작업이 성공하든 실패하든, 줄 서있던 다음 태스크가 가동될 수 있도록
-                // 대기 중이던 상위 스레드의 빗장을 열어주며 마무리합니다.
                 continuation.resume()
             }
         }
     }
     
-    func applyActiveProfile() {
+    private func applyActiveProfile() {
         self.isBatchUpdating = true
         
         defer {
@@ -414,6 +412,11 @@ class SettingsManager: ObservableObject {
         let payload = activeProfile.payload
         
         var newSnapshot = SettingsSnapshot(
+            isTextExpansionEnabled: payload.isTextExpansionEnabled,
+            textExpansionRules: payload.textExpansionRules
+        )
+        // (참고: 빌드 무결성을 보장하기 위해 파트너님의 순정 snapshot 파라미터 매핑 상태를 그대로 관통 결속합니다)
+        newSnapshot = SettingsSnapshot(
             isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive,
             ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
@@ -460,44 +463,79 @@ class SettingsManager: ObservableObject {
     // MARK: - 고성능 로그 주입 아키텍처
     @MainActor
     func addLog(_ log: ActionLog) {
-        // 뒤에 붙이기는 언제나 비용이 없는 완벽한 O(1) 버퍼 확장
         self.recentLogs.append(log)
         
-        // 🌟 [5번 리뷰 수복]
-        // 의미가 모호하던 매직 넘버 연산식과 미사용 유령 프로퍼티(logBufferThreshold)를 전면 소각하고,
-        // 명확한 명수형 상수를 매핑하여 조건 검증 가독성을 최고 수준으로 격상했습니다.
         if self.recentLogs.count > logTrimThreshold {
             self.recentLogs.removeFirst(logTrimCount)
-            
-            dprint("🧹 [LogEngine] 메모리 재할당 없이 기존 버퍼 내에서 \(logTrimCount)건의 로그를 제자리(In-place) 트리밍했습니다.")
+            dprint("🧹 [SettingsManager] 로그 버퍼가 임계값(\(logTrimThreshold)개)을 초과하여 상위 \(logTrimCount)개의 구형 장부를 청정 정산했습니다.")
         }
     }
     
-    // MARK: - 고성능 디바운스 저장 엔진 (@MainActor 격리 완전 준수)
-        
+    // MARK: - 🌟 [8번 리뷰 수복 포인트 3: 현대식 순정 비동기 디바운스 대통합]
+    
     func scheduleSave() {
-        saveWorkItem?.cancel()
+        guard !isBatchUpdating else { return }
         
-        let workItem = DispatchWorkItem { [weak self] in
+        // 새로운 저장이 요청되는 즉시 기존 대기열 태스크 객체 자체를 저격 취소(Cancel)시킵니다.
+        saveTask?.cancel()
+        
+        // 비구조화 프레임을 탈출하여 완벽한 소유주(saveTask)가 확약된 구조화 동시성을 전개합니다.
+        saveTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
-            
-            // 🌟 [우주 방어 수복 2] 비동기 태스크 컨텍스트를 개시하여
-            // 디스크 저장이 '실제로 성공하여 끝난 시점'을 명시적으로 확약받은 후 다음 진도를 전개합니다.
-            Task { @MainActor in
-                await self.saveAll() // ➔ 디스크 물리 쓰기가 완벽히 마감될 때까지 아래 라인은 실행이 홀딩됩니다.
+            do {
+                // GCD 타이머를 걷어내고 0.5초 동안 메인 스레드를 블로킹하지 않고 청정 비동기 대기
+                try await Task.sleep(for: .seconds(0.5))
                 
-                self.updateSnapshot() // 이제 안전하게 스냅샷을 최신 장부로 일치화
+                // 대기 도중 연타가 인입되어 취소 신호를 수신했다면 아래 UI/디스크 플러시 라인을 완벽히 차단
+                guard !Task.isCancelled else { return }
+                
+                await self.saveAll()
+                self.updateSnapshot()
                 
                 if !self.isBatchUpdating {
-                    self.syncToCloud() // 완벽하게 일치된 데이터 사양으로 클라우드 동기화 팩킹 전송
+                    self.syncToCloud()
                 }
-                
-                dprint("📝 [SettingsManager] 디스크 저장 확약 후 스냅샷 및 클라우드 정산을 무결하게 완결했습니다.")
+            } catch {
+                // 취소 예외 발생 시 스킵 후 우아하게 후퇴
             }
         }
+    }
+    
+    // MARK: - 🌟 [8번 리뷰 수복 포인트 4: 프로세스 강제 사살 즉사 방지 브레이크]
+    
+    @MainActor
+    @objc private func appWillTerminate() {
+        print("🚨 [SettingsManager] OS 시스템 강제 종료 시그널 감지. 긴급 동기 장부 강제 플러시를 집행합니다.")
         
-        self.saveWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
+        // 1. 대기선에서 0.5초 슬립을 구동 중이던 비동기 태스크를 즉각 전면 차단합니다.
+        saveTask?.cancel()
+        saveTask = nil
+        
+        // 2. 비동기 await를 호출하면 커널이 즉시 종료시키므로,
+        // 이 비상 상태에서만큼은 메인 스레드 컨텍스트에서 인메모리 장부를 파일 시스템에 동기식(Sync)으로 즉각 각인합니다.
+        self.executeEmergencySynchronousSave()
+    }
+    
+    @MainActor
+    private func executeEmergencySynchronousSave() {
+        let directoryURL = self.applicationSupportDirectoryURL
+        let fileURL = self.profilesFileURL
+        
+        do {
+            if !FileManager.default.fileExists(atPath: directoryURL.path) {
+                try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+            }
+            
+            // 현재 인메모리에 떠 있는 최신 설정 데이터 동기 직렬화
+            let data = try Self.profileEncoder.encode(self.profiles)
+            
+            // 동기식(.atomic) 강제 저장을 통해 OS 프로세스가 끊어지기 전 장부 완벽 보존
+            try data.write(to: fileURL, options: .atomic)
+            
+            print("✨ [SettingsManager] Emergency Sync Save 대성공 — profiles.json 무결성 보존 완결.")
+        } catch {
+            print("❌ [SettingsManager] 비상 동기화 디스크 저장 대패: \(error.localizedDescription)")
+        }
     }
     
     private func updateShortcutCaches() {
@@ -532,8 +570,6 @@ class SettingsManager: ObservableObject {
         
         do {
             let data = try Self.profileEncoder.encode(rulesToExport)
-            
-            // 🌟 [수복 완료] 레거시 GCD 대신 리뷰어 9번의 권고에 맞춰 전역 Task.detached 독립 스레드로 격리 통합
             Task.detached(priority: .userInitiated) {
                 do {
                     try data.write(to: url)
@@ -549,19 +585,16 @@ class SettingsManager: ObservableObject {
 
     @MainActor
     func importTextExpansionRules(from url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void = { _, _ in }) {
-        // 독립된 백그라운드 작업동(Task.detached)으로 파일 I/O 및 대량 파싱 연산을 완벽히 위임합니다.
         Task.detached(priority: .userInitiated) {
             do {
                 let data = try Data(contentsOf: url)
                 let decodedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
                 
-                // 1. 샌드박스 파싱이 완벽히 끝난 시점에 메인 액터의 진짜 장부(activeProfile)에 원자적 대입을 집행합니다.
                 await MainActor.run {
                     var profile = self.activeProfile
                     profile.payload.textExpansionRules = decodedRules
                     self.activeProfile = profile
                     
-                    // 수동 메모리 스냅샷 정산 및 디스크 커널 백업 트리거 호출
                     self.updateSnapshot()
                     self.scheduleSave()
                     
@@ -572,12 +605,9 @@ class SettingsManager: ObservableObject {
                     )
                     self.addLog(log)
                     HUDManager.shared.showHUD(languageName: String(localized: "Import Successful"))
-                    
-                    // 🌟 [수복 완료] 성공 시 뷰(View)가 등록해둔 후행 콜백을 깨워 정산 완료를 알립니다.
                     completion(true, nil)
                 }
             } catch {
-                // 2. 예외 상황 발생 시 오염된 decodedRules 접근을 원천 차단하고 청정하게 에러 상태 장부만 보고합니다.
                 await MainActor.run {
                     dprint("❌ [SettingsManager] 텍스트 대치 규칙 임포트 실패: \(error.localizedDescription)")
                     
@@ -588,8 +618,6 @@ class SettingsManager: ObservableObject {
                     )
                     self.addLog(log)
                     HUDManager.shared.showHUD(languageName: String(localized: "Import Failed"))
-                    
-                    // 🌟 [수복 완료] 실패 시에도 뷰(View)에 실패 원인 에러 객체를 안전하게 배달합니다.
                     completion(false, error)
                 }
             }
@@ -609,8 +637,6 @@ class SettingsManager: ObservableObject {
             
             do {
                 let data = try Self.profileEncoder.encode(self.profiles)
-                
-                // 🌟 [수복 완료] 리뷰어 9번 의견 적용: 익스포트 디스크 I/O 역시 무결한 Task.detached 시스템으로 전환
                 Task.detached(priority: .userInitiated) {
                     do {
                         try data.write(to: url)
@@ -637,7 +663,6 @@ class SettingsManager: ObservableObject {
             guard response == .OK, let url = openPanel.url else { return }
             let localDecoder = Self.profileDecoder
             
-            // 🌟 [수복 완료] 리뷰어 9번 의견 적극 반영: 대량의 전체 프로필 임포트 구역까지 완벽한 Task.detached 사양으로 통일 완성!
             Task.detached(priority: .userInitiated) {
                 do {
                     let data = try Data(contentsOf: url)
@@ -686,12 +711,7 @@ class SettingsManager: ObservableObject {
     
     @MainActor
     func clearLogs() {
-        // 🌟 [우주 방어 수복 포인트]
-        // 레거시 false 플래그를 청정 소각하고 keepingCapacity: true 명세를 결속합니다.
-        // 최대 500건의 로그가 담겨있던 고성능 힙 공간 버퍼를 커널에 반납하지 않고 그대로 예약 유지하여,
-        // 차기 타건 로그 인입 시 발생할 수 있는 메인 스레드 재할당 오버헤드를 물리적으로 완전 차단($0ms$)합니다.
         self.recentLogs.removeAll(keepingCapacity: true)
-        
         dprint("🧹 [LogEngine] 기존 힙 할당 캐파(Capacity)를 완벽히 유지한 채 인메모리 액션 로그만 청정 포맷 완료.")
     }
 }

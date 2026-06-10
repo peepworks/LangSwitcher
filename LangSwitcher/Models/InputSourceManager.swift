@@ -38,38 +38,46 @@ class InputSourceManager: ObservableObject {
         fetchKeyboards()
     }
 
+    // MARK: - 시스템 키보드 입력 소스 동적 인출 엔진
+        
     func fetchKeyboards() {
-        // 🌟 [우주 방어 수복 포인트]
-        // 변수 대입 방식(let fetchTask)을 탈피하고 클로저를 메인 큐 비동기 파이프라인에 인라인으로 직결합니다.
-        // 클로저 도입부에 '@MainActor'를 명시함으로써 Swift 6 컴파일러가 요구하는
-        // @MainActor @Sendable @convention(block) 조건을 전량 충족하고 컴파일 에러를 원천 박멸합니다.
-        DispatchQueue.main.async { @MainActor [weak self] in
-            guard let self = self else { return }
-            guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
-            var keyboards: [MacKeyboard] = []
+        // 🌟 [Swift 6 에러 완전 수복]
+        // @MainActor가 상속되는 청정 Task 내부에서 백그라운드 독립 태스크(detached)를 구동하고,
+        // 그 결과물([MacKeyboard])을 리턴값으로 안전하게 수령(await)하는 사상으로 전환합니다.
+        Task {
+            let keyboards = await Task.detached(priority: .userInitiated) { () -> [MacKeyboard] in
+                guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return [] }
+                var localKeyboards: [MacKeyboard] = []
 
-            for source in sourceList {
-                guard let isSelectablePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable) else { continue }
-                let isSelectable = Unmanaged<CFBoolean>.fromOpaque(isSelectablePtr).takeUnretainedValue()
-                if !CFBooleanGetValue(isSelectable) { continue }
+                for source in sourceList {
+                    guard let isSelectablePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable) else { continue }
+                    let isSelectable = Unmanaged<CFBoolean>.fromOpaque(isSelectablePtr).takeUnretainedValue()
+                    if !CFBooleanGetValue(isSelectable) { continue }
 
-                guard let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else { continue }
-                let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
+                    guard let namePtr = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else { continue }
+                    let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
 
-                guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
-                let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
+                    guard let idPtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+                    let id = Unmanaged<CFString>.fromOpaque(idPtr).takeUnretainedValue() as String
 
-                let excludedIDs = ["com.apple.CharacterPaletteIM", "com.apple.KeyboardViewer", "com.apple.PressAndHold"]
-                if excludedIDs.contains(id) || id.lowercased().contains("dictation") { continue }
+                    let excludedIDs = ["com.apple.CharacterPaletteIM", "com.apple.KeyboardViewer", "com.apple.PressAndHold"]
+                    if excludedIDs.contains(id) || id.lowercased().contains("dictation") { continue }
 
-                keyboards.append(MacKeyboard(id: id, name: name))
-            }
-            
-            // @MainActor 컨텍스트 내부이므로 @Published 프로퍼티 장부 대입 역시 완벽하게 세이프티합니다.
+                    localKeyboards.append(MacKeyboard(id: id, name: name))
+                }
+                
+                // 가변 장부를 클로저 캡처 없이 깨끗하게 데이터로 리턴합니다.
+                return localKeyboards
+            }.value
+
+            // 🌟 백그라운드 연산이 끝나고 확약된 청정 상수 복사본(let keyboards)을
+            // 메인 액터 컨텍스트 내부에서 직결 대입하므로 데이터 레이스 및 캡처 에러가 완벽하게 박멸됩니다.
             self.availableKeyboards = keyboards
+            
+            dprint("✨ [InputSource] 백그라운드 데이터 인출 및 메인 액터 장부 대입 완결.")
         }
 
-        dprint("⌨️ [InputSource] 메인 스레드 교착 리스크를 원천 차단하며 비동기(async) 키보드 리스트 갱신 예약 완료.")
+        dprint("⌨️ [InputSource] 하드웨어 레지스트리 조회 태스크를 백그라운드 병렬 풀로 격리 이주 성공.")
     }
 
     func switchLanguage(to id: String) {

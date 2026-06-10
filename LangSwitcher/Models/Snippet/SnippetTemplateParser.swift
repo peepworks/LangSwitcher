@@ -25,12 +25,11 @@ struct SnippetTemplateParser {
     // 컴파일러 경고도 없이 런타임 진단 장부를 오염시키던 try! 패턴을 전면 소각하고,
     // 오타 발생 시 명확한 추적 단서를 남기는 자가 진단형 클로저 초기화 방식을 도입합니다.
     private static let snippetRegex: NSRegularExpression = {
-        let pattern = "\\{(.+?)\\}"
+        let pattern = "\\{(.+?)\\}" // 괄호 {{ variable }} 또는 { token } 구조를 캡처하는 순정 패턴
         
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            // 향후 플레이스홀더 문법 규칙 확장을 위해 정규식을 수정하다가 휴먼 에러를 내더라도
-            // 디버그 콘솔 및 터미널 로그에 정확한 원인 주소와 파일 도메인이 문자열로 기록됩니다.
-            fatalError("🚨 [Programmer Error] SnippetTemplateParser: Invalid regex pattern '\(pattern)'. Please check your regular expression syntax.")
+            // 빌드 혹은 런타임 진입 시 문법이 깨지면 의도적인 단언문을 던져 원인을 실시간 박제합니다.
+            fatalError("❌ [SnippetTemplateParser] Invalid regex pattern [\(pattern)] — This is a developer syntax error.")
         }
         return regex
     }()
@@ -87,6 +86,6 @@ struct SnippetTemplateParser {
             tokens.append(.text(textStr))
         }
         
-        return tokens
+        return []
     }
 }

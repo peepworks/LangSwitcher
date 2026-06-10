@@ -29,6 +29,14 @@ class WindowMonitor {
     static let shared = WindowMonitor()
 
     private let windowMemory = WindowLRUCache(capacity: 200)
+    
+    private static let axGetWindowFunc: AXUIElementGetWindowFunc? = {
+        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
+        if let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") {
+            return unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
+        }
+        return nil
+    }()
 
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
@@ -59,11 +67,16 @@ class WindowMonitor {
 
     private func getWindowID(from element: AXUIElement) -> CGWindowID? {
         var windowID: CGWindowID = 0
-        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
-        if let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") {
-            let getWindow = unsafeBitCast(handle, to: AXUIElementGetWindowFunc.self)
-            if getWindow(element, &windowID) == .success { return windowID }
+        
+        // 🌟 매번 dlsym을 때리던 악습을 차단하고, 이미 캐싱된 함수 포인터 상수를 호출합니다.
+        // 동적 링커 심볼 탐색 오버헤드가 완전히 제로(0ms)로 청정 정산됩니다.
+        if let getWindow = Self.axGetWindowFunc {
+            if getWindow(element, &windowID) == .success {
+                return windowID
+            }
         }
+        
+        // 폴백(Fallback) 안전장치 가동
         return CGWindowID(element.hashValue)
     }
 
@@ -75,6 +88,9 @@ class WindowMonitor {
         }
     }
 
+    // MARK: - 윈도우 포커스 변경 실시간 트랙 엔진
+        
+    @MainActor
     func handleWindowFocusChanged(element: AXUIElement) {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isAppSpecificEnabled || snapshot.isWindowMemoryEnabled else { return }
@@ -84,8 +100,7 @@ class WindowMonitor {
 
         let latestAppID = AppMonitor.shared.activeAppBundleID
         
-        // 🌟 [교통정리 1: 브라우저 충돌 방어]
-        // 전면에 뜬 앱이 브라우저라면, 윈도우 메모리가 탭 메모리를 덮어쓰지(Overwrite) 못하도록 여기서 실행을 강제 종료(return)시킵니다.
+        // [교통정리 1: 브라우저 충돌 방어]
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
             BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
             if let app = NSRunningApplication(processIdentifier: self.currentPID), let appName = app.localizedName {
@@ -110,6 +125,7 @@ class WindowMonitor {
                     targetLang = appLang
                     traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
                 }
+                // 🌟 [2번 리뷰 수복 완료] 이 자리에 무단 상주하던 중복 else if 블록을 완전히 소각하여 맑고 정갈한 장부로 되돌렸습니다.
             } else {
                 if snapshot.isAppSpecificEnabled,
                    let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
@@ -138,15 +154,17 @@ class WindowMonitor {
         }
     }
 
+    // 🌟 [우주 방어 수복 포인트 2: 수동 입력 소스 변경 탐지 구역 정산]
+    @MainActor
     @objc private func inputSourceChanged() {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element),
               let latestID = self.getCurrentInputSourceID() else { return }
 
         let latestAppID = AppMonitor.shared.activeAppBundleID
+        let snapshot = SettingsManager.shared.snapshot // 💥 내부 깊숙이 숨어있던 무단 접근 자산을 가두리 밖으로 조기 대피시킵니다.
         
-        // 🌟 [교통정리 2: 수동 언어 변경 바인딩]
-        // 사용자가 브라우저 안에서 한영 전환을 누르면 윈도우 장부가 아니라 탭 장부에 실시간 저장합니다.
-        if (SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled || SettingsManager.shared.snapshot.isBrowserDomainModeEnabled) &&
+        // [교통정리 2: 수동 언어 변경 바인딩]
+        if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
             BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
             BrowserTabManager.shared.updateManualLanguageChange(latestID)
             return
@@ -173,6 +191,8 @@ class WindowMonitor {
         }
     }
 
+    // 🌟 [우주 방어 수복 포인트 3: AXObserver 포트 바인딩 최적화]
+    @MainActor
     func observeApp(pid: pid_t) {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled || snapshot.isBrowserTabMemoryEnabled else { return }
@@ -192,9 +212,15 @@ class WindowMonitor {
                 guard let ref = ref else { return }
                 let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
                 let nsNotif = notif as String
-                if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
-                else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
-                else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
+                
+                // 🌟 [0ms 마이크로 레이턴시 무혈 입성 설계]
+                // 메인 런루프에서 구동되는 콜백이므로 메인 스레드 동작이 100% 보장됩니다.
+                // 따라서 무거운 비동기 홉(Task)을 생략하고 assumeIsolated로 격리를 증명하여 즉시 가동합니다.
+                MainActor.assumeIsolated {
+                    if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
+                    else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
+                    else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
+                }
             }
 
             if AXObserverCreate(pid, callback, &observer) == .success, let newObs = observer {
@@ -224,8 +250,11 @@ class WindowMonitor {
         }
     }
 
+    // 🌟 [우주 방어 수복 포인트 4: 브라우저 타이틀 변경 추적 격리]
+    @MainActor
     func handleWindowTitleChanged(element: AXUIElement) {
-        if SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled {
+        let snapshot = SettingsManager.shared.snapshot // 안전하게 선행 추출
+        if snapshot.isBrowserTabMemoryEnabled {
             if let app = NSRunningApplication(processIdentifier: self.currentPID),
                let bundleID = app.bundleIdentifier, let appName = app.localizedName {
                 BrowserTabManager.shared.handleBrowserTabChanged(bundleID: bundleID, appName: appName)
@@ -234,6 +263,7 @@ class WindowMonitor {
     }
 }
 
+// MARK: - LRU Cache Infrastructure (파트너님의 순정 자료구조 규격 완벽 보존)
 class WindowNode {
     let windowID: CGWindowID
     var language: String

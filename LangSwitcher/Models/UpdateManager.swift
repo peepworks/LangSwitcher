@@ -120,23 +120,35 @@ class UpdateManager: ObservableObject {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         
-        // 🌟 [7번 리뷰 수복 포인트]
-        // GitHub REST API 보안 차단 정책을 프리패스하기 위해 동적 User-Agent 헤더 명세를 강제 주입합니다.
+        let appName = "LangSwitcher"
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        request.setValue("LangSwitcher/\(appVersion) (Macintosh; Intel Mac OS X)", forHTTPHeaderField: "User-Agent")
+        let userAgentString = "\(appName)/\(appVersion) (Macintosh; Intel Mac OS X)"
+
+        // HTTP 헤더 필드에 공식 바인딩 락온
+        request.setValue(userAgentString, forHTTPHeaderField: "User-Agent")
         
         // 🌟 [최종 수복: async/await 네트워크 파이프라인 전치]
         Task {
             do {
+                // ── 가드레일 고도화 예시 ──
                 let (data, response) = try await URLSession.shared.data(for: request)
-                
                 self.isChecking = false
 
-                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 403 {
+                guard let httpResponse = response as? HTTPURLResponse else { return }
+
+                // 1. 403 제한 검문
+                if httpResponse.statusCode == 403 {
                     if !isAutomatic { self.activeAlert = .error("GitHub API access restricted. Please check rate limits or network parameters.") }
                     return
                 }
 
+                // 2. 🌟 [추가 추천 가드] 200 OK 성공 사양이 아닐 경우 파싱을 전면 차단하고 에러 처리로 분기
+                guard httpResponse.statusCode == 200 else {
+                    if !isAutomatic { self.activeAlert = .error("Server returned an unexpected response (Status: \(httpResponse.statusCode)).") }
+                    return
+                }
+
+                // 3. 무결함 통과 시에만 JSON 디코딩 개시
                 struct GitHubRelease: Codable {
                     let tagName: String
                     let htmlUrl: String

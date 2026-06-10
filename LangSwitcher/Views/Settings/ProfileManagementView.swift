@@ -226,22 +226,23 @@ struct ProfileManagementView: View {
         newProfile.id = UUID()
         newProfile.name = newProfile.name + " Copy"
         
-        // 1. 중복 I/O 방지를 위해 안전 가드 개시
+        // 1. 배치 가드를 켜서 뷰 리렌더링 및 불필요한 연속 저장을 일시 차단합니다.
         settings.isBatchUpdating = true
         
+        // 2. 인메모리 장부 수정 집행 (이 시점의 didSet은 저장을 스킵합니다)
         settings.profiles.append(newProfile)
         self.selection = newProfile.id
         settings.activeProfileID = newProfile.id
         
-        // 2. 가드를 안전하게 해제
+        // 3. 밸브를 열어 배치 가드를 완벽하게 해제합니다.
         settings.isBatchUpdating = false
         
-        // 🌟 [우주 방어 수복 포인트]
-        // 닫혀있던 가드가 완전히 풀린 직후, 명시적으로 scheduleSave() 마감 도장을 찍어줍니다.
-        // 이 한 줄 덕분에 프로필 복제 연산이 독립적인 원자적 트랜잭션으로 완결되며,
-        // 디스크 저장, 앱 스냅샷 최신화, iCloud 원격 푸시가 0.5초 디바운싱 버퍼를 타고 무결하게 집행됩니다.
+        // 🌟 [9번 리뷰 수복 포인트: 최종 상태 명시적 정산 플러시]
+        // 가드가 풀린 깨끗한 시점에 명시적으로 디바운스 디스크 쓰기와
+        // 로컬 스냅샷 갱신 파이프라인을 트리거하여 데이터 무결성을 $100\%$ 확보합니다.
         settings.scheduleSave()
-        
-        dprint("👥 [ProfilesUI] 프로필 복제 트랜잭션이 성공적으로 마감되어 글로벌 디바운스 저장을 트리거했습니다.")
+        settings.updateSnapshot()
+
+        dprint("📝 [Profiles UI] 프로필 복사 완결 — 명시적 장부 플러시 및 키보드 엔진 스냅샷 동기화 완료.")
     }
 }

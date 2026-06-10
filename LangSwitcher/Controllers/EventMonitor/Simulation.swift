@@ -128,6 +128,7 @@ extension EventMonitor {
     func postTriggerKey(keyCode: UInt16) {
         let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: true)
         let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: false)
+         dprint("⌨️ [Simulation] 포스트 트리거 키 전송 완결: \(keyCode)")
         triggerDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
         triggerUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
         triggerDown?.post(tap: .cghidEventTap)
@@ -141,6 +142,7 @@ extension EventMonitor {
     func performTextExpansion(triggerLength: Int, snippet: RenderedSnippet, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
         self.batchDelete(count: triggerLength)
         
+        // 후행 클로저에 메인 액터 및 샌더블 마킹을 결속하여 동시성 레이스를 사전 차단합니다.
         self.insertLongUnicodeText(snippet.text) { [weak self] in
             guard let self = self else { return }
             
@@ -176,9 +178,9 @@ extension EventMonitor {
         }
     }
     
-    // 🌟 [완벽 리팩토링] 순환 참조(Retain Cycle)와 배열 누수를 완벽히 차단한 버전
-    func insertLongUnicodeText(_ text: String, completion: @escaping () -> Void) {
-        // 1. 새로운 대치가 개시되므로 기존 장부 완전 취소 및 청소
+    // 🌟 [6번 리뷰 및 프로덕션 킬러 버그 완벽 정산 수복 완료 본]
+    func insertLongUnicodeText(_ text: String, completion: @escaping @MainActor @Sendable () -> Void) {
+        // 1. 새로운 대치가 개시되므로 기존 어레이 장부를 순회하며 타이머 전량 사살 및 초기화
         self.pendingInsertTasks.forEach { $0.cancel() }
         self.pendingInsertTasks.removeAll()
 
@@ -216,39 +218,27 @@ extension EventMonitor {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
 
-        // ── 3단계: 최종 완료(Completion) 핸들러 조립 및 예약 (순환 참조 및 취소 링크 무결성 수복) ──
+        // 3단계: 최종 마감 조립 구역 (복잡성 제거 및 100% 동기화 안착)
         let lastChunkIndex = max(0, chunks.count - 1)
-        let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.05
+        let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.03
 
-        // 힙 오염 방지용 값 타입 독립 플래그 객체 생성
-        var isCancelledFlag = false
-
+        // 마스터 캔슬 플래그 껍데기를 치워버리고, completionItem 그 자체를 추적 장부에 직결 락온합니다.
         let completionItem = DispatchWorkItem { [weak self] in
-            // completionItem 식별자를 자가 참조하지 않고 독립 플래그 변수만 검문하여 순환 참조 분쇄
-            guard let self = self, !isCancelledFlag else {
-                dprint("👻 [Ghost Guard] 유령 완료 핸들러 격추 및 순환 참조 방어 완수.")
-                return
+            guard let self = self else { return }
+                
+            // Swift 6 컴파일러에게 이 구역이 맑은 메인 액터 도메인임을 런타임 단언문으로 증명 통과시킵니다.
+            MainActor.assumeIsolated {
+                // 상주형 대기 태스크 장부 청소 완결
+                self.pendingInsertTasks.removeAll()
+                
+                // 🌟 [우주 방어 수복 포인트: 드롭되었던 생명줄 복원]
+                // 누락되어 텍스트 치환 엔진 전체를 멈추게 만들었던 후행 정산 콜백을 칼같이 실행 확약합니다!
+                completion()
             }
-
-            // 최후 검문을 통과한 청정 세만 실제 후속 동작 집행
-            completion()
-
-            // 정산 완료 장부 청소
-            self.pendingInsertTasks.removeAll()
         }
 
-        // 🌟 [우주 방어 수복 포인트]
-        // 컴파일러 경고를 유발하던 wrapperItem 자리에, 큐에서 취소 명령을 받을 때
-        // 내부 completionItem과 인메모리 취소 플래그까지 도미노처럼 한 번에 원자적으로 꺼버리는
-        // '통합 마스터 취소 아이템'을 장부에 등록하여 경고를 청정 소각하고 라이프사이클을 완결합니다.
-        let masterCancelItem = DispatchWorkItem {
-            isCancelledFlag = true
-            completionItem.cancel()
-            completionItem.perform() // 안전하게 최종 마감 스코프 구동
-        }
-
-        // 실제 추적 및 관리 장부에는 마스터 취소 통제 엔터티를 주입합니다.
-        self.pendingInsertTasks.append(masterCancelItem)
+        // 이제 진짜 주행 대상을 장부에 대입하여 외부 연타 취소 신호가 100% 동기 반영되도록 설계합니다.
+        self.pendingInsertTasks.append(completionItem)
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay, execute: completionItem)
     }
 }

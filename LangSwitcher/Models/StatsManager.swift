@@ -30,7 +30,7 @@ struct DailyStat: Codable, Identifiable, Equatable, Sendable {
     var typoCorrections: Int
 }
 
-@MainActor // 🌟 명시적 전역 액터 격리를 통해 인메모리 장부의 데이터 레이스를 원천 차단합니다.
+@MainActor // 명시적 전역 액터 격리를 통해 인메모리 장부의 데이터 레이스를 원천 차단합니다.
 class StatsManager: ObservableObject {
     static let shared = StatsManager()
     
@@ -50,7 +50,7 @@ class StatsManager: ObservableObject {
     
     private var isDirty: Bool = false
     
-    // 🌟 [최종 최적화 수복] 레거시 GCD DispatchWorkItem을 전면 적출하고
+    // 🌟 [10번 리뷰 수복 완료] 레거시 GCD DispatchWorkItem을 전면 적출하고
     // Swift 6 사양의 취소 가능한 비동기 Task 구조로 고성능 디바운스 래퍼를 대체합니다.
     private var publishTask: Task<Void, Never>?
     
@@ -108,32 +108,29 @@ class StatsManager: ObservableObject {
         // 1. 변경된 장부가 없다면 불필요한 디스크 파일 I/O 시스템 콜을 원천 차단
         guard isDirty else { return }
 
-        // 🌟 [우주 방어 수복 포인트 1]
         // 현재 시점까지 누적된 청정 인메모리 통계 데이터를 값 복사(CoW) 사양으로 완벽히 스냅샷을 굽습니다.
         let statsArray = Array(self.internalStatsDict.values).sorted { $0.dateString < $1.dateString }
         let key = defaultsKey
 
-        // 🚨 [주의] 기존에 이 상단 지점에 존재하던 'self.isDirty = false' 선행 해제 코드는 완전히 삭제(소각)합니다.
-
         // 2. 무거운 인코딩 및 디스크 파일 쓰기를 백그라운드 독립 스레드로 격리 위임
-        Task.detached(priority: .background) {
-            if let data = try? Self.encoder.encode(statsArray) {
-                // 물리적인 UserDefaults 디스크 저장 집행
-                UserDefaults.standard.set(data, forKey: key)
-                
-                // 🌟 [우주 방어 수복 포인트 2]
-                // 커널 레이어에 파일 쓰기가 100% 무사히 안착했음이 확약된 바로 이 시점에만
-                // 메인 액터(MainActor) 요새로 안전하게 복귀하여 장부 자물쇠를 공식 컴밋(isDirty = false)합니다.
-                await MainActor.run {
-                    StatsManager.shared.isDirty = false
-                    dprint("💾 [StatsManager] 디스크 저장 물리적 완수 확인. 트랜잭션 커밋 승인 및 isDirty = false 정산 완료.")
-                }
-            } else {
+        Task.detached(priority: .background) { [weak self] in
+            guard let data = try? Self.encoder.encode(statsArray) else {
                 // 만에 하나 데이터 인코딩 예외 발생 시, 장부를 의도적으로 더티(true) 상태로 유지하여 차기 세션 때 재시도 유도
-                await MainActor.run {
-                    StatsManager.shared.isDirty = true
+                await MainActor.run { [weak self] in
+                    self?.isDirty = true
                 }
                 dprint("🚨 [StatsManager] 통계 데이터 JSON 인코딩 실패. 차기 저장을 위해 장부 잠금을 유효화합니다.")
+                return
+            }
+            
+            // 물리적인 UserDefaults 디스크 저장 집행
+            UserDefaults.standard.set(data, forKey: key)
+            
+            // 커널 레이어에 파일 쓰기가 100% 무사히 안착했음이 확약된 바로 이 시점에만
+            // 메인 액터 요새로 안전하게 복귀하여 장부 자물쇠를 공식 컴밋(isDirty = false)합니다.
+            await MainActor.run { [weak self] in
+                self?.isDirty = false
+                dprint("💾 [StatsManager] 디스크 저장 물리적 완수 확인. 트랜잭션 커밋 승인 및 isDirty = false 정산 완료.")
             }
         }
     }
@@ -163,16 +160,25 @@ class StatsManager: ObservableObject {
         // 1. 타이핑 연타 시 이전 예약되어 있던 발행 태스크를 빛의 속도로 취소시킵니다.
         publishTask?.cancel()
         
-        // 2. 🌟 [수복 완료] 레거시 C 기반의 asyncAfter를 지우고 순정 비동기 슬립 구조로 주기를 제어합니다.
-        // 클로저 캡처 부하와 무단 스레드 배리어 우회 현상이 완벽하게 치료됩니다.
-        publishTask = Task {
-            // 0.3초 디바운스 대기 집행
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            
-            // 대기하는 도중 유저가 다음 타건을 쳐서 취소 신호가 내려왔다면 즉시 처형(Exit)
-            guard !Task.isCancelled else { return }
-            
-            self.publishUpdate()
+        // 2. 순정 비동기 슬립 구조로 주기를 제어합니다.
+        publishTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                // UI 스팸 및 리렌더링 버벅임을 방어하기 위해 0.3초간 청정 비동기 대기
+                try await Task.sleep(for: .seconds(0.3))
+                
+                // 슬립 도중 사용자가 글자를 또 쳐서 새로운 취소 신호가 인입되었다면 즉시 하단 연산 차단
+                guard !Task.isCancelled else { return }
+                
+                // 🌟 [우주 방어 수복 포인트: UI 단절 트랩 소각]
+                // 0.3초간 아무런 방해가 없었던 최종 진정 시점에 진짜 인메모리 장부를 퍼블릭 UI 바인딩 자산으로 갱신 배포합니다.
+                // @Published 프로퍼티 체인이 교체되므로 수동 objectWillChange 무단 방출 없이 완벽하게 실시간 그래프가 춤추게 됩니다.
+                self.publishUpdate()
+                
+                dprint("📊 [StatsManager] 통계 디바운스 최종 확약 — UI 장부 밀어내기 및 리렌더링 전파 완결.")
+            } catch {
+                // Task.sleep 취소 예외 발생 시 부작용 없이 조용히 스킵 후 복귀
+            }
         }
     }
 

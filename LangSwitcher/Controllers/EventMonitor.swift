@@ -98,10 +98,13 @@ class EventMonitor {
 
                         if IsSecureEventInputEnabled() { return Unmanaged.passUnretained(event) }
 
-                        // ── 1단계: 단일 진실 공급원 스냅샷 안전 인출 (3번 리뷰 핵심 수복) ──
+                        // 1단계: 오직 한 번만 snapshotLock 경유로 원자적 스냅샷 획득 완결
                         EventMonitor.shared.snapshotLock.lock()
                         guard let snapshot = EventMonitor.shared.localSnapshot else {
                             EventMonitor.shared.snapshotLock.unlock()
+                            // 🌟 [우주 방어 수복 포인트 1]
+                            // 스냅샷이 부재할 때 nil을 던지면 키보드 이벤트가 통째로 탈취당해 먹통이 됩니다.
+                            // 원래 유저가 입력하려던 순정 이벤트를 그대로 무혈 통과(passUnretained)시켜 생명줄을 살려놓습니다.
                             return Unmanaged.passUnretained(event)
                         }
                         EventMonitor.shared.snapshotLock.unlock()
@@ -131,11 +134,7 @@ class EventMonitor {
                             }
                         }
 
-                        // 🌟 [3번 리뷰 수복 완료] 이 자리에 무단 상주하며 오버헤드를 유발하던
-                        // 레거시 'SettingsManager.shared.snapshot' 직접 조회를 완벽하게 삭제(소각)하고,
-                        // 상단 락 스코프에서 받아온 단일 원자적 `snapshot` 객체만을 전 구간에서 안전하게 공유합니다.
-
-                        // Caps Lock (Hyper Key) 엔진 상시 동작 (파트너님의 순정 메서드 규격으로 완벽 도킹)
+                        // Caps Lock (Hyper Key) 엔진 상시 동작
                         if snapshot.isHyperKeyEnabled {
                             if HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode) { return nil }
                         }
@@ -220,7 +219,7 @@ class EventMonitor {
                                                 if let convertedText = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
                                                     EventMonitor.shared.performAutoCorrection(
                                                         originalLength: currentBuffer.count,
-                                                        correctedText: convertedText,
+                                                        correctedText: convertedText, // 🌟 상단 바인딩 상수와 칼같이 일치 결속!
                                                         triggerKeyCode: UInt16(keyCode)
                                                     )
                                                     EventMonitor.shared.clearTypingBuffer()
@@ -280,9 +279,7 @@ class EventMonitor {
                 if let tap = self.eventTap {
                     if !self.isEnabled {
                         CGEvent.tapEnable(tap: tap, enable: true)
-                        #if DEBUG
                         dprint("🛡️ [Self-Healing] OS 타임아웃으로 인해 비활성화된 EventTap을 성공적으로 깨웠습니다.")
-                        #endif
                         let log = ActionLog(
                             timestamp: Date(),
                             targetApp: "LangSwitcher System",
@@ -294,9 +291,7 @@ class EventMonitor {
                         SettingsManager.shared.addLog(log)
                     }
                 } else {
-                    #if DEBUG
                     dprint("🚨 [Self-Healing] EventTap 커널 포트 손상 감지. 인프라를 전면 재구축합니다.")
-                    #endif
                     let log = ActionLog(
                         timestamp: Date(),
                         targetApp: "LangSwitcher System",
@@ -322,8 +317,7 @@ class EventMonitor {
         eventTap = nil; runLoopSource = nil; eventRunLoop = nil
     }
 
-    func targetLangIfPressed(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> String? {
-        let snapshot = SettingsManager.shared.snapshot
+    func targetLangIfPressed(keyCode: UInt16, flags: NSEvent.ModifierFlags, snapshot: SettingsSnapshot) -> String? {
         if keyCode == 49 {
             if flags == .control && snapshot.isCtrlActive { return snapshot.ctrlLang }
             if flags == .command && snapshot.isCmdActive { return snapshot.cmdLang }

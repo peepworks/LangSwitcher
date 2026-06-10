@@ -21,35 +21,31 @@
 import Foundation
 
 extension SettingsManager {
+    
     @objc func icloudUpdateReceived(_ notification: Notification) {
         guard isCloudSyncEnabled else { return }
         
-        DispatchQueue.main.async { [weak self] in
+        // 🌟 [우주 방어 수복 포인트]
+        // 레거시 GCD(DispatchQueue) 이중 래핑을 과감히 소각하고,
+        // 전체 흐름을 단 하나의 명시적인 메인 액터 비동기 컨텍스트로 통일 결속합니다.
+        Task { @MainActor [weak self] in
             guard let self = self else { return }
             
+            // 1. 원격 대량 업데이트가 시작되므로 인바운드 플래그 가드를 먼저 잠급니다.
             self.isBatchUpdating = true
-            
-            // 🌟 [우주 방어 수복 완료]
-            // 후행 주석의 개행 찌꺼기로 인해 DispatchWorkItem 타입 매칭 에러(27라인)를 유발하던
-            // 컴파일러 파싱 트랩을 청정 소각하고 안전하게 디바운스 엔진을 도킹했습니다.
-            defer {
-                self.scheduleSave()
-                self.updateSnapshot()
-                self.isBatchUpdating = false
-            }
             
             let store = NSUbiquitousKeyValueStore.default
             let cloudDict = store.dictionaryRepresentation
             
-            dprint("🌐 [iCloud] 외부 기기로부터 원격 동기화 스트림 수신 완료. 장부 배치 정산을 전개합니다.")
+            dprint("🌐 [iCloud] 외부 기기 동기화 패킷 인입 감지 — 장부 세션 정산을 개시합니다.")
             
-            // ── 1단계: 원격 프로필 전체 데이터 수신 (실제 타입명 'SettingsProfile' 정밀 결속 완료) ──
+            // ── [1단계: 원격 프로필 전체 데이터 수신 및 파싱] ──
             if let profilesData = cloudDict["profiles"] as? Data,
                let decodedProfiles = try? JSONDecoder().decode([SettingsProfile].self, from: profilesData) {
                 self.profiles = decodedProfiles
             }
             
-            // ── 2단계: 활성 프로필 ID 컨텍스트 맵핑 ──
+            // ── [2단계: 활성 프로필 ID 컨텍스트 맵핑] ──
             if let activeProfileID = cloudDict["activeProfileID"] as? String {
                 if self.activeProfile.id.uuidString != activeProfileID {
                     if let matched = self.profiles.first(where: { $0.id.uuidString == activeProfileID }) {
@@ -58,7 +54,7 @@ extension SettingsManager {
                 }
             }
             
-            // ── 3단계: 전역 스위치 설정 실시간 원격 싱크 및 Null Guard 결속 ──
+            // ── [3단계: 전역 스위치 설정 실시간 원격 싱크 및 Null Guard 결속] ──
             if store.object(forKey: "showVisualFeedback") != nil { self.showVisualFeedback = store.bool(forKey: "showVisualFeedback") }
             if store.object(forKey: "isHyperKeyEnabled") != nil { self.isHyperKeyEnabled = store.bool(forKey: "isHyperKeyEnabled") }
             if store.object(forKey: "isWindowMemoryEnabled") != nil { self.isWindowMemoryEnabled = store.bool(forKey: "isWindowMemoryEnabled") }
@@ -68,8 +64,23 @@ extension SettingsManager {
             if store.object(forKey: "isEdgeGlowEnabled") != nil { self.isEdgeGlowEnabled = store.bool(forKey: "isEdgeGlowEnabled") }
             if store.object(forKey: "isBrowserTabMemoryEnabled") != nil { self.isBrowserTabMemoryEnabled = store.bool(forKey: "isBrowserTabMemoryEnabled") }
             
-            // 하드웨어 타건 엔진이 참조하는 싱글톤 도메인 매니저 갱신
+            // 하드웨어 타건 엔진이 참조하는 싱글톤 도메인 매니저 동기화
             DomainRuleManager.shared.rules = self.activeProfile.payload.domainRules
+            
+            // ── [4단계: 3번 리뷰 지적 사항 근본적 정산 완결] ──
+            do {
+                // 상단에서 원격 설정을 메모리에 완벽히 기입 완료한 "이 정갈한 시점"에 비로소 저장을 트리거합니다.
+                // 직렬화 큐가 물리 디스크 쓰기를 끝마칠 때까지 책임을 지고 안전하게 대기(Await)합니다.
+                await self.saveAll()
+                
+                // 디스크에 무결하게 저장되었음이 확약된 상태에서 비로서 최신 엔진 스냅샷을 배포합니다.
+                self.updateSnapshot()
+                
+                // 모든 정산 연산이 마감되었으므로 가드 플래그를 안전하게 해제합니다.
+                self.isBatchUpdating = false
+                
+                dprint("✨ [iCloud] 클라우드 원격 설정 장부 디스크 플러시 및 엔진 스냅샷 갱신이 완벽하게 완결되었습니다.")
+            }
         }
     }
 

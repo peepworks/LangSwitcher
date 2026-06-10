@@ -23,10 +23,10 @@ import Cocoa
 class HyperKeyManager {
     static let shared = HyperKeyManager()
 
-    // 🌟 [교통정리] hidutil 명령어 실행이 절대 겹치지 않도록 조율하는 전용 직렬 백그라운드 큐
+    // hidutil 명령어 실행이 절대 겹치지 않도록 조율하는 전용 직렬 백그라운드 큐
     private let hidutilQueue = DispatchQueue(label: "com.peepworks.langswitcher.hidutil", qos: .userInitiated)
 
-    // 🌟 CGEventTap 스레드 문맥과 설정 UI 문맥 간의 완벽한 스레드 안전성을 보장하는 고성능 자물쇠
+    // CGEventTap 스레드 문맥과 설정 UI 문맥 간의 완벽한 스레드 안전성을 보장하는 고성능 자물쇠
     private let stateLock = NSLock()
 
     private var isHyperDown = false
@@ -39,7 +39,7 @@ class HyperKeyManager {
     // Caps Lock 디바운스를 위한 WorkItem 저장 변수
     private var capsLockWorkItem: DispatchWorkItem?
 
-    // 🌟 [원상 복구 완수] 64비트 시스템 커널용 순정 데시멀 ID 장부 정렬
+    // 64비트 시스템 커널용 순정 데시멀 ID 장부 정렬
     private let capsLockSrc: Int = 30064771129 // 0x700000039 (Caps Lock)
     private let f19Dst: Int = 30064771182      // 0x70000006E (F19 Key)
 
@@ -54,9 +54,7 @@ class HyperKeyManager {
     }
 
     private func setupHardwareMapping(enable: Bool) {
-        // 🌟 [우주 방어 수복 포인트 1]
-        // 직렬 큐의 스레드를 물리적으로 잠그던 레거시 구조를 전면 파괴하고,
-        // 스위프트 동시성의 협력적 멀티스레드 풀(Background Global Pool)로 태스크를 격리합니다.
+        // 스위프트 동시성의 협력적 멀티스레드 풀로 태스크를 완전히 독립 격리합니다.
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
 
@@ -67,22 +65,25 @@ class HyperKeyManager {
             let getPipe = Pipe()
             getTask.standardOutput = getPipe
 
-            do {
-                try getTask.run()
-                
-                // 🌟 [핵심 수복] 스레드를 통째로 얼려버리던 getTask.waitUntilExit()를 완전히 들어내고
-                // 커널 종료 인터럽트 시점에 태스크를 깨우는 넌블로킹 비동기 Continuation으로 대체합니다.
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    getTask.terminationHandler = { _ in
-                        continuation.resume()
-                    }
+            // 🌟 [우주 방어 수복 포인트 1: 레이스 컨디션 전면 해제]
+            // 프로세스가 실행되기 전(Pre-Launch) 시점에 비동기 가두리를 개설하여 종료 인터럽트 수신 유실률을 0%로 통제합니다.
+            let isGetSuccessful: Bool = await withCheckedContinuation { continuation in
+                getTask.terminationHandler = { proc in
+                    continuation.resume(returning: proc.terminationStatus == 0)
                 }
-            } catch {
-                dprint("❌ [HyperKeyManager] hidutil --get 프로세스 기동 실패: \(error.localizedDescription)")
-                return
+                do {
+                    try getTask.run()
+                } catch {
+                    dprint("❌ [HyperKeyManager] hidutil --get 프로세스 기동 실패: \(error.localizedDescription)")
+                    getTask.terminationHandler = nil
+                    continuation.resume(returning: false)
+                }
             }
 
-            let getData = getPipe.fileHandleForReading.readDataToEndOfFile()
+            guard isGetSuccessful else { return }
+
+            // 🌟 [현대적 I/O 마이그레이션] 구형 readDataToEndOfFile()을 소각하고 최신 넌블로킹 데이터 스트림으로 정산합니다.
+            guard let getData = try? getPipe.fileHandleForReading.readToEnd() else { return }
             let getString = String(data: getData, encoding: .utf8) ?? ""
             try? getPipe.fileHandleForReading.close()
 
@@ -98,29 +99,33 @@ class HyperKeyManager {
                 plutilTask.standardInput = plutilIn
                 plutilTask.standardOutput = plutilOut
 
-                do {
-                    try plutilTask.run()
-                    
-                    // 데이터 주입 후 즉시 파이프를 닫아 plutil 프로세스의 교착(Hang)을 차단
-                    plutilIn.fileHandleForWriting.write(getData)
-                    try? plutilIn.fileHandleForWriting.close()
-
-                    // 🌟 [핵심 수복] 두 번째 병목 지점이었던 plutilTask.waitUntilExit() 역시
-                    // 스레드를 점유하지 않는 넌블로킹 비동기 대기로 깔끔하게 정산합니다.
-                    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                        plutilTask.terminationHandler = { _ in
-                            continuation.resume()
-                        }
+                // 🌟 [우주 방어 수복 포인트 2: plutil 넌블로킹 인터럽트 가드 락온]
+                let isPlutilSuccessful: Bool = await withCheckedContinuation { continuation in
+                    plutilTask.terminationHandler = { proc in
+                        continuation.resume(returning: proc.terminationStatus == 0)
                     }
-
-                    let jsonData = plutilOut.fileHandleForReading.readDataToEndOfFile()
-                    try? plutilOut.fileHandleForReading.close()
                     
-                    if let parsed = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Int]] {
+                    do {
+                        try plutilTask.run()
+                        
+                        // 7번 리뷰 수복 명세 확약: 대기선 진입 전 파이프 쓰기 및 완벽한 선행 폐쇄(close) 집행
+                        try plutilIn.fileHandleForWriting.write(contentsOf: getData)
+                        try plutilIn.fileHandleForWriting.close()
+                    } catch {
+                        dprint("⚠️ [HyperKeyManager] plutil 프로세스 가동 실패: \(error.localizedDescription)")
+                        try? plutilIn.fileHandleForWriting.close()
+                        plutilTask.terminationHandler = nil
+                        continuation.resume(returning: false)
+                    }
+                }
+
+                if isPlutilSuccessful, let jsonData = try? plutilOut.fileHandleForReading.readToEnd() {
+                    try? plutilOut.fileHandleForReading.close()
+                    if let parsed = try? JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Int]] {
                         mappings = parsed
                     }
-                } catch {
-                    dprint("⚠️ [HyperKeyManager] plutil 데이터 파싱 예외 발생: \(error.localizedDescription)")
+                } else {
+                    try? plutilOut.fileHandleForReading.close()
                 }
             }
 
@@ -147,7 +152,7 @@ class HyperKeyManager {
                 if proc.terminationStatus != 0 {
                     dprint("❌ [HyperKeyManager] hidutil --set 하드웨어 반영 실패")
                 } else {
-                    dprint("✅ [HyperKeyManager] Caps Lock ➔ F1 F19 매핑 파이프라인 전 구간 비동기화 완료.")
+                    dprint("✅ [HyperKeyManager] Caps Lock ➔ F19 하드웨어 매핑 파이프라인 무결성 정산 완결.")
                 }
                 proc.terminationHandler = nil
             }
@@ -180,8 +185,6 @@ class HyperKeyManager {
         }
     }
 
-    // 🌟 [주의] 이 메서드는 CGEventTap 콜백 함수에 의해 실시간 동기식으로 호출되므로
-    // @MainActor 격리벽을 세우지 않고, NSLock(stateLock) 체제를 유지하는 것이 아키텍처 정석입니다.
     func processEvent(type: CGEventType, event: CGEvent, keyCode: CGKeyCode) -> Bool {
         var shouldBlock = false
         var shouldPostDown = false

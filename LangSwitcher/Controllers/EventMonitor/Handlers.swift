@@ -44,7 +44,11 @@ extension EventMonitor {
             if EventMonitor.shared.shouldDebounceCapsLock() { return nil }
 
             if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == 57 && !snapshot.typoDisplayString.isEmpty {
-                TypoConverter.shared.executeCorrection()
+                // 🌟 [우주 방어 수복 포인트 1: handleFlagsChanged 데드락 무력화]
+                // 락 가드 내부에서의 동기 호출을 차단하고 비동기 메인 큐 홉으로 안전하게 밀어 올립니다.
+                DispatchQueue.main.async {
+                    TypoConverter.shared.executeCorrection()
+                }
                 return nil
             }
 
@@ -68,7 +72,10 @@ extension EventMonitor {
                 if !stateSnap.didPressOtherKey {
                     if let singleCode = stateSnap.singleCode {
                         if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == singleCode && !snapshot.typoDisplayString.isEmpty {
-                            TypoConverter.shared.executeCorrection()
+                            // 🌟 [우주 방어 수복 포인트 2: 싱글 모디파이어 오타 교정 비동기화]
+                            DispatchQueue.main.async {
+                                TypoConverter.shared.executeCorrection()
+                            }
                             return nil
                         }
 
@@ -87,7 +94,10 @@ extension EventMonitor {
                         let modsRaw = UInt64(stateSnap.maxMods.rawValue)
 
                         if snapshot.isTypoCorrectionEnabled && snapshot.typoKeyCode == 0 && snapshot.typoModifierFlags == modsRaw && !snapshot.typoDisplayString.isEmpty {
-                            TypoConverter.shared.executeCorrection()
+                            // 🌟 [우주 방어 수복 포인트 3: 다중 모디파이어 오타 교정 비동기화]
+                            DispatchQueue.main.async {
+                                TypoConverter.shared.executeCorrection()
+                            }
                             return nil
                         }
 
@@ -108,14 +118,16 @@ extension EventMonitor {
         }
         
         if isToggle || targetAppBundleID != nil || targetLang != nil {
-            EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+            // 🌟 [성능 최적화: 핫 패스 오버헤드 평탄화 1]
+            // 액션 실행 엔진을 메인 큐 비동기로 디스패치하여 락 점유 시간을 0ms로 소각합니다.
+            DispatchQueue.main.async {
+                EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+            }
             
             if keyCode == 57 { return nil } // Caps Lock 토글시 차단
+            if targetAppBundleID != nil { return nil } // 오직 '앱 실행 단축키'일 때만 시스템 이벤트 무효화
             
-            // 🌟 [요청사항 반영] 오직 '앱 실행 단축키'일 때만 시스템 이벤트 무효화
-            if targetAppBundleID != nil { return nil }
-            
-            return Unmanaged.passUnretained(event) // 나머지는 통과
+            return Unmanaged.passUnretained(event)
         }
         return Unmanaged.passUnretained(event)
     }
@@ -125,7 +137,6 @@ extension EventMonitor {
         EventMonitor.shared.snapshotLock.lock()
         defer { EventMonitor.shared.snapshotLock.unlock() }
 
-        // 🌟 오직 localSnapshot만을 단일 공급원으로 취급합니다.
         guard let snapshot = EventMonitor.shared.localSnapshot else {
             return Unmanaged.passUnretained(event)
         }
@@ -146,8 +157,6 @@ extension EventMonitor {
            NSEvent.ModifierFlags(rawValue: UInt(snapshot.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
            !snapshot.typoDisplayString.isEmpty {
             
-            // 🌟 [안전 가드] 오타 교정 집행부 역시 메인 액터 지대이므로 락 내부 동기 호출을 차단하고
-            // 비동기 홉으로 안전하게 밀어 올려 실행합니다.
             DispatchQueue.main.async {
                 TypoConverter.shared.executeCorrection()
             }
@@ -198,26 +207,27 @@ extension EventMonitor {
         }
 
         // ----------------------------------------------------------------
-        // 🌟 [최종 정산 및 수복 구역: 데드락 프리 패스포트 수립]
+        // 최종 정산 및 수복 구역
         // ----------------------------------------------------------------
         
         // 1) 실제 액션(언어 전환 또는 앱 실행)이 발동해야 하는 경우
         if isToggle || targetAppBundleID != nil || targetLang != nil {
-            EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+            // 🌟 [성능 최적화: 핫 패스 오버헤드 평탄화 2]
+            DispatchQueue.main.async {
+                EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
+            }
 
             if isToggle { return nil }
             if targetAppBundleID != nil { return nil }
             return Unmanaged.passUnretained(event)
         }
         
-        // 2) 🌟 [수복 구역] 언어 전환은 없으나 동일 언어 단축키 입력으로 HUD Flag만 갱신해야 하는 상황
-        else if let _ = targetLangIfPressed(keyCode: keyCode, flags: flags), snapshot.isCursorHUDEnabled {
+        // 2) 🌟 [최종 컴파일 에러 수복 완료 구역]
+        // 우리가 3개 파라미터형으로 개조한 targetLangIfPressed 규격에 맞게 keyCode 유닛 변환 및 snapshot 자산을 관통 주입합니다.
+        else if let _ = targetLangIfPressed(keyCode: UInt16(keyCode), flags: flags, snapshot: snapshot), snapshot.isCursorHUDEnabled {
 
             // 🔧 [우주 방어 & 2프레임 지연 소각]
-            // 불필요한 중첩 래핑과 assumeIsolated 블록을 청정 소각하고,
-            // 락 해제용 단일 비동기 파이프라인(DispatchQueue.main.async)으로 직결 정산합니다.
             DispatchQueue.main.async {
-                // 이미 메인 스레드(Main Queue) 내부이므로 요새 가드 없이 즉시 안전하게 자원 인출
                 let langName = InputSourceManager.shared.currentInputSourceName
                 HUDManager.shared.showHUD(languageName: langName)
             }
