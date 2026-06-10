@@ -98,9 +98,7 @@ class EventMonitor {
 
                         if IsSecureEventInputEnabled() { return Unmanaged.passUnretained(event) }
 
-                        // ----------------------------------------------------------------
-                        // 🌟 [수복 포인트 1] 여기서 딱 한 번만 snapshotLock을 풀고 안전하게 선언합니다.
-                        // ----------------------------------------------------------------
+                        // ── 1단계: 단일 진실 공급원 스냅샷 안전 인출 (3번 리뷰 핵심 수복) ──
                         EventMonitor.shared.snapshotLock.lock()
                         guard let snapshot = EventMonitor.shared.localSnapshot else {
                             EventMonitor.shared.snapshotLock.unlock()
@@ -120,7 +118,7 @@ class EventMonitor {
                             }
                         }
 
-                        // 시스템 긴급 제어 부근...
+                        // 시스템 긴급 제어용 훅
                         if type == .keyDown {
                             let flags = event.flags
                             let isCommand = flags.contains(.maskCommand)
@@ -129,36 +127,21 @@ class EventMonitor {
                             let isShift = flags.contains(.maskShift)
 
                             if isCommand && isOption && isControl && !isShift && keyCode == 1 {
-                                // ... 중략 ...
                                 return nil
                             }
                         }
 
-                        // ----------------------------------------------------------------
-                        // 🚨 [수복 포인트 2] 이 부근에 존재하던 아래의 구형 코드를 '완전 소각'합니다!
-                        // ❌ let snapshot = SettingsManager.shared.snapshot  <── 이 줄을 삭제하세요!
-                        // ----------------------------------------------------------------
+                        // 🌟 [3번 리뷰 수복 완료] 이 자리에 무단 상주하며 오버헤드를 유발하던
+                        // 레거시 'SettingsManager.shared.snapshot' 직접 조회를 완벽하게 삭제(소각)하고,
+                        // 상단 락 스코프에서 받아온 단일 원자적 `snapshot` 객체만을 전 구간에서 안전하게 공유합니다.
 
-                        // Caps Lock (Hyper Key) 엔진 상시 동작 (상단에서 확보한 안전한 snapshot을 재사용합니다)
+                        // Caps Lock (Hyper Key) 엔진 상시 동작 (파트너님의 순정 메서드 규격으로 완벽 도킹)
                         if snapshot.isHyperKeyEnabled {
                             if HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode) { return nil }
                         }
 
-                        // 단축키 레코더 가로채기
-                        if let callback = EventMonitor.shared.shortcutRecordingCallback {
-                            if type == .keyDown || type == .flagsChanged {
-                                if let nsEvent = NSEvent(cgEvent: event) {
-                                    DispatchQueue.main.async { callback(nsEvent) }
-                                }
-                                return nil
-                            }
-                        }
-
                         let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
-
-                        if isSimulated {
-                            return Unmanaged.passUnretained(event)
-                        }
+                        if isSimulated { return Unmanaged.passUnretained(event) }
 
                         // 예외 등록 앱 필터링
                         if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
@@ -193,7 +176,7 @@ class EventMonitor {
                             }
                         }
 
-                        // 텍스트 대치 및 스마트 자동 오타 교정 코어 엔진
+                        // 텍스트 대치 및 스마트 자동 오타 교정 코어 엔진 구역
                         if type == .keyDown {
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
@@ -290,20 +273,16 @@ class EventMonitor {
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
         
-        // 🌟 5초 간격으로 우아하게 시스템 커널의 EventTap 생존 여부를 모니터링합니다.
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            // 🌟 [Swift 6 준수] 타이머가 깨어나는 시점에 메인 액터 격리 장부를 안전하게 바인딩합니다.
             MainActor.assumeIsolated {
                 guard let self = self else { return }
                 
                 if let tap = self.eventTap {
-                    // ── 1단계 수복: 포트는 살아있으나 단순히 상태만 꺼진 경우 ──
                     if !self.isEnabled {
                         CGEvent.tapEnable(tap: tap, enable: true)
-                        
+                        #if DEBUG
                         dprint("🛡️ [Self-Healing] OS 타임아웃으로 인해 비활성화된 EventTap을 성공적으로 깨웠습니다.")
-                        
-                        // 정산 로그 주입
+                        #endif
                         let log = ActionLog(
                             timestamp: Date(),
                             targetApp: "LangSwitcher System",
@@ -315,9 +294,9 @@ class EventMonitor {
                         SettingsManager.shared.addLog(log)
                     }
                 } else {
-                    // ── 2단계 수복: 절전 복귀 시 포트 자체가 분쇄되거나 날아간 우주 세기적 상황 ──
-                    dprint("🚨 [Self-Healing] EventTap 커널 포트 무덤 진입 감지! 즉시 하드웨어 인터럽트 인프라를 전면 재구축합니다.")
-                    
+                    #if DEBUG
+                    dprint("🚨 [Self-Healing] EventTap 커널 포트 손상 감지. 인프라를 전면 재구축합니다.")
+                    #endif
                     let log = ActionLog(
                         timestamp: Date(),
                         targetApp: "LangSwitcher System",
@@ -328,7 +307,6 @@ class EventMonitor {
                     )
                     SettingsManager.shared.addLog(log)
                     
-                    // 기존 좀비 자원 강제 청정 소각 후 커널 레이어에서 새 포트 인출
                     self.stop()
                     self.start()
                 }

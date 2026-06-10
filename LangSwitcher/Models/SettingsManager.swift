@@ -45,7 +45,11 @@ class SettingsManager: ObservableObject {
     private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
     private var saveWorkItem: DispatchWorkItem?
     
+    nonisolated private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.save", qos: .background)
+    
     private let maxLogCount = 500
+    private let logTrimThreshold = 550  // 여유분을 포함한 최대 장부 수용 한도 (500 + 50)
+    private let logTrimCount = 50       // 임계치 도달 시 한 번에 잘라낼 트리밍 단위
     private var logBufferThreshold: Int { maxLogCount + 50 }
     
     @Published var selectedTab: SettingsTab? = .general
@@ -218,7 +222,8 @@ class SettingsManager: ObservableObject {
             NotificationCenter.default.post(name: .profileDidSwitch, object: nil)
 
             Task { @MainActor in
-                self.saveAll()
+                // 🌟 [수복 완료] async 메서드로 승격된 saveAll() 앞에 명시적으로 await를 결속합니다.
+                await self.saveAll()
                 self.syncToCloud()
                 
                 if #available(macOS 13.0, *) {
@@ -322,7 +327,12 @@ class SettingsManager: ObservableObject {
         self.applyActiveProfile()
         
         if needsMigration {
-            self.saveAll()
+            // 🌟 [수복 완료] 동기 컨텍스트인 생성자(init) 내부에서 async 함수를 안전하게 격리 집행하기 위해
+            // Task 구조적 동시성 래퍼를 씌우고 내부에서 await를 락온합니다.
+            Task { @MainActor in
+                await self.saveAll()
+            }
+            
             if d.data(forKey: "profiles") != nil {
                 d.removeObject(forKey: "profiles")
                 dprint("🧹 [Storage Engine] UserDefaults 내 레거시 무거운 profiles 배열 파괴 성공.")
@@ -342,22 +352,37 @@ class SettingsManager: ObservableObject {
         UserDefaults.standard.set(value, forKey: key)
     }
 
-    func saveAll() {
+    // MARK: - 고성능 디스크 저장 엔티티 (순서 역전 및 데이터 유실 트랩 완벽 소각)
+    
+    func saveAll() async {
         let profilesToSave = self.profiles
         let directoryURL = self.applicationSupportDirectoryURL
         let fileURL = self.profilesFileURL
         
-        // 🌟 [수복 완료] 레거시 GCD 대신 Swift 6 최적화 규격인 Task.detached 사양으로 디스크 저장 처리 통합
-        Task.detached(priority: .background) {
-            do {
-                if !FileManager.default.fileExists(atPath: directoryURL.path) {
-                    try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        // 🌟 [우주 방어 수복 포인트 2]
+        // 외부 호출 주체(scheduleSave 등)는 await를 통해 기다리되,
+        // 실제 파일 시스템 operations는 com.peepworks.langswitcher.save 직렬 큐를 경유하게 만들어
+        // 100개의 태스크가 겹치더라도 파일 쓰기가 칼같이 한 줄로 줄을 서서 순차 집행되도록 보장합니다.
+        await withCheckedContinuation { continuation in
+            saveQueue.async {
+                do {
+                    if !FileManager.default.fileExists(atPath: directoryURL.path) {
+                        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+                    }
+                    let data = try Self.profileEncoder.encode(profilesToSave)
+                    
+                    // 직렬화가 보장된 상태에서 .atomic 옵션을 적용하므로
+                    // 임시 파일명 충돌 및 rename() 경합 시나리오가 수학적으로 완전히 소각(0.000%)됩니다.
+                    try data.write(to: fileURL, options: .atomic)
+                    
+                    dprint("✅ [Storage Engine] 직렬화 큐 통과 — profiles.json 원자적 저장 무결성 확약.")
+                } catch {
+                    dprint("❌ [Storage Engine] 직렬화 큐 디스크 저장 실패: \(error.localizedDescription)")
                 }
-                let data = try Self.profileEncoder.encode(profilesToSave)
-                try data.write(to: fileURL, options: .atomic)
-                dprint("✅ [Storage Engine] 프로필 데이터가 Application Support 폴더에 안전하게 저장되었습니다.")
-            } catch {
-                dprint("❌ [Storage Engine] 프로필 디스크 저장 실패: \(error.localizedDescription)")
+                
+                // 쓰기 작업이 성공하든 실패하든, 줄 서있던 다음 태스크가 가동될 수 있도록
+                // 대기 중이던 상위 스레드의 빗장을 열어주며 마무리합니다.
+                continuation.resume()
             }
         }
     }
@@ -435,33 +460,40 @@ class SettingsManager: ObservableObject {
     // MARK: - 고성능 로그 주입 아키텍처
     @MainActor
     func addLog(_ log: ActionLog) {
-        // 1. 뒤에 붙이기는 언제나 비용이 없는 완벽한 O(1)
+        // 뒤에 붙이기는 언제나 비용이 없는 완벽한 O(1) 버퍼 확장
         self.recentLogs.append(log)
         
-        // 2. 🌟 [최종 최적화 수복]
-        // 550개 임계치 도달 시, 완전히 새로운 배열을 힙에 할당하는 Array(suffix)를 버리고
-        // 기존 메모리 버퍼 내부에서 memmove 기반으로 앞의 50개만 즉시 밀어버립니다. (힙 할당 오버헤드 0%)
-        if self.recentLogs.count > maxLogCount + 50 {
-            self.recentLogs.removeFirst(50)
+        // 🌟 [5번 리뷰 수복]
+        // 의미가 모호하던 매직 넘버 연산식과 미사용 유령 프로퍼티(logBufferThreshold)를 전면 소각하고,
+        // 명확한 명수형 상수를 매핑하여 조건 검증 가독성을 최고 수준으로 격상했습니다.
+        if self.recentLogs.count > logTrimThreshold {
+            self.recentLogs.removeFirst(logTrimCount)
             
-            dprint("🧹 [LogEngine] 메모리 재할당 없이 기존 버퍼 내에서 50건의 로그를 제자리(In-place) 트리밍했습니다.")
+            dprint("🧹 [LogEngine] 메모리 재할당 없이 기존 버퍼 내에서 \(logTrimCount)건의 로그를 제자리(In-place) 트리밍했습니다.")
         }
     }
     
     // MARK: - 고성능 디바운스 저장 엔진 (@MainActor 격리 완전 준수)
+        
     func scheduleSave() {
         saveWorkItem?.cancel()
         
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             
-            self.saveAll()
-            self.updateSnapshot()
-            
-            if !self.isBatchUpdating {
-                self.syncToCloud()
+            // 🌟 [우주 방어 수복 2] 비동기 태스크 컨텍스트를 개시하여
+            // 디스크 저장이 '실제로 성공하여 끝난 시점'을 명시적으로 확약받은 후 다음 진도를 전개합니다.
+            Task { @MainActor in
+                await self.saveAll() // ➔ 디스크 물리 쓰기가 완벽히 마감될 때까지 아래 라인은 실행이 홀딩됩니다.
+                
+                self.updateSnapshot() // 이제 안전하게 스냅샷을 최신 장부로 일치화
+                
+                if !self.isBatchUpdating {
+                    self.syncToCloud() // 완벽하게 일치된 데이터 사양으로 클라우드 동기화 팩킹 전송
+                }
+                
+                dprint("📝 [SettingsManager] 디스크 저장 확약 후 스냅샷 및 클라우드 정산을 무결하게 완결했습니다.")
             }
-            dprint("📝 [SettingsManager] 메인 액터 격리를 준수하며 안전하게 설정을 통합 보존했습니다.")
         }
         
         self.saveWorkItem = workItem

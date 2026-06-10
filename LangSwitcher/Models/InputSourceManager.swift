@@ -27,15 +27,24 @@ struct MacKeyboard: Identifiable, Hashable {
     let name: String
 }
 
+// 🌟 [최종 수복: Swift 6 전역 격리 완벽 수립]
+@MainActor
 class InputSourceManager: ObservableObject {
     static let shared = InputSourceManager()
     @Published var availableKeyboards: [MacKeyboard] = []
 
-    private init() { fetchKeyboards() }
+    private init() {
+        // 초기화 시점에 비동기로 키보드 장부를 긁어와 앱 시작 레이턴시 블로킹을 원천 차단합니다.
+        fetchKeyboards()
+    }
 
     func fetchKeyboards() {
-        // 🌟 [리뷰 반영] 메인 스레드에서만 실행되어야 하는 TIS API 로직을 하나의 블록으로 묶습니다.
-        let fetchTask = {
+        // 🌟 [우주 방어 수복 포인트]
+        // 변수 대입 방식(let fetchTask)을 탈피하고 클로저를 메인 큐 비동기 파이프라인에 인라인으로 직결합니다.
+        // 클로저 도입부에 '@MainActor'를 명시함으로써 Swift 6 컴파일러가 요구하는
+        // @MainActor @Sendable @convention(block) 조건을 전량 충족하고 컴파일 에러를 원천 박멸합니다.
+        DispatchQueue.main.async { @MainActor [weak self] in
+            guard let self = self else { return }
             guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
             var keyboards: [MacKeyboard] = []
 
@@ -56,19 +65,11 @@ class InputSourceManager: ObservableObject {
                 keyboards.append(MacKeyboard(id: id, name: name))
             }
             
-            // @Published 변수 업데이트는 당연히 메인 스레드에서 이루어집니다.
+            // @MainActor 컨텍스트 내부이므로 @Published 프로퍼티 장부 대입 역시 완벽하게 세이프티합니다.
             self.availableKeyboards = keyboards
         }
 
-        // 🌟 [리뷰 반영] 현재 실행 중인 스레드가 메인 스레드인지 확인합니다.
-        // 메인 스레드라면 즉시 실행하고, 아니라면 메인 큐에 동기(sync)로 밀어 넣어 데드락과 크래시를 원천 방지합니다.
-        if Thread.isMainThread {
-            fetchTask()
-        } else {
-            DispatchQueue.main.sync {
-                fetchTask()
-            }
-        }
+        dprint("⌨️ [InputSource] 메인 스레드 교착 리스크를 원천 차단하며 비동기(async) 키보드 리스트 갱신 예약 완료.")
     }
 
     func switchLanguage(to id: String) {
@@ -77,7 +78,7 @@ class InputSourceManager: ObservableObject {
             let currentID = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
             
             if currentID == id {
-                dprint("💡 이미 해당 언어(\(id))를 사용 중입니다. 전환 및 HUD 표시를 생략합니다.")
+                dprint("💡 이미 해당 언어(\(id))를 사용 중입니다. 전환 및 피드백 전개를 생략합니다.")
                 return
             }
         }
@@ -87,21 +88,17 @@ class InputSourceManager: ObservableObject {
            let target = list.first {
             TISSelectInputSource(target)
             
-            // 🌟 [추가됨] 언어가 '실제로' 변경되었을 때만 카운트 증가 (가장 완벽한 길목)
+            // 데이터 분석 커널에 안전 기입
             StatsManager.shared.incrementLanguageSwitch()
             
-            // 🌟 [추가] 노치 엣지 글로우 피드백 실행
-            DispatchQueue.main.async {
-                EdgeGlowManager.shared.showGlow(forLanguage: id)
-            }
-            
-            // 🌟 [추가] 언어 전환 성공 시 햅틱 및 사운드 실행!
+            // 🌟 [최적화 정산] 이미 @MainActor 구역이므로 불필요한 main.async 소각, 즉시 피드백 구동
+            EdgeGlowManager.shared.showGlow(forLanguage: id)
             SensoryFeedbackManager.shared.playFeedback(forLanguageID: id)
                         
             if SettingsManager.shared.showVisualFeedback {
                 if let namePtr = TISGetInputSourceProperty(target, kTISPropertyLocalizedName) {
                     let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
-                    DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: name) }
+                    HUDManager.shared.showHUD(languageName: name)
                 }
             }
         }
@@ -124,28 +121,27 @@ class InputSourceManager: ObservableObject {
     
     // MARK: - Browser Tab Memory Helpers
     
-    /// 현재 활성화된 키보드 입력 소스의 고유 ID(예: "com.apple.keylayout.ABC")를 반환합니다.
+    /// 현재 활성화된 키보드 입력 소스의 고유 ID를 안전하게 반환합니다.
     func currentInputSourceID() -> String {
-        let currentSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
-        if let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) {
-            return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+        // 🌟 [우주 방어 수복] 닐 크래시를 유발하던 날것의 강제 추출을 제거하고 옵셔널 언랩 가드를 결속했습니다.
+        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
+            return ""
         }
-        return ""
+        return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
     }
     
     /// 주어진 고유 ID를 가진 입력 소스로 즉시 전환합니다.
     func switchInputSource(to sourceID: String) {
         let filter = [kTISPropertyInputSourceID as String: sourceID] as CFDictionary
-        // 필터 조건에 맞는 입력 소스 검색
         guard let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
               let source = list.first else { return }
         
-        // 해당 입력 소스로 전환
         TISSelectInputSource(source)
     }
-    // 클래스 내부의 가장 아래쪽 } 바로 위에 추가
+    
+    /// 현재 선택된 입력 소스의 로컬라이즈 이름을 반환합니다.
     var currentInputSourceName: String {
-        // 현재 선택된 소스의 이름 반환
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let namePtr = TISGetInputSourceProperty(currentSource, kTISPropertyLocalizedName) else {
             return "Unknown"

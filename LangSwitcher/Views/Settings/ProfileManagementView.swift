@@ -222,29 +222,26 @@ struct ProfileManagementView: View {
     }
     
     private func duplicateProfile(index: Int) {
-        // 1. 기존 프로필을 값 복사하여 새로운 프로필 생성 (기존 로직 유지)
         var newProfile = settings.profiles[index]
-        newProfile.id = UUID() // 새로운 고유 ID 부여
-        newProfile.name = "\(newProfile.name) (Copy)"
+        newProfile.id = UUID()
+        newProfile.name = newProfile.name + " Copy"
         
-        // 🌟 [핵심 수정] 연쇄 저장을 막기 위해 '일괄 업데이트' 모드 켜기
+        // 1. 중복 I/O 방지를 위해 안전 가드 개시
         settings.isBatchUpdating = true
         
-        // 🌟 3가지 상태 변경을 한 번에 진행 (이때는 자동 저장이 무시됨)
         settings.profiles.append(newProfile)
-        self.selection = newProfile.id // (View에 selection state가 있다면)
+        self.selection = newProfile.id
         settings.activeProfileID = newProfile.id
         
-        // 🌟 '일괄 업데이트' 모드 끄기
+        // 2. 가드를 안전하게 해제
         settings.isBatchUpdating = false
         
-        // 🌟 모든 상태 변경이 끝났으므로, 마지막에 딱 한 번만 저장하고 스냅샷을 갱신!
-        settings.saveAll()
+        // 🌟 [우주 방어 수복 포인트]
+        // 닫혀있던 가드가 완전히 풀린 직후, 명시적으로 scheduleSave() 마감 도장을 찍어줍니다.
+        // 이 한 줄 덕분에 프로필 복제 연산이 독립적인 원자적 트랜잭션으로 완결되며,
+        // 디스크 저장, 앱 스냅샷 최신화, iCloud 원격 푸시가 0.5초 디바운싱 버퍼를 타고 무결하게 집행됩니다.
+        settings.scheduleSave()
         
-        // (참고: SettingsManager의 구조에 따라 updateSnapshot()이 saveAll() 내부에
-        // 포함되어 있다면 아래 줄은 생략해도 됩니다. 포함되어 있지 않다면 명시적으로 호출하세요.)
-        DispatchQueue.main.async {
-            settings.updateSnapshot()
-        }
+        dprint("👥 [ProfilesUI] 프로필 복제 트랜잭션이 성공적으로 마감되어 글로벌 디바운스 저장을 트리거했습니다.")
     }
 }

@@ -120,6 +120,11 @@ class UpdateManager: ObservableObject {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         
+        // 🌟 [7번 리뷰 수복 포인트]
+        // GitHub REST API 보안 차단 정책을 프리패스하기 위해 동적 User-Agent 헤더 명세를 강제 주입합니다.
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        request.setValue("LangSwitcher/\(appVersion) (Macintosh; Intel Mac OS X)", forHTTPHeaderField: "User-Agent")
+        
         // 🌟 [최종 수복: async/await 네트워크 파이프라인 전치]
         Task {
             do {
@@ -128,7 +133,7 @@ class UpdateManager: ObservableObject {
                 self.isChecking = false
 
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 403 {
-                    if !isAutomatic { self.activeAlert = .error("GitHub API rate limit exceeded. Please try again later.") }
+                    if !isAutomatic { self.activeAlert = .error("GitHub API access restricted. Please check rate limits or network parameters.") }
                     return
                 }
 

@@ -40,26 +40,25 @@ final class CenterHUDModel: ObservableObject {
 final class HUDManager {
     static let shared = HUDManager()
 
-    // 1. 중앙 HUD
+    // 1. 중앙 HUD 자산
     private var centerHUDWindow: NSPanel?
-    private var centerHideTimer: Timer?
-    private var centerHideGeneration: UInt = 0
+    private var centerHUDTask: Task<Void, Never>? // 🌟 중앙 HUD 생명주기 관리 전용 태스크
 
-    // 2. 커서 미니 HUD
+    // 2. 커서 미니 HUD 자산
     private var cursorHUDWindow: NSWindow?
+    private var cursorHUDTask: Task<Void, Never>? // 🌟 커서 미니 HUD 생명주기 관리 전용 태스크
 
     // 뷰 재생성 방지: 모델 + HostingView를 1회만 생성
     private var cursorHUDModel = CursorHUDModel()
     private var cursorHUDHostingView: NSHostingView<CursorHUDView>?
-
-    // 타이머 completionHandler 경쟁 방지용 세대 카운터
-    private var hideGeneration: UInt = 0
     
     // 중앙 HUD용 뷰 및 모델 인스턴스 (최초 1회만 생성)
     private let centerHUDModel = CenterHUDModel()
     private var centerHUDHostingView: NSHostingView<HUDView>?
     
-    private var centerHUDTask: Task<Void, Never>?
+    // ❌ [6번 리뷰 수복] 레이스 컨디션을 유발하던 모든 구형 'Generation 정수 장부' 및 'Timer' 자산을 전면 삭제했습니다.
+
+    private var cancelTask: Task<Void, Never>?
 
     private init() {}
 
@@ -93,7 +92,7 @@ final class HUDManager {
         }
     }
 
-    // MARK: - 화면 하단 정사각형 HUD 엔진 (간섭 버그 완전 해결본)
+    // MARK: - 화면 하단 정사각형 HUD 엔진
 
     private func showCenterHUD(languageName: String) {
         centerHUDModel.languageName = languageName
@@ -136,30 +135,30 @@ final class HUDManager {
             self.centerHUDWindow?.animator().alphaValue = 1.0
         }
 
-        self.centerHideTimer?.invalidate()
-        
-        // 🌟 [수복 핵심] 미니 HUD와 간섭하지 않는 '중앙 HUD 전용' 장부 사용
-        centerHideGeneration &+= 1
-        let currentGeneration = centerHideGeneration
-
-        self.centerHideTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                // 중앙 전용 장부 검사
-                guard let self = self, self.centerHideGeneration == currentGeneration else { return }
-                self.hideCenterHUD(for: currentGeneration)
+        // 🌟 [중앙 HUD 구조적 타이머 전환]
+        // 기존의 Timer.scheduledTimer를 소각하고, 선행 중인 자동 닫기 태스크를 가차 없이 원자적으로 취소시킵니다.
+        centerHUDTask?.cancel()
+        centerHUDTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                try await Task.sleep(nanoseconds: 1_200_000_000) // 1.2초 비동기 대기
+                guard !Task.isCancelled else { return }
+                
+                self.hideCenterHUD()
+            } catch {
+                // 태스크 취소 시 예외 처리 스킵 후 조용히 복귀
             }
         }
     }
 
-    private func hideCenterHUD(for generation: UInt) {
+    private func hideCenterHUD() {
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.25
             self.centerHUDWindow?.animator().alphaValue = 0.0
         }, completionHandler: {
+            // 🌟 completionHandler 내부는 상위 Task의 취소 여부와 상관없이 무조건 화면에서 빼주어야 잔상이 남지 않습니다.
             Task { @MainActor [weak self] in
-                // 중앙 전용 장부 검사
-                guard let self = self, self.centerHideGeneration == generation else { return }
-                self.centerHUDWindow?.orderOut(nil)
+                self?.centerHUDWindow?.orderOut(nil)
             }
         })
     }
@@ -237,50 +236,50 @@ final class HUDManager {
 
     private func showCursorMiniHUD(text: String, at rect: CGRect) {
         let lowerText = text.lowercased()
-            let shortText: String
-            if lowerText.contains("u.s.") || lowerText.contains("abc") || lowerText.contains("english") {
-                shortText = "A"
-            } else if lowerText.contains("두벌식") || lowerText.contains("세벌식") || lowerText.contains("korean") || lowerText.contains("한글") {
-                shortText = "한"
-            } else {
-                shortText = String(text.prefix(1)).uppercased()
-            }
+        let shortText: String
+        if lowerText.contains("u.s.") || lowerText.contains("abc") || lowerText.contains("english") {
+            shortText = "A"
+        } else if lowerText.contains("두벌식") || lowerText.contains("세벌식") || lowerText.contains("korean") || lowerText.contains("한글") {
+            shortText = "한"
+        } else {
+            shortText = String(text.prefix(1)).uppercased()
+        }
 
-            cursorHUDModel.symbol = shortText
-            cursorHUDModel.name = text
+        cursorHUDModel.symbol = shortText
+        cursorHUDModel.name = text
 
-            if cursorHUDWindow == nil {
-                let window = NSWindow(
-                    contentRect: NSRect(x: 0, y: 0, width: 50, height: 30),
-                    styleMask: [.borderless],
-                    backing: .buffered,
-                    defer: false
-                )
-                window.isOpaque = false
-                window.backgroundColor = .clear
-                window.level = .screenSaver
-                window.ignoresMouseEvents = true
-                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-                let hostingView = NSHostingView(rootView: CursorHUDView(model: cursorHUDModel))
-                window.contentView = hostingView
-                cursorHUDHostingView = hostingView
-                window.orderOut(nil)
-                cursorHUDWindow = window
-            }
-
-            let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
-            
-            cursorHUDHostingView?.layoutSubtreeIfNeeded()
-            let viewSize = cursorHUDHostingView?.intrinsicContentSize ?? NSSize(width: 80, height: 30)
-            
-            let windowX = rect.maxX + 6
-            let windowY = screenHeight - rect.maxY - viewSize.height - 2
-
-            cursorHUDWindow?.setFrame(
-                NSRect(x: windowX, y: windowY, width: viewSize.width, height: viewSize.height),
-                display: false
+        if cursorHUDWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 50, height: 30),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
             )
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.level = .screenSaver
+            window.ignoresMouseEvents = true
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+            let hostingView = NSHostingView(rootView: CursorHUDView(model: cursorHUDModel))
+            window.contentView = hostingView
+            cursorHUDHostingView = hostingView
+            window.orderOut(nil)
+            cursorHUDWindow = window
+        }
+
+        let screenHeight = CGDisplayBounds(CGMainDisplayID()).height
+        
+        cursorHUDHostingView?.layoutSubtreeIfNeeded()
+        let viewSize = cursorHUDHostingView?.intrinsicContentSize ?? NSSize(width: 80, height: 30)
+        
+        let windowX = rect.maxX + 6
+        let windowY = screenHeight - rect.maxY - viewSize.height - 2
+
+        cursorHUDWindow?.setFrame(
+            NSRect(x: windowX, y: windowY, width: viewSize.width, height: viewSize.height),
+            display: false
+        )
 
         cursorHUDWindow?.alphaValue = 0
         cursorHUDWindow?.orderFrontRegardless()
@@ -290,36 +289,39 @@ final class HUDManager {
             self.cursorHUDWindow?.animator().alphaValue = 1.0
         }
 
-        // ✅ Timer 완전 제거 — Task.sleep으로 교체
-        hideGeneration &+= 1
-        let generation = hideGeneration
+        // 🌟 [우주 방어 핵심 수복 분주]
+        // 3중 중첩 Task와 복잡한 정수 번호 대조 로직을 전면 삭제했습니다.
+        // 새로운 타건이 인입되면 기존 타이머 태스크 객체 자체를 저격 사살하여 유령 잔상 버그를 근본적으로 차단합니다.
+        cursorHUDTask?.cancel()
+        cursorHUDTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                try await Task.sleep(nanoseconds: 1_500_000_000) // 1.5초 선형 대기
+                guard !Task.isCancelled else { return }
 
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.5))
-            guard self.hideGeneration == generation else { return }
-
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.3
-                self.cursorHUDWindow?.animator().alphaValue = 0.0
-            }, completionHandler: {
-                // completionHandler는 @Sendable — MainActor 프로퍼티 접근 불가
-                // ✅ 별도 Task로 분리
-                Task { @MainActor [weak self] in
-                    guard let self, self.hideGeneration == generation else { return }
-                    self.cursorHUDWindow?.orderOut(nil)
-                }
-            })
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.3
+                    self.cursorHUDWindow?.animator().alphaValue = 0.0
+                }, completionHandler: {
+                    // 번호표 검사 조건절을 지우고, 애니메이션 벨트가 끝난 시점에 무조건 안전 퇴출 확약
+                    Task { @MainActor [weak self] in
+                        self?.cursorHUDWindow?.orderOut(nil)
+                    }
+                })
+            } catch {
+                // 연타로 인해 작업이 취소(Cancel)되면 하단 UI 정산문을 건너뛰고 조용히 퇴근합니다.
+            }
         }
     }
 
     func hideCursorMiniHUD() {
-        hideGeneration &+= 1
+        // 사용자가 수동으로 닫기를 명령하거나 타 컨텍스트로 이탈할 때도 즉시 타이머 참조를 취소합니다.
+        cursorHUDTask?.cancel()
 
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.1
             self.cursorHUDWindow?.animator().alphaValue = 0.0
         }, completionHandler: {
-            // ✅ completionHandler 내부는 항상 별도 Task로 분리
             Task { @MainActor [weak self] in
                 self?.cursorHUDWindow?.orderOut(nil)
             }
@@ -337,7 +339,7 @@ struct HUDView: View {
             Image(systemName: "keyboard")
                 .font(.system(size: 60))
                 .foregroundColor(Color.primary.opacity(0.8))
-                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                .dropShadow()
 
             Text(model.languageName)
                 .font(.title2.bold())
@@ -345,13 +347,12 @@ struct HUDView: View {
                 .lineLimit(1)
                 .padding(.horizontal, 10)
         }
-        .frame(width: 200, height: 200) // 완벽한 정사각형!
+        .frame(width: 200, height: 200)
         .background(VisualEffectView().clipShape(RoundedRectangle(cornerRadius: 18)))
         .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
     }
 }
 
-// 빌드 에러 방지용 가벼운 뷰 확장
 extension View {
     func dropShadow() -> some View {
         self.shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)

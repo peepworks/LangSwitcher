@@ -20,6 +20,7 @@
 
 import Foundation
 
+@MainActor
 struct SnippetVariableRenderer {
     // 다중 날짜/시간 포맷 호출 시 성능 최적화를 위한 DateFormatter 캐시
     private static var dateFormatterCache: [String: DateFormatter] = [:]
