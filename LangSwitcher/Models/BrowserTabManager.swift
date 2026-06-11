@@ -48,25 +48,13 @@ enum JXAError: Error {
     case scriptFailed(String)
 }
 
-// MARK: - Adapter Protocol
-
 protocol BrowserAdapter: Sendable {
     var supportedBundleIDs: [String] { get }
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError>
 }
 
-// MARK: - JXA Execution Engine
 
-private let jxaExecutionQueue = DispatchQueue(label: "com.peepboy.LangSwitcher.JXAQueue", qos: .userInitiated)
-
-actor JXARaceManager {
-    private var isCompleted = false
-    func complete() -> Bool {
-        if isCompleted { return false }
-        isCompleted = true
-        return true
-    }
-}
+// MARK: - JXA 고성능 비동기 실행 커널
 
 func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async throws -> String? {
     return try await withThrowingTaskGroup(of: String?.self) { group in
@@ -79,6 +67,8 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         let errorPipe = Pipe()
         process.standardError = errorPipe
 
+        // ✅ JXAProcessState 완전 제거
+
         group.addTask {
             return try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { [weak process] p in
@@ -90,7 +80,8 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
 
                     if p.terminationStatus == 0 {
                         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let output = String(data: data, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
                         continuation.resume(returning: output)
                     } else {
                         continuation.resume(throwing: JXAError.scriptFailed("Process terminated or failed"))
@@ -99,6 +90,7 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
 
                 do {
                     try process.run()
+                    // ✅ markAsLaunched() 호출 제거
                 } catch {
                     continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
                 }
@@ -111,12 +103,18 @@ func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async t
         }
 
         do {
-            let firstResult = try await group.next()
+            if let firstResult = try await group.next() {
+                group.cancelAll()
+                return firstResult
+            }
             group.cancelAll()
-            return firstResult ?? nil
+            return nil
         } catch {
             group.cancelAll()
-            if process.isRunning { process.terminate() }
+            // ✅ process.isRunning으로 직접 확인 — actor isolation 문제 없음
+            if process.isRunning {
+                process.terminate()
+            }
             throw error
         }
     }
@@ -166,7 +164,7 @@ class SafariAdapter: BrowserAdapter {
     }
 }
 
-// MARK: - High Performance LRU Infra Engine (3번 리뷰 수복 달성)
+// MARK: - High Performance LRU Infra Engine
 
 class TabNode {
     let tabID: String
@@ -257,7 +255,6 @@ class BrowserTabManager {
     private var adapters: [String: BrowserAdapter] = [:]
     var supportedBrowserBundleIDs: [String] { return Array(adapters.keys) }
 
-    // 🌟 3대 분산 레거시 딕셔너리를 완벽한 단일 상수 시간 O(1) 캐시 인프라로 결속 정산합니다.
     private let tabCache = TabLRUCache(capacity: 100)
 
     var currentKey: String? = nil
@@ -289,20 +286,24 @@ class BrowserTabManager {
         fetchTask?.cancel()
 
         fetchTask = Task(priority: .userInitiated) { [weak self] in
+            // 1. 150ms 딜레이 (취소될 틈을 줍니다)
             try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled else { return }
+            
+            // 2. 취소 여부와 self 생존 여부를 최상단에서 단 한 번의 타격으로 확약합니다.
+            guard !Task.isCancelled, let self = self else { return }
 
+            // 3. 백그라운드 다녀오기 (완료 후 자동으로 MainActor로 복귀합니다)
             let result = await adapter.fetchActiveTabInfo(appName: appName)
+            
+            // 4. 통신 직후의 취소 여부 최종 확인
             guard !Task.isCancelled else { return }
 
-            await MainActor.run {
-                guard let self = self else { return }
-                switch result {
-                case .success(let context):
-                    self.processTabContext(context, bundleID: bundleID)
-                case .failure(let error):
-                    self.handleFetchFailure(error: error, appName: appName)
-                }
+            // 5. 껍데기(MainActor.run)를 파괴하고 바로 순정 스코프에서 직결 정산합니다!
+            switch result {
+            case .success(let context):
+                self.processTabContext(context, bundleID: bundleID)
+            case .failure(let error):
+                self.handleFetchFailure(error: error, appName: appName)
             }
         }
     }
@@ -310,7 +311,6 @@ class BrowserTabManager {
     private func processTabContext(_ context: TabContext, bundleID: String) {
         guard let newKey = generateTabKey(from: context, bundleID: bundleID) else { return }
 
-        // O(1) 캐시 조회를 가동함과 동시에 우선순위 정산을 내부에서 직결 처리합니다.
         let existingNode = tabCache.getTab(for: newKey)
         let isTabSwitched = (self.currentKey != newKey)
         let currentOSSource = InputSourceManager.shared.currentInputSourceID()
@@ -327,17 +327,15 @@ class BrowserTabManager {
                     if isTabSwitched && SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled && hasManualMemory {
                         // 수동 기억 모드가 있다면 도메인 규칙을 건너뛰고 하단 탭 복원부로 스킵 유도
                     } else {
-                        Task { @MainActor in
-                            InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
-                            let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .domainRule(domain: host), appName: bundleID, domain: host)
-                            DecisionTraceManager.shared.record(trace)
-                        }
+                        InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
+                        let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .domainRule(domain: host), appName: bundleID, domain: host)
+                        DecisionTraceManager.shared.record(trace)
+                        
                         self.currentKey = newKey
                         self.tabCache.setTab(tabID: newKey, language: matchedRule.targetInputSourceID, lastHost: host)
                         return
                     }
                 } else {
-                    // 호스트명이 변경되었거나 탭이 전환된 경우 호스트 장부 원자적 최신화
                     self.tabCache.setTab(tabID: newKey, language: currentLang, lastHost: host)
                 }
             }
@@ -345,7 +343,7 @@ class BrowserTabManager {
 
         if !isTabSwitched { return }
 
-        // 2. 새 탭 규칙 (기본 언어 강제 각인 논리 복구)
+        // 2. 새 탭 규칙
         if self.isNewTab(context: context) {
             let defaultLang = SettingsManager.shared.snapshot.newTabDefaultLanguage
             if defaultLang != "None" && !defaultLang.isEmpty {
@@ -353,11 +351,9 @@ class BrowserTabManager {
                 self.tabCache.setTab(tabID: newKey, language: finalLang, lastHost: context.host)
                 
                 if currentOSSource != finalLang {
-                    Task { @MainActor in
-                        InputSourceManager.shared.switchLanguage(to: finalLang)
-                        let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .newTabDefault, appName: bundleID)
-                        DecisionTraceManager.shared.record(trace)
-                    }
+                    InputSourceManager.shared.switchLanguage(to: finalLang)
+                    let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .newTabDefault, appName: bundleID)
+                    DecisionTraceManager.shared.record(trace)
                 }
                 self.currentKey = newKey
                 return
@@ -377,11 +373,9 @@ class BrowserTabManager {
             let currentOSSource = InputSourceManager.shared.currentInputSourceID()
             
             if currentOSSource != node.language {
-                Task { @MainActor in
-                    InputSourceManager.shared.switchLanguage(to: node.language)
-                    let trace = TraceFactory.create(event: .restore, result: .restored, reason: .browserTabRestore, appName: bundleID)
-                    DecisionTraceManager.shared.record(trace)
-                }
+                InputSourceManager.shared.switchLanguage(to: node.language)
+                let trace = TraceFactory.create(event: .restore, result: .restored, reason: .browserTabRestore, appName: bundleID)
+                DecisionTraceManager.shared.record(trace)
             }
         } else {
             let currentOSSource = InputSourceManager.shared.currentInputSourceID()
@@ -424,8 +418,16 @@ class BrowserTabManager {
         self.tabCache.setTab(tabID: key, language: currentSource, lastHost: existingHost)
     }
 
+    // MARK: - 캐시 키 제너레이터 옥텟
+        
     private func generateTabKey(from context: TabContext, bundleID: String) -> String? {
+        // Chromium 기반 브라우저는 세션 고유의 tab.id를 영구 노출하므로 100% 무결한 탭 격리가 가능합니다.
         if let id = context.id { return "\(bundleID)_tab_\(id)" }
+
+        // Apple Safari는 객체 모델 내에 내부 고유 Tab ID를 외부 JXA/AppleScript 레이어에 전혀 노출하지 않습니다.
+        // 이로 인해 Safari 환경에서는 부득이하게 URL 문자열을 대치 키로 하향 fallback 하여 사용합니다.
+        // [알려진 한계점]: 동일 URL을 멀티 탭으로 구동하거나, URL 변경이 전무한 순정 동기식 SPA 웹앱 환경에서는
+        // 탭 간 언어 상태 기억 장부가 상호 간섭/공유될 수 있으며, 이는 macOS 시스템 샌드박스 표준 제약사항입니다.
         if let url = context.url { return "\(bundleID)_url_\(url)" }
         return nil
     }

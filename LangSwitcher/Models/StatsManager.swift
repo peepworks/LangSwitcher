@@ -49,6 +49,7 @@ class StatsManager: ObservableObject {
     private let defaultsKey = "LangSwitcher_DailyStats"
     
     private var isDirty: Bool = false
+    private var isSaving = false
     
     // 🌟 [10번 리뷰 수복 완료] 레거시 GCD DispatchWorkItem을 전면 적출하고
     // Swift 6 사양의 취소 가능한 비동기 Task 구조로 고성능 디바운스 래퍼를 대체합니다.
@@ -105,32 +106,32 @@ class StatsManager: ObservableObject {
     
     @MainActor
     func forceSave() {
-        // 1. 변경된 장부가 없다면 불필요한 디스크 파일 I/O 시스템 콜을 원천 차단
-        guard isDirty else { return }
-
-        // 현재 시점까지 누적된 청정 인메모리 통계 데이터를 값 복사(CoW) 사양으로 완벽히 스냅샷을 굽습니다.
-        let statsArray = Array(self.internalStatsDict.values).sorted { $0.dateString < $1.dateString }
+        guard isDirty, !isSaving else { return }
+        
+        self.isDirty = false
+        self.isSaving = true
+        
+        // 🌟 [수복 포인트] 불필요한 sorted 연산을 제거하고 values 뷰를 즉시 배열로 정산합니다.
+        let statsArray = Array(internalStatsDict.values)
         let key = defaultsKey
-
-        // 2. 무거운 인코딩 및 디스크 파일 쓰기를 백그라운드 독립 스레드로 격리 위임
-        Task.detached(priority: .background) { [weak self] in
-            guard let data = try? Self.encoder.encode(statsArray) else {
-                // 만에 하나 데이터 인코딩 예외 발생 시, 장부를 의도적으로 더티(true) 상태로 유지하여 차기 세션 때 재시도 유도
-                await MainActor.run { [weak self] in
-                    self?.isDirty = true
+        
+        Task {
+            defer { self.isSaving = false }
+            
+            let isSuccess = await Task.detached(priority: .background) {
+                let encoder = JSONEncoder()
+                guard let data = try? encoder.encode(statsArray) else {
+                    return false
                 }
-                dprint("🚨 [StatsManager] 통계 데이터 JSON 인코딩 실패. 차기 저장을 위해 장부 잠금을 유효화합니다.")
-                return
-            }
+                
+                UserDefaults.standard.set(data, forKey: key)
+                return true
+            }.value
             
-            // 물리적인 UserDefaults 디스크 저장 집행
-            UserDefaults.standard.set(data, forKey: key)
-            
-            // 커널 레이어에 파일 쓰기가 100% 무사히 안착했음이 확약된 바로 이 시점에만
-            // 메인 액터 요새로 안전하게 복귀하여 장부 자물쇠를 공식 컴밋(isDirty = false)합니다.
-            await MainActor.run { [weak self] in
-                self?.isDirty = false
-                dprint("💾 [StatsManager] 디스크 저장 물리적 완수 확인. 트랜잭션 커밋 승인 및 isDirty = false 정산 완료.")
+            if !isSuccess {
+                self.isDirty = true
+            } else {
+                dprint("💾 [StatsManager] 통계 장부 백그라운드 영속성 저장 완료 (중복 방어 락 정상 해제).")
             }
         }
     }

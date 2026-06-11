@@ -20,7 +20,7 @@
 
 import AppKit
 
-@MainActor // 🌟 Swift 6 완벽 격리 가드
+@MainActor
 class TypoConverter {
     static let shared = TypoConverter()
 
@@ -30,17 +30,15 @@ class TypoConverter {
     
     private var correctionGeneration: Int = 0
 
-    // 제어권을 명확하게 쥐고 흔들 두 개의 타이밍 태스크
     private var correctionTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
 
     private init() {}
 
-    // MARK: - 스마트 자동 오타 감지용 엔진 (스페이스바 삭제 버그 완벽 수복)
+    // MARK: - 스마트 자동 오타 감지용 엔진
     func detectAndConvert(englishInput: String) -> String? {
         guard englishInput.count >= 2 else { return nil }
         
-        // 영문자가 단 하나도 없다면 오타 교정 대상이 아니므로 즉시 차단!
         let containsEnglish = englishInput.contains { $0.isASCII && $0.isLetter }
         guard containsEnglish else { return nil }
         
@@ -70,20 +68,17 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 수동 단축키 오타 교정 (마스터 do-catch 요새 구축 완료)
+    // MARK: - 수동 단축키 오타 교정
     func executeCorrection() {
-        // 1. 원자적 자물쇠 체크
         guard !isConvertingInProgress else {
             dprint("⚡️ [TypoConverter] 이미 변환 트랜잭션이 진행 중입니다 — 재진입을 안전하게 차단했습니다.")
             return
         }
         isConvertingInProgress = true
 
-        // 2. 오버플로우 안전 증가 연산으로 고유 세대 번호 발행
         correctionGeneration &+= 1
         let myGeneration = correctionGeneration
 
-        // 기존 잔여 태스크들 청정 소각
         timeoutTask?.cancel()
         timeoutTask = nil
         correctionTask?.cancel()
@@ -92,27 +87,21 @@ class TypoConverter {
         self.backupClipboard()
         let initialCount = NSPasteboard.general.changeCount
 
-        // 3. 통합 비동기 트랜잭션 발사
+        // 통합 비동기 트랜잭션 발사
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
 
-            let currentAppID = AppMonitor.shared.activeAppBundleID
+            // 🌟 [수복 포인트 1] 구형 액터 프로퍼티 대신 글로벌 무격리 트래커에서 안전하게 인출합니다.
+            let currentAppID = globalActiveAppTracker.get()
             let appDelay = self.getClipboardRestoreDelay(for: currentAppID)
             let calculatedTimeout = max(2.0, min(5.0, appDelay * 3.0))
 
-            // 🌟 [우주 방어 수복 포인트 1] 타임아웃 Task를 작업 문맥 내부로 격리 캡슐화합니다.
-            // 실제 작업 스레드가 CPU를 확보하고 구동되는 바로 그 시점부터 정밀 초읽기가 개시됩니다.
             let myTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(calculatedTimeout * 1_000_000_000))
                 guard !Task.isCancelled else { return }
-                
-                // 타임아웃 도달 시 메인 액터 컨텍스트에서 안전하게 강제 정리 집행
                 self?.forceCancelAndCleanup()
             }
 
-            // 🌟 [우주 방어 수복 포인트 2] 스위프트 구조적 동시성의 핵심인 defer 복구 가드를 결속합니다.
-            // 이 블록이 무사히 완수되든, 도중에 에러가 나서 catch문으로 튕겨 나가든 관계없이
-            // 종료 즉시 시한폭탄 타이머(myTimeoutTask)의 도화선을 즉시 잘라 누수를 차단합니다.
             defer {
                 myTimeoutTask.cancel()
             }
@@ -148,7 +137,6 @@ class TypoConverter {
                         didFallback = true
                     }
                 } else {
-                    // 버퍼가 비어있다면 마우스 드래그 상태 확인
                     self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
                     for _ in 0..<30 {
                         try await Task.sleep(nanoseconds: 10_000_000)
@@ -193,7 +181,8 @@ class TypoConverter {
                     try await Task.sleep(nanoseconds: 20_000_000)
                     self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
 
-                    let delay = self.getClipboardRestoreDelay(for: AppMonitor.shared.activeAppBundleID)
+                    // 🌟 [수복 포인트 2] 이 구역의 딜레이 측정 가드 역시 글로벌 트래커 인출선으로 수복 결속합니다.
+                    let delay = self.getClipboardRestoreDelay(for: globalActiveAppTracker.get())
                     try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
 
                     EventMonitor.shared.clearTypingBuffer()
@@ -208,7 +197,6 @@ class TypoConverter {
                 dprint("🛑 [TypoConverter] 클립보드 폴링/대기 도중 태스크 취소가 감지되어 즉시 안전 탈출했습니다.")
             }
 
-            // 🌟 [최종 수복 영토] 낙오자 세대까지 예외 없이 트랜잭션 자물쇠 철저 정산
             if self.correctionGeneration == myGeneration {
                 if Task.isCancelled || wasCancelled {
                     self.forceCancelAndCleanup()
@@ -222,13 +210,12 @@ class TypoConverter {
         }
     }
 
-    // MARK: - 정리 및 초기화 로직 (동시성 레이스 컨디션 방어망 구축 완료)
+    // MARK: - 정리 및 초기화 로직
     private func cleanupAfterSuccess() async {
         self.timeoutTask?.cancel()
         self.timeoutTask = nil
         self.correctionTask = nil
 
-        // 🌟 [수복 1] 정상 완료 시 즉시 동기식 정산으로 복원을 집행합니다.
         await self.restoreClipboard()
         self.isConvertingInProgress = false
     }
@@ -245,11 +232,6 @@ class TypoConverter {
 
     private func isInProgressCleanup() {
         self.isConvertingInProgress = false
-        
-        // 🌟 [우주 방어 수복 포인트 2]
-        // 무의미하고 위험한 [weak self] 비동기 캡처를 전면 파괴합니다.
-        // 싱글톤 엔터티 주소에 직접 바인딩하여, 어떤 가혹한 취소 예외 상황에서도
-        // 유저의 원본 클립보드 장부 복원이 100% 실행되도록 보장합니다.
         Task { @MainActor in
             await TypoConverter.shared.restoreClipboard()
         }
@@ -261,18 +243,20 @@ class TypoConverter {
 
     private func restoreClipboard() async {
         guard let saved = savedClipboardString else { return }
+        let pb = NSPasteboard.general
+        let injectedCount = pb.changeCount
         
-        // 🌟 [우주 방어 수복 포인트 3]
-        // OS HID 시스템 큐에 담긴 Cmd+V 이벤트가 타겟 샌드박스 앱의
-        // 텍스트 인출 버퍼에 무사히 로드될 수 있도록 찰나의 안전 시간 창(0.03초)을 확보합니다.
-        // 단순 Task.yield()의 1프레임 양보로 인해 발생하던 엇박자 롤백 버그가 완벽히 소각됩니다.
-        try? await Task.sleep(nanoseconds: 30_000_000)
+        try? await Task.sleep(for: .milliseconds(150))
         
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(saved, forType: .string)
-        savedClipboardString = nil
+        guard pb.changeCount == injectedCount else {
+            dprint("⚠️ [TypoConverter] 붙여넣기 대기 중 클립보드 외부 변조 감지. 유저 데이터를 보호하기 위해 원상 복구를 중단합니다.")
+            self.savedClipboardString = nil
+            return
+        }
         
-        dprint("✨ [TypoConverter] 유저의 오리지널 클립보드 장부가 완전무결하게 복원되었습니다.")
+        pb.clearContents()
+        pb.setString(saved, forType: .string)
+        self.savedClipboardString = nil
     }
 
     private func postKeyEvent(keyCode: CGKeyCode, modifiers: CGEventFlags) {

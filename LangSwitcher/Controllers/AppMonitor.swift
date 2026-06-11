@@ -21,6 +21,35 @@
 import Cocoa
 import Foundation
 
+// ====================================================================
+// 🌟 [4번 리뷰 수복 포인트 1: 활성 앱 글로벌 무격리 추적자 (Nonisolated Tracker)]
+// 메인 액터(@MainActor) 요새 외부에 독립적인 Sendable 구조체를 신설합니다.
+// 이제 EventMonitor의 백그라운드 CGEvent 콜백 스레드에서도 아무런 런타임 크래시 위협이나
+// await 지연 없이 0ms 만에 즉각적으로 현재 앱 ID를 조회할 수 있습니다.
+// ====================================================================
+struct ActiveAppTracker: Sendable {
+    private final class Storage: @unchecked Sendable {
+        let lock = NSLock()
+        var bundleID: String = ""
+    }
+    private let storage = Storage()
+    
+    func set(_ id: String) {
+        storage.lock.lock(); defer { storage.lock.unlock() }
+        storage.bundleID = id
+    }
+    
+    func get() -> String {
+        storage.lock.lock(); defer { storage.lock.unlock() }
+        return storage.bundleID
+    }
+}
+
+// 앱 전역에서 락 없이 자유롭게 찌를 수 있는 글로벌 장부 인스턴스 개설
+let globalActiveAppTracker = ActiveAppTracker()
+
+// ====================================================================
+
 @MainActor
 class AppMonitor {
     static let shared = AppMonitor()
@@ -30,8 +59,7 @@ class AppMonitor {
     
     private var pendingObservationTask: Task<Void, Never>?
     
-    // 🌟 클래스가 @MainActor이므로 복잡한 수동 DispatchQueue barrier를 완전히 도려냅니다.
-    var activeAppBundleID: String = ""
+    // 🌟 기존의 var activeAppBundleID: String = "" 변수를 완전히 소각했습니다!
 
     private init() {} // 싱글톤 보호
 
@@ -41,7 +69,9 @@ class AppMonitor {
         // 시동 시 메모리 자동 치유 타이머 가동
         MemoryMonitor.shared.startMonitoring()
         
-        activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        // 🌟 [수복] 메인 액터 변수 대신 글로벌 무격리 트래커에 값을 직결 락온합니다.
+        let initialBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        globalActiveAppTracker.set(initialBundleID)
         
         // ----------------------------------------------------
         // 1. 앱 활성화(Activate) 감지
@@ -56,7 +86,8 @@ class AppMonitor {
                 guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       let bundleID = app.bundleIdentifier else { return }
 
-                AppMonitor.shared.activeAppBundleID = bundleID
+                // 🌟 [수복] 앱이 전환되는 즉시 글로벌 장부에 최신 ID를 갱신합니다.
+                globalActiveAppTracker.set(bundleID)
                 
                 let appDelay = SettingsManager.shared.snapshot.appDelays.first(where: { $0.bundleIdentifier == bundleID })?.delay ?? 0.3
                             
@@ -103,7 +134,6 @@ class AppMonitor {
         pendingObservationTask?.cancel()
         pendingObservationTask = nil
 
-        // 🌟 [라이프사이클 완결 수복] 메인 모니터가 꺼질 때 상주형 메모리 타이머도 확실하게 소각 처리합니다.
         MemoryMonitor.shared.stopMonitoring()
 
         [observer, deactivateObserver].compactMap { $0 }.forEach {
@@ -112,7 +142,9 @@ class AppMonitor {
     
         observer = nil
         deactivateObserver = nil
-        activeAppBundleID = ""
+        
+        // 🌟 [수복] 모니터 정지 시 글로벌 트래커의 장부도 청정하게 초기화합니다.
+        globalActiveAppTracker.set("")
     }
 }
 
@@ -126,19 +158,25 @@ class MemoryMonitor {
     private init() {} // 싱글톤 보호
     
     func startMonitoring() {
-        // 혹시라도 잔존해 있을지 모르는 이전 세대 타이머를 런루프에서 확실하게 소각(invalidate)하고
-        // 장부를 씻어낸 뒤 청정하게 새 타이머를 안착시킵니다.
+        // 혹시라도 잔존해 있을지 모르는 이전 세대 타이머를 런루프에서 확실하게 소각하고 초기화합니다.
         timer?.invalidate()
         timer = nil
         
-        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            // 🌟 [우주 방어 수복 포인트: 무격리 타이머 스코프 탈출]
-            // 이 타이머는 메인 스레드 런루프에서 주행하므로, 컴파일러에게 런타임 보증서(assumeIsolated)를
-            // 제출하여 메인 액터 메서드인 checkMemoryUsage()를 0ms 지연 없이 동기 직결 호출합니다.
+        // 🌟 [7번 리뷰 수복 포인트: RunLoop Mode 프리패스 연동]
+        // scheduledTimer 대신 생성자 메서드로 타이머 인스턴스를 날것으로 분리 생성합니다.
+        let newTimer = Timer(timeInterval: 300, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.checkMemoryUsage()
             }
         }
+        
+        // 🌟 메인 런루프의 .common 마스터 모드에 등록합니다.
+        // 이로써 사용자가 창을 드래그하거나 모달 패널을 띄우는 특수 스레드 루프 상황에서도
+        // 타이머가 얼어붙지 않고 5분 정시 가동성을 완벽하게 확약받습니다.
+        RunLoop.main.add(newTimer, forMode: .common)
+        self.timer = newTimer
+
+        dprint("🧠 [MemoryMonitor] 무중단 .common 모드 메모리 감시 타이머 안착 완료.")
     }
 
     // 🌟 [추가 수복 포트] 메인 감시망 중단 시 커널 런루프에서 타이머를 안전하게 철거시키는 오퍼레이션

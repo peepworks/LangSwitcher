@@ -175,9 +175,7 @@ final class HUDManager {
 
                 self.centerHUDWindow?.orderOut(nil)
                 self.centerFadeTask = nil
-                #if DEBUG
                 dprint("🪟 [HUDManager] 중앙 HUD 안전 물리 탈거 완료.")
-                #endif
             } catch {}
         }
     }
@@ -346,9 +344,7 @@ final class HUDManager {
 
                 self.cursorHUDWindow?.orderOut(nil)
                 self.cursorFadeTask = nil
-                #if DEBUG
                 dprint("🪟 [HUDManager] 미니 HUD 유령 상주 차단 및 orderOut 안전 완결.")
-                #endif
             } catch {}
         }
     }

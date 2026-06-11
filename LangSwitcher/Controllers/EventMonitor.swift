@@ -110,8 +110,8 @@ class EventMonitor {
                         EventMonitor.shared.snapshotLock.unlock()
 
                         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-                        let currentAppID = AppMonitor.shared.activeAppBundleID
-
+                        let currentAppID = globalActiveAppTracker.get()
+                        
                         if let callback = EventMonitor.shared.shortcutRecordingCallback {
                             if type == .keyDown || type == .flagsChanged {
                                 if let nsEvent = NSEvent(cgEvent: event) {

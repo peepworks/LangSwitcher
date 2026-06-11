@@ -26,23 +26,18 @@ import Foundation
 typealias AXUIElementGetWindowFunc = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
 
 // 🌟 [1번 리뷰 수복 포인트: 클래스 전체 전역 메인 액터 격리 수립]
-// 매니저와 하부 메모리 장부 전체를 메인 스레드 가두리로 일원화하여,
-// 데드락을 유발하던 레거시 GCD concurrent stateQueue 및 배리어 가드를 청정 소각합니다.
 @MainActor
 class WindowMonitor {
     static let shared = WindowMonitor()
 
-    // @MainActor 격리 하에 상주하므로 멀티스레드 경합 리스크가 구조적으로 0%가 됩니다.
     private let windowMemory = WindowLRUCache(capacity: 200)
 
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
 
-    // 🌟 복잡한 앳겟터/앳세터 동기화 큐를 제거하고 단일 메인 스레드 변수로 간소화합니다.
     var currentPID: pid_t = 0
     var activeWindowElement: AXUIElement?
 
-    // 비공개 API 함수 포인터 캐싱 (9번 리뷰 사양 준수)
     private static let axGetWindowFunc: AXUIElementGetWindowFunc? = {
         let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
         if let handle = dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow") {
@@ -74,7 +69,6 @@ class WindowMonitor {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         let terminatedPID = app.processIdentifier
         
-        // 🌟 별도 큐 호출 없이 메인 스레드 컨텍스트에서 즉시 직결 정산합니다.
         self.windowMemory.removeWindowsForPID(terminatedPID)
     }
 
@@ -85,7 +79,8 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
 
-        let latestAppID = AppMonitor.shared.activeAppBundleID
+        // 🌟 [4번 리뷰 결속 포인트 1: 구형 메인 액터 프로퍼티 참조를 글로벌 트래커 인출로 수복]
+        let latestAppID = globalActiveAppTracker.get()
         
         // [교통정리 1: 브라우저 충돌 방어]
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
@@ -102,25 +97,22 @@ class WindowMonitor {
         var targetLang: String? = nil
         var traceToRecord: DecisionTrace? = nil
 
-        // 🌟 [데드락 소각 구역]
-        // 락 가드 블록(.sync barrier)을 완전히 파괴하고 평탄한 선형 코드로 전환되었습니다.
-        // 메인 스레드가 멈춰 서서 대기하는 교착 정지 공백이 물리적으로 영구 박멸되었습니다.
-        if let data = self.windowMemory.getLanguage(for: windowID) {
-            if snapshot.isWindowMemoryEnabled {
-                targetLang = data.language
-                traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
-            } else if snapshot.isAppSpecificEnabled,
-                      let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
-                targetLang = appLang
-                traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
-            }
+        let cachedData = self.windowMemory.getLanguage(for: windowID)
+
+        // 🌟 [8번 리뷰 완결 수복 포인트: 조건문 평탄화 및 중복 소각 보존]
+        if let data = cachedData, snapshot.isWindowMemoryEnabled {
+            targetLang = data.language
+            traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
         } else {
             if snapshot.isAppSpecificEnabled,
                let appLang = snapshot.customApps.first(where: { $0.bundleIdentifier == latestAppID })?.targetLanguage {
                 targetLang = appLang
                 traceToRecord = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .appRule(appName: latestAppID), appName: latestAppID)
             }
-            self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
+            
+            if cachedData == nil {
+                self.windowMemory.setLanguage(targetLang ?? latestInputSource, pid: pid, for: windowID)
+            }
         }
 
         if let lang = targetLang {
@@ -143,7 +135,9 @@ class WindowMonitor {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
 
         let latestID = InputSourceManager.shared.currentInputSourceID()
-        let latestAppID = AppMonitor.shared.activeAppBundleID
+        
+        // 🌟 [4번 리뷰 결속 포인트 2: 수동 인풋 소스 체인지 루프 구역도 글로벌 트래커 인출로 청정 정산]
+        let latestAppID = globalActiveAppTracker.get()
         let snapshot = SettingsManager.shared.snapshot
         
         // [교통정리 2: 수동 언어 변경 바인딩]
@@ -182,7 +176,6 @@ class WindowMonitor {
             let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
             let nsNotif = notif as String
             
-            // 메인 런루프 스레드 동작이 확실하므로 단언 격리 후 직결 구동합니다.
             MainActor.assumeIsolated {
                 if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
                 else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
@@ -226,8 +219,9 @@ class WindowMonitor {
     }
 }
 
-// MARK: - LRU Cache Infrastructure (동일 액터 도메인 보장을 위해 구조 안정화)
-// 단일 스레드(Main) 전용 자산이 되므로 락 없이 초고속 질주합니다.
+// MARK: - LRU Cache Infrastructure
+
+@MainActor
 class WindowNode {
     let windowID: CGWindowID
     var language: String
@@ -243,6 +237,7 @@ class WindowNode {
     }
 }
 
+@MainActor
 class WindowLRUCache {
     private let capacity: Int
     private var cache: [CGWindowID: WindowNode] = [:]
@@ -327,7 +322,6 @@ class WindowLRUCache {
         removeNode(node); addNode(node)
     }
     
-    // Swift 컴파일러의 식별 명세 일치를 위해 헬퍼 매핑 스코프 보정
     private func moveToHead(_ node: WindowNode) {
         removeNode(node); addNode(node)
     }
