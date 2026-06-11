@@ -30,7 +30,7 @@ class AppMonitor {
     
     private var pendingObservationTask: Task<Void, Never>?
     
-    // 🌟 [최적화] 클래스가 @MainActor이므로 복잡한 수동 DispatchQueue barrier를 완전히 도려냅니다.
+    // 🌟 클래스가 @MainActor이므로 복잡한 수동 DispatchQueue barrier를 완전히 도려냅니다.
     var activeAppBundleID: String = ""
 
     private init() {} // 싱글톤 보호
@@ -38,6 +38,7 @@ class AppMonitor {
     func start() {
         if observer != nil { return }
         
+        // 시동 시 메모리 자동 치유 타이머 가동
         MemoryMonitor.shared.startMonitoring()
         
         activeAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
@@ -102,6 +103,9 @@ class AppMonitor {
         pendingObservationTask?.cancel()
         pendingObservationTask = nil
 
+        // 🌟 [라이프사이클 완결 수복] 메인 모니터가 꺼질 때 상주형 메모리 타이머도 확실하게 소각 처리합니다.
+        MemoryMonitor.shared.stopMonitoring()
+
         [observer, deactivateObserver].compactMap { $0 }.forEach {
             NSWorkspace.shared.notificationCenter.removeObserver($0)
         }
@@ -122,17 +126,32 @@ class MemoryMonitor {
     private init() {} // 싱글톤 보호
     
     func startMonitoring() {
-        timer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+        // 혹시라도 잔존해 있을지 모르는 이전 세대 타이머를 런루프에서 확실하게 소각(invalidate)하고
+        // 장부를 씻어낸 뒤 청정하게 새 타이머를 안착시킵니다.
+        timer?.invalidate()
+        timer = nil
+        
+        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            // 🌟 [우주 방어 수복 포인트: 무격리 타이머 스코프 탈출]
+            // 이 타이머는 메인 스레드 런루프에서 주행하므로, 컴파일러에게 런타임 보증서(assumeIsolated)를
+            // 제출하여 메인 액터 메서드인 checkMemoryUsage()를 0ms 지연 없이 동기 직결 호출합니다.
             MainActor.assumeIsolated {
                 self?.checkMemoryUsage()
             }
         }
     }
 
+    // 🌟 [추가 수복 포트] 메인 감시망 중단 시 커널 런루프에서 타이머를 안전하게 철거시키는 오퍼레이션
+    func stopMonitoring() {
+        timer?.invalidate()
+        timer = nil
+        dprint("🧠 [MemoryMonitor] 메모리 자동 치유 타이머 자원을 클린하게 해제 정산했습니다.")
+    }
+
     // MARK: - 능동적 메모리 자기치유 커널 (즉시 동기 집행 사양)
 
     private func checkMemoryUsage() {
-        // 🌟 [수복] 아래에서 통합 조율된 청정 SSOT 계통 함수를 다이렉트로 라우팅합니다.
+        // 통합 조율된 청정 SSOT 계통 함수를 다이렉트로 라우팅합니다.
         guard let currentMemory = Self.getCurrentPhysicalFootprint() else { return }
     
         if currentMemory > thresholdInBytes {
@@ -157,9 +176,8 @@ class MemoryMonitor {
         }
     }
 
-    // 🌟 [우주 방어 수복 포인트]
-    // 전형적인 하드코딩 4바이트 정산 오류(size / 4)를 스위프트 표준 타입 메모리 레이아웃으로 완벽히 개조하고,
-    // 외부 UI 뷰(`AboutSettingsView`)에서도 공용 참조할 수 있도록 public 전역 계산 창구로 격상 노출합니다.
+    // 전형적인 하드코딩 4바이트 정산 오류를 스위프트 표준 타입 메모리 레이아웃으로 완벽히 개조하고,
+    // 외부 UI 뷰(AboutSettingsView)에서도 공용 참조할 수 있도록 public 전역 계산 창구로 격상 노출합니다.
     public static func getCurrentPhysicalFootprint() -> UInt64? {
         var info = task_vm_info()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info>.size / MemoryLayout<integer_t>.size)

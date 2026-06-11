@@ -465,9 +465,14 @@ class SettingsManager: ObservableObject {
     func addLog(_ log: ActionLog) {
         self.recentLogs.append(log)
         
+        // 장부의 크기가 안전 임계값(550개)을 초과했는지 직관적으로 검문
         if self.recentLogs.count > logTrimThreshold {
-            self.recentLogs.removeFirst(logTrimCount)
-            dprint("🧹 [SettingsManager] 로그 버퍼가 임계값(\(logTrimThreshold)개)을 초과하여 상위 \(logTrimCount)개의 구형 장부를 청정 정산했습니다.")
+            // 🌟 [5번 리뷰 수복 포인트: 방어적 프로그래밍 안전 가드레일 결속]
+            // 상수가 오염되거나 예외 상황이 발생하더라도 현재 배열 크기를 상한선으로 묶어 런타임 크래시를 원천 분쇄합니다.
+            let trimCount = min(logTrimCount, self.recentLogs.count)
+            self.recentLogs.removeFirst(trimCount)
+
+            dprint("🧹 [SettingsManager] 로그 버퍼가 임계값(\(logTrimThreshold)개)을 초과하여 상위 \(trimCount)개의 구형 장부를 안전하게 트리밍했습니다.")
         }
     }
     

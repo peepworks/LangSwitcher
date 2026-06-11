@@ -22,70 +22,59 @@ import Foundation
 
 struct SnippetTemplateParser {
     
-    // 컴파일러 경고도 없이 런타임 진단 장부를 오염시키던 try! 패턴을 전면 소각하고,
-    // 오타 발생 시 명확한 추적 단서를 남기는 자가 진단형 클로저 초기화 방식을 도입합니다.
-    private static let snippetRegex: NSRegularExpression = {
-        let pattern = "\\{(.+?)\\}" // 괄호 {{ variable }} 또는 { token } 구조를 캡처하는 순정 패턴
-        
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            // 빌드 혹은 런타임 진입 시 문법이 깨지면 의도적인 단언문을 던져 원인을 실시간 박제합니다.
-            fatalError("❌ [SnippetTemplateParser] Invalid regex pattern [\(pattern)] — This is a developer syntax error.")
-        }
-        return regex
-    }()
+    // 컴파일 타임 문법 정적 검증이 확약된 순정 Modern Swift Regex 리터럴 상주 고정
+    private static let snippetRegex = #/\{\{(date|time|clipboard|cursor)(?::([^}]+))?\}\}/#
     
     static func parse(template: String) -> [SnippetToken] {
         var tokens: [SnippetToken] = []
         
-        let nsTemplate = template as NSString
-        let fullRange = NSRange(location: 0, length: nsTemplate.length)
+        // Swift 고유의 String.Index 추적선 수립
+        var lastIndex = template.startIndex
         
-        // 🌟 [핵심 수정] 매번 새로 만들지 않고, 위에 만들어둔 snippetRegex를 재사용합니다.
-        let matches = snippetRegex.matches(in: template, options: [], range: fullRange)
+        let matches = template.matches(of: snippetRegex)
        
-        var lastIndex = 0
-        
-        // 🌟 변수명 수정: results -> matches
         for match in matches {
-            let matchRange = match.range
+            // 강력한 타입 추론이 완료된 튜플 출력부 직결 인출
+            let coreKeyword = String(match.output.1)               // "date", "time", "clipboard", "cursor"
+            let customFormat = match.output.2.map { String($0) }    // 콜론 뒤의 포맷 문자열만 청정 추출
+            let matchRange = match.range                           // Range<String.Index>
             
-            // 1. 태그 이전의 일반 텍스트 추가
-            if matchRange.location > lastIndex {
-                // 🌟 변수명 수정: nsString -> nsTemplate
-                let textStr = nsTemplate.substring(with: NSRange(location: lastIndex, length: matchRange.location - lastIndex))
+            // 1. 태그 이전의 일반 텍스트 구간 분할 추가
+            if matchRange.lowerBound > lastIndex {
+                let textStr = String(template[lastIndex..<matchRange.lowerBound])
                 tokens.append(.text(textStr))
             }
             
-            // 2. 캡처된 내용(태그 내부) 분석
-            let contentRange = match.range(at: 1)
-            // 🌟 변수명 수정: nsString -> nsTemplate
-            let content = nsTemplate.substring(with: contentRange).trimmingCharacters(in: .whitespaces)
-            
-            if content.hasPrefix("date:") {
-                let format = String(content.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            // 2. 글로벌 레지스트리에 이미 선언된 SnippetToken enum 자산과 직결 매핑
+            switch coreKeyword {
+            case "date":
+                let format = customFormat?.trimmingCharacters(in: .whitespaces) ?? "yyyy-MM-dd"
                 tokens.append(.date(format: format))
-            } else if content.hasPrefix("time:") {
-                let format = String(content.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                
+            case "time":
+                let format = customFormat?.trimmingCharacters(in: .whitespaces) ?? "HH:mm"
                 tokens.append(.time(format: format))
-            } else if content == "clipboard" {
+                
+            case "clipboard":
                 tokens.append(.clipboard)
-            } else if content == "cursor" {
+                
+            case "cursor":
                 tokens.append(.cursor)
-            } else {
-                // 알 수 없는 태그는 원본 텍스트 그대로 유지
-                tokens.append(.text("{{\(content)}}"))
+                
+            default:
+                tokens.append(.text(String(match.output.0)))
             }
             
-            lastIndex = matchRange.location + matchRange.length
+            // 마감 인덱스를 매칭 범위의 끝단(upperBound)으로 갱신
+            lastIndex = matchRange.upperBound
         }
         
-        // 3. 마지막 태그 이후의 남은 텍스트 추가
-        // 🌟 변수명 수정: nsString -> nsTemplate
-        if lastIndex < nsTemplate.length {
-            let textStr = nsTemplate.substring(from: lastIndex)
+        // 3. 마지막 태그 이후의 남은 텍스트 정산
+        if lastIndex < template.endIndex {
+            let textStr = String(template[lastIndex..<template.endIndex])
             tokens.append(.text(textStr))
         }
         
-        return []
+        return tokens
     }
 }

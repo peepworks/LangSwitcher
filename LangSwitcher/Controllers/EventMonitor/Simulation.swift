@@ -21,7 +21,11 @@
 import Cocoa
 import Carbon
 
+// 🌟 [최종 수복 포인트 1: 전체 익스텐션 메인 액터 격리벽 수립]
+// 하부의 모든 매니저 자산들과 궤적을 일치시켜 스레드 경계 침범 에러(Snapshot 컴파일 에러)를 근본적으로 소각합니다.
+@MainActor
 extension EventMonitor {
+    
     func isCurrentLanguageEnglish() -> Bool {
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return false }
@@ -41,8 +45,9 @@ extension EventMonitor {
                 let id = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
                 let lower = id.lowercased()
                 if lower.contains("ko") || lower.contains("hangul") || lower.contains("두벌식") || lower.contains("세벌식") {
-                    TISSelectInputSource(source)
-                    SensoryFeedbackManager.shared.playFeedback(forLanguageID: id)
+                    // 🌟 [8번 리뷰 수복 완료: 밀수 경로 차단 및 중복 피드백 소각]
+                    // 정문인 switchLanguage가 모든 햅틱/글로우 처리를 수반하므로 수동 playFeedback 라인을 제거하여 투스텝 진동 버그를 진압합니다.
+                    InputSourceManager.shared.switchLanguage(to: id)
                     break
                 }
             }
@@ -57,17 +62,22 @@ extension EventMonitor {
 
         guard EventMonitor.shared.canExecuteAction() else { return }
 
+        // @MainActor 격리 도메인에 합류했으므로 아무런 비동기 장벽 오버헤드 없이 청정하게 상수를 스캔합니다.
         let snapshot = SettingsManager.shared.snapshot
         if snapshot.isTestMode {
             var testLabel = ""
             if isToggle { testLabel = "[Test] Toggle Language" }
             else if let appName = targetAppName { testLabel = "[Test] \(appName)" }
             else if let langID = targetLang { testLabel = "[Test] \(InputSourceManager.shared.availableKeyboards.first(where: { $0.id == langID })?.name ?? langID)" }
-            if !testLabel.isEmpty { DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: testLabel) } }
+            if !testLabel.isEmpty {
+                HUDManager.shared.showHUD(languageName: testLabel)
+            }
         } else {
             let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .manualOverride, appName: targetAppName)
             if isToggle {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                // 🌟 [아키텍처 평탄화] 불필요한 DispatchQueue 홉 가두리를 폐기하고 직관적인 프레임 지연 Task로 마이그레이션합니다.
+                Task {
+                    try? await Task.sleep(for: .seconds(0.05))
                     InputSourceManager.shared.switchToNextInputSource()
                     StatsManager.shared.incrementLanguageSwitch()
                     DecisionTraceManager.shared.record(trace)
@@ -75,7 +85,8 @@ extension EventMonitor {
             } else if let bundleID = targetAppID {
                 launchApp(bundleID: bundleID)
             } else if let lang = targetLang {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                Task {
+                    try? await Task.sleep(for: .seconds(0.05))
                     InputSourceManager.shared.switchLanguage(to: lang)
                     StatsManager.shared.incrementLanguageSwitch()
                     DecisionTraceManager.shared.record(trace)
@@ -85,11 +96,9 @@ extension EventMonitor {
     }
 
     static func launchApp(bundleID: String) {
-        DispatchQueue.main.async {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                let config = NSWorkspace.OpenConfiguration()
-                NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
-            }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            let config = NSWorkspace.OpenConfiguration()
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
         }
     }
     
@@ -128,7 +137,7 @@ extension EventMonitor {
     func postTriggerKey(keyCode: UInt16) {
         let triggerDown = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: true)
         let triggerUp = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: false)
-         dprint("⌨️ [Simulation] 포스트 트리거 키 전송 완결: \(keyCode)")
+        dprint("⌨️ [Simulation] 포스트 트리거 키 전송 완결: \(keyCode)")
         triggerDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
         triggerUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
         triggerDown?.post(tap: .cghidEventTap)
@@ -142,11 +151,12 @@ extension EventMonitor {
     func performTextExpansion(triggerLength: Int, snippet: RenderedSnippet, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
         self.batchDelete(count: triggerLength)
         
-        // 후행 클로저에 메인 액터 및 샌더블 마킹을 결속하여 동시성 레이스를 사전 차단합니다.
+        // 메인 액터 격리가 확약되었으므로 후행 가우징 클로저가 대단히 청명하게 동작합니다.
         self.insertLongUnicodeText(snippet.text) { [weak self] in
             guard let self = self else { return }
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            Task {
+                try? await Task.sleep(for: .seconds(0.02))
                 self.postTriggerKey(keyCode: triggerKeyCode)
                 
                 if let offset = snippet.cursorOffsetFromStart {
@@ -178,9 +188,9 @@ extension EventMonitor {
         }
     }
     
-    // 🌟 [6번 리뷰 및 프로덕션 킬러 버그 완벽 정산 수복 완료 본]
+    // 🌟 [최종 최적화 수복 포인트 2: 안전한 스레드 보호막 완결]
+    // 메인 액터 단일 타겟 스코프가 되었으므로, 수동 자물쇠 정산 루프(assumeIsolated)의 오버헤드가 완전히 걷혀 나갔습니다.
     func insertLongUnicodeText(_ text: String, completion: @escaping @MainActor @Sendable () -> Void) {
-        // 1. 새로운 대치가 개시되므로 기존 어레이 장부를 순회하며 타이머 전량 사살 및 초기화
         self.pendingInsertTasks.forEach { $0.cancel() }
         self.pendingInsertTasks.removeAll()
 
@@ -196,7 +206,6 @@ extension EventMonitor {
 
         let chunkDelay: TimeInterval = 0.015
 
-        // 2. 청크 단위 타이핑 입력 이벤트 예약 파이프라인
         for (index, chunk) in chunks.enumerated() {
             let delay = Double(index) * chunkDelay
 
@@ -218,26 +227,17 @@ extension EventMonitor {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
         }
 
-        // 3단계: 최종 마감 조립 구역 (복잡성 제거 및 100% 동기화 안착)
         let lastChunkIndex = max(0, chunks.count - 1)
         let totalDelay = Double(lastChunkIndex) * chunkDelay + 0.03
 
-        // 마스터 캔슬 플래그 껍데기를 치워버리고, completionItem 그 자체를 추적 장부에 직결 락온합니다.
         let completionItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-                
-            // Swift 6 컴파일러에게 이 구역이 맑은 메인 액터 도메인임을 런타임 단언문으로 증명 통과시킵니다.
-            MainActor.assumeIsolated {
-                // 상주형 대기 태스크 장부 청소 완결
-                self.pendingInsertTasks.removeAll()
-                
-                // 🌟 [우주 방어 수복 포인트: 드롭되었던 생명줄 복원]
-                // 누락되어 텍스트 치환 엔진 전체를 멈추게 만들었던 후행 정산 콜백을 칼같이 실행 확약합니다!
-                completion()
-            }
+            
+            // 메인 액터 격리가 완결되어 데이터 레이스 경고 없이 청정하게 장부를 청소하고 생명줄 콜백을 방출합니다.
+            self.pendingInsertTasks.removeAll()
+            completion()
         }
 
-        // 이제 진짜 주행 대상을 장부에 대입하여 외부 연타 취소 신호가 100% 동기 반영되도록 설계합니다.
         self.pendingInsertTasks.append(completionItem)
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDelay, execute: completionItem)
     }

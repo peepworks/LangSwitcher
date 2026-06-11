@@ -40,13 +40,15 @@ final class CenterHUDModel: ObservableObject {
 final class HUDManager {
     static let shared = HUDManager()
 
-    // 1. 중앙 HUD 자산
+    // 1. 중앙 HUD 자산 및 마감 제어선
     private var centerHUDWindow: NSPanel?
-    private var centerHUDTask: Task<Void, Never>? // 🌟 중앙 HUD 생명주기 관리 전용 태스크
+    private var centerHUDTask: Task<Void, Never>?
+    private var centerFadeTask: Task<Void, Never>? // 🌟 [4번 리뷰 수복 포인트 1: 중앙 HUD 페이드 추적기]
 
-    // 2. 커서 미니 HUD 자산
+    // 2. 커서 미니 HUD 자산 및 마감 제어선
     private var cursorHUDWindow: NSWindow?
-    private var cursorHUDTask: Task<Void, Never>? // 🌟 커서 미니 HUD 생명주기 관리 전용 태스크
+    private var cursorHUDTask: Task<Void, Never>?
+    private var cursorFadeTask: Task<Void, Never>? // 🌟 [4번 리뷰 수복 포인트 2: 커서 HUD 페이드 추적기]
 
     // 뷰 재생성 방지: 모델 + HostingView를 1회만 생성
     private var cursorHUDModel = CursorHUDModel()
@@ -56,8 +58,6 @@ final class HUDManager {
     private let centerHUDModel = CenterHUDModel()
     private var centerHUDHostingView: NSHostingView<HUDView>?
     
-    // ❌ [6번 리뷰 수복] 레이스 컨디션을 유발하던 모든 구형 'Generation 정수 장부' 및 'Timer' 자산을 전면 삭제했습니다.
-
     private var cancelTask: Task<Void, Never>?
 
     private init() {}
@@ -127,7 +127,14 @@ final class HUDManager {
             self.centerHUDWindow?.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight), display: true)
         }
 
-        self.centerHUDWindow?.alphaValue = 0
+        // 🌟 [우주 방어 인터럽트 해제] 새 HUD 가동 시 뒤늦게 쫓아오던 구형 소각 연산팀을 선제 사살합니다.
+        centerFadeTask?.cancel()
+        centerFadeTask = nil
+
+        // 현재 이미 켜져 있는 상태라면 투명도를 강제로 0으로 깎지 않고 스무스하게 1.0 트랙을 타게 유도합니다.
+        if self.centerHUDWindow?.isVisible == false {
+            self.centerHUDWindow?.alphaValue = 0
+        }
         self.centerHUDWindow?.orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { context in
@@ -135,32 +142,44 @@ final class HUDManager {
             self.centerHUDWindow?.animator().alphaValue = 1.0
         }
 
-        // 🌟 [중앙 HUD 구조적 타이머 전환]
-        // 기존의 Timer.scheduledTimer를 소각하고, 선행 중인 자동 닫기 태스크를 가차 없이 원자적으로 취소시킵니다.
         centerHUDTask?.cancel()
         centerHUDTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             do {
-                try await Task.sleep(nanoseconds: 1_200_000_000) // 1.2초 비동기 대기
+                try await Task.sleep(for: .seconds(1.2)) // 1.2초 비동기 안심 대기
                 guard !Task.isCancelled else { return }
                 
                 self.hideCenterHUD()
             } catch {
-                // 태스크 취소 시 예외 처리 스킵 후 조용히 복귀
+                // 예외 발생 시 안전 복귀
             }
         }
     }
 
     private func hideCenterHUD() {
-        NSAnimationContext.runAnimationGroup({ context in
+        centerHUDTask?.cancel()
+        centerFadeTask?.cancel()
+
+        // 콜백 없는 청정 넌블로킹 하이패스 페이드 아웃 전개
+        NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
             self.centerHUDWindow?.animator().alphaValue = 0.0
-        }, completionHandler: {
-            // 🌟 completionHandler 내부는 상위 Task의 취소 여부와 상관없이 무조건 화면에서 빼주어야 잔상이 남지 않습니다.
-            Task { @MainActor [weak self] in
-                self?.centerHUDWindow?.orderOut(nil)
-            }
-        })
+        }
+
+        // 🌟 AppKit 콜백 유실 트랩 정산: 확정적 비동기 마감선 수립
+        centerFadeTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                try await Task.sleep(for: .seconds(0.3)) // 0.25초 애니메이션 + 0.05초 버퍼
+                guard !Task.isCancelled else { return }
+
+                self.centerHUDWindow?.orderOut(nil)
+                self.centerFadeTask = nil
+                #if DEBUG
+                dprint("🪟 [HUDManager] 중앙 HUD 안전 물리 탈거 완료.")
+                #endif
+            } catch {}
+        }
     }
 
     // MARK: - 커서 위치 추적 (AX API)
@@ -281,7 +300,13 @@ final class HUDManager {
             display: false
         )
 
-        cursorHUDWindow?.alphaValue = 0
+        // 🌟 [우주 방어 인터럽트 사살] 미니 HUD 가동 전 미처 지워지지 못해 대기선에 서 있던 페이드아웃 폭탄을 사살합니다.
+        cursorFadeTask?.cancel()
+        cursorFadeTask = nil
+
+        if self.cursorHUDWindow?.isVisible == false {
+            self.cursorHUDWindow?.alphaValue = 0
+        }
         cursorHUDWindow?.orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { context in
@@ -289,43 +314,43 @@ final class HUDManager {
             self.cursorHUDWindow?.animator().alphaValue = 1.0
         }
 
-        // 🌟 [우주 방어 핵심 수복 분주]
-        // 3중 중첩 Task와 복잡한 정수 번호 대조 로직을 전면 삭제했습니다.
-        // 새로운 타건이 인입되면 기존 타이머 태스크 객체 자체를 저격 사살하여 유령 잔상 버그를 근본적으로 차단합니다.
         cursorHUDTask?.cancel()
         cursorHUDTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             do {
-                try await Task.sleep(nanoseconds: 1_500_000_000) // 1.5초 선형 대기
+                try await Task.sleep(for: .seconds(1.5)) // 1.5초 선형 청정 대기
                 guard !Task.isCancelled else { return }
 
-                NSAnimationContext.runAnimationGroup({ ctx in
-                    ctx.duration = 0.3
-                    self.cursorHUDWindow?.animator().alphaValue = 0.0
-                }, completionHandler: {
-                    // 번호표 검사 조건절을 지우고, 애니메이션 벨트가 끝난 시점에 무조건 안전 퇴출 확약
-                    Task { @MainActor [weak self] in
-                        self?.cursorHUDWindow?.orderOut(nil)
-                    }
-                })
+                self.hideCursorMiniHUD()
             } catch {
-                // 연타로 인해 작업이 취소(Cancel)되면 하단 UI 정산문을 건너뛰고 조용히 퇴근합니다.
+                // 취소 신호 수신 시 안전 이탈
             }
         }
     }
 
     func hideCursorMiniHUD() {
-        // 사용자가 수동으로 닫기를 명령하거나 타 컨텍스트로 이탈할 때도 즉시 타이머 참조를 취소합니다.
         cursorHUDTask?.cancel()
+        cursorFadeTask?.cancel()
 
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.1
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.3
             self.cursorHUDWindow?.animator().alphaValue = 0.0
-        }, completionHandler: {
-            Task { @MainActor [weak self] in
-                self?.cursorHUDWindow?.orderOut(nil)
-            }
-        })
+        }
+
+        // 🌟 [4번 리뷰 트랩 완벽 소각] AppKit 콜백 유실 상태와 무관하게 0.35초 뒤 무조건 우아하게 물리 윈도우를 내려 자원을 은닉합니다.
+        cursorFadeTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                try await Task.sleep(for: .seconds(0.35)) // 0.3초 애니메이션 + 0.05초 세이프 세션 버퍼
+                guard !Task.isCancelled else { return }
+
+                self.cursorHUDWindow?.orderOut(nil)
+                self.cursorFadeTask = nil
+                #if DEBUG
+                dprint("🪟 [HUDManager] 미니 HUD 유령 상주 차단 및 orderOut 안전 완결.")
+                #endif
+            } catch {}
+        }
     }
 }
 
@@ -335,6 +360,7 @@ struct HUDView: View {
     @ObservedObject var model: CenterHUDModel
 
     var body: some View {
+        // ... (순정 뷰 코드 동일하게 유지)
         VStack(spacing: 20) {
             Image(systemName: "keyboard")
                 .font(.system(size: 60))
@@ -363,6 +389,7 @@ struct CursorHUDView: View {
     @ObservedObject var model: CursorHUDModel
 
     var body: some View {
+        // ... (순정 뷰 코드 동일하게 유지)
         HStack(spacing: 8) {
             Text(model.symbol)
                 .font(.system(size: 13, weight: .bold, design: .default))

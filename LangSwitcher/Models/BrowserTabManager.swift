@@ -166,6 +166,88 @@ class SafariAdapter: BrowserAdapter {
     }
 }
 
+// MARK: - High Performance LRU Infra Engine (3번 리뷰 수복 달성)
+
+class TabNode {
+    let tabID: String
+    var language: String
+    var lastHost: String?
+
+    var prev: TabNode?
+    var next: TabNode?
+
+    init(tabID: String, language: String, lastHost: String?) {
+        self.tabID = tabID
+        self.language = language
+        self.lastHost = lastHost
+    }
+}
+
+class TabLRUCache {
+    private let capacity: Int
+    private var cache: [String: TabNode] = [:]
+
+    private let head = TabNode(tabID: "", language: "", lastHost: nil)
+    private let tail = TabNode(tabID: "", language: "", lastHost: nil)
+
+    init(capacity: Int = 100) {
+        self.capacity = capacity
+        head.next = tail
+        tail.prev = head
+    }
+
+    func getTab(for tabID: String) -> TabNode? {
+        guard let node = cache[tabID] else { return nil }
+        moveToHead(node)
+        return node
+    }
+
+    func setTab(tabID: String, language: String, lastHost: String?) {
+        if let existingNode = cache[tabID] {
+            existingNode.language = language
+            existingNode.lastHost = lastHost
+            moveToHead(existingNode)
+        } else {
+            let newNode = TabNode(tabID: tabID, language: language, lastHost: lastHost)
+            cache[tabID] = newNode
+            addNode(newNode)
+            
+            if cache.count > capacity {
+                if let tailNode = popTail() {
+                    cache.removeValue(forKey: tailNode.tabID)
+                }
+            }
+        }
+    }
+
+    func clear() {
+        cache.removeAll()
+        head.next = tail
+        tail.prev = head
+    }
+
+    private func addNode(_ node: TabNode) {
+        node.prev = head; node.next = head.next
+        head.next?.prev = node; head.next = node
+    }
+
+    private func removeNode(_ node: TabNode) {
+        let prev = node.prev; let next = node.next
+        prev?.next = next; next?.prev = prev
+    }
+
+    private func moveToHead(_ node: TabNode) {
+        removeNode(node); addNode(node)
+    }
+
+    private func popTail() -> TabNode? {
+        let res = tail.prev
+        if res === head { return nil }
+        if let res = res { removeNode(res) }
+        return res
+    }
+}
+
 // MARK: - Core Manager
 
 @MainActor
@@ -175,11 +257,8 @@ class BrowserTabManager {
     private var adapters: [String: BrowserAdapter] = [:]
     var supportedBrowserBundleIDs: [String] { return Array(adapters.keys) }
 
-    private var tabMemory: [String: String] = [:]
-    private var lastEvaluatedHostForTab: [String: String] = [:]
-    private var tabAccessTicks: [String: Int] = [:]
-    private var currentTick: Int = 0
-    private let maxTabMemoryLimit = 100
+    // 🌟 3대 분산 레거시 딕셔너리를 완벽한 단일 상수 시간 O(1) 캐시 인프라로 결속 정산합니다.
+    private let tabCache = TabLRUCache(capacity: 100)
 
     var currentKey: String? = nil
     private var fetchTask: Task<Void, Never>?
@@ -192,18 +271,14 @@ class BrowserTabManager {
     }
 
     func clearMemory() {
-        tabMemory.removeAll()
-        lastEvaluatedHostForTab.removeAll()
-        tabAccessTicks.removeAll()
-        currentTick = 0
+        tabCache.clear()
         currentKey = nil
     }
 
-    // 🌟 [추가됨] 사용자가 브라우저 안에서 한영전환을 했을 때 탭 장부 동기화
     func updateManualLanguageChange(_ languageID: String) {
         guard let key = currentKey else { return }
-        self.tabMemory[key] = languageID
-        self.touchTabMemory(key: key)
+        let existingHost = tabCache.getTab(for: key)?.lastHost
+        self.tabCache.setTab(tabID: key, language: languageID, lastHost: existingHost)
     }
 
     func handleBrowserTabChanged(bundleID: String, appName: String) {
@@ -235,21 +310,22 @@ class BrowserTabManager {
     private func processTabContext(_ context: TabContext, bundleID: String) {
         guard let newKey = generateTabKey(from: context, bundleID: bundleID) else { return }
 
-        self.touchTabMemory(key: newKey)
+        // O(1) 캐시 조회를 가동함과 동시에 우선순위 정산을 내부에서 직결 처리합니다.
+        let existingNode = tabCache.getTab(for: newKey)
         let isTabSwitched = (self.currentKey != newKey)
         let currentOSSource = InputSourceManager.shared.currentInputSourceID()
 
-        // 1. 도메인 규칙
+        // 1. 도메인 규칙 검사
         if SettingsManager.shared.snapshot.isBrowserDomainModeEnabled, let urlString = context.url, let host = context.host {
-            let lastHost = self.lastEvaluatedHostForTab[newKey]
+            let lastHost = existingNode?.lastHost
 
             if lastHost != host || isTabSwitched {
-                self.lastEvaluatedHostForTab[newKey] = host
-
+                let currentLang = existingNode?.language ?? currentOSSource
+                
                 if let matchedRule = DomainRuleManager.shared.findMatchingRule(for: urlString, browserBundleID: bundleID) {
-                    let hasManualMemory = (self.tabMemory[newKey] != nil)
+                    let hasManualMemory = (existingNode != nil)
                     if isTabSwitched && SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled && hasManualMemory {
-                        // 수동 기억 양보
+                        // 수동 기억 모드가 있다면 도메인 규칙을 건너뛰고 하단 탭 복원부로 스킵 유도
                     } else {
                         Task { @MainActor in
                             InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
@@ -257,28 +333,28 @@ class BrowserTabManager {
                             DecisionTraceManager.shared.record(trace)
                         }
                         self.currentKey = newKey
-                        self.tabMemory[newKey] = matchedRule.targetInputSourceID
+                        self.tabCache.setTab(tabID: newKey, language: matchedRule.targetInputSourceID, lastHost: host)
                         return
                     }
+                } else {
+                    // 호스트명이 변경되었거나 탭이 전환된 경우 호스트 장부 원자적 최신화
+                    self.tabCache.setTab(tabID: newKey, language: currentLang, lastHost: host)
                 }
             }
         }
 
         if !isTabSwitched { return }
 
-        // 🌟 2. 새 탭 규칙 (논리 복구)
+        // 2. 새 탭 규칙 (기본 언어 강제 각인 논리 복구)
         if self.isNewTab(context: context) {
             let defaultLang = SettingsManager.shared.snapshot.newTabDefaultLanguage
             if defaultLang != "None" && !defaultLang.isEmpty {
-                // 아직 장부에 언어 기록이 없다면 기본값 할당
-                if self.tabMemory[newKey] == nil {
-                    self.tabMemory[newKey] = defaultLang
-                }
+                let finalLang = tabCache.getTab(for: newKey)?.language ?? defaultLang
+                self.tabCache.setTab(tabID: newKey, language: finalLang, lastHost: context.host)
                 
-                // 만약 현재 시스템 언어와 탭 장부의 언어가 다르다면 변경 실행
-                if currentOSSource != self.tabMemory[newKey] {
+                if currentOSSource != finalLang {
                     Task { @MainActor in
-                        InputSourceManager.shared.switchLanguage(to: self.tabMemory[newKey]!)
+                        InputSourceManager.shared.switchLanguage(to: finalLang)
                         let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .newTabDefault, appName: bundleID)
                         DecisionTraceManager.shared.record(trace)
                     }
@@ -290,27 +366,26 @@ class BrowserTabManager {
 
         self.currentKey = newKey
 
-        // 3. 탭 메모리 복구
+        // 3. 탭 캐시 메모리 복구 전개
         if SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled {
             self.restoreContext(for: newKey, bundleID: bundleID)
         }
     }
 
     private func restoreContext(for key: String, bundleID: String) {
-        if let savedSourceID = tabMemory[key] {
+        if let node = tabCache.getTab(for: key) {
             let currentOSSource = InputSourceManager.shared.currentInputSourceID()
             
-            // 🌟 탭 복원 시, 현재 언어와 다를 때만 전환명령을 때려줍니다.
-            if currentOSSource != savedSourceID {
+            if currentOSSource != node.language {
                 Task { @MainActor in
-                    InputSourceManager.shared.switchLanguage(to: savedSourceID)
+                    InputSourceManager.shared.switchLanguage(to: node.language)
                     let trace = TraceFactory.create(event: .restore, result: .restored, reason: .browserTabRestore, appName: bundleID)
                     DecisionTraceManager.shared.record(trace)
                 }
             }
         } else {
-            // 이 탭에 처음 들어왔다면 현재 OS 언어를 마스터로 최초 등록
-            self.tabMemory[key] = InputSourceManager.shared.currentInputSourceID()
+            let currentOSSource = InputSourceManager.shared.currentInputSourceID()
+            self.tabCache.setTab(tabID: key, language: currentOSSource, lastHost: nil)
         }
     }
 
@@ -331,38 +406,6 @@ class BrowserTabManager {
         SettingsManager.shared.addLog(log)
     }
 
-    // MARK: - LRU Cache Management
-
-    private func touchTabMemory(key: String) {
-        currentTick += 1
-        if currentTick >= 1_000_000 {
-            rebuildTicksFromScratch()
-            return
-        }
-        tabAccessTicks[key] = currentTick
-
-        if tabAccessTicks.count > maxTabMemoryLimit {
-            // 🌟 딕셔너리 내부를 스캔하여 틱 가동률이 가장 낮은(가장 오래된) 청정 키를 선별
-            if let oldestKey = tabAccessTicks.min(by: { $0.value < $1.value })?.key {
-                // 1. 실물 탭 캐시 소각
-                tabMemory.removeValue(forKey: oldestKey)
-                
-                // 2. 타임스탬프 및 메타데이터 동형 장부 일괄 청소 (메모리 누수 백퍼센트 방어)
-                tabAccessTicks.removeValue(forKey: oldestKey)
-                lastEvaluatedHostForTab.removeValue(forKey: oldestKey)
-
-                dprint("🧹 [BrowserTab] LRU 만료 가동 — 가장 오랫동안 참조되지 않은 구형 탭 [Key: \(oldestKey)] 자원을 완벽히 정산했습니다.")
-            }
-        }
-    }
-
-    private func rebuildTicksFromScratch() {
-        currentTick = 0
-        tabMemory.removeAll()
-        tabAccessTicks.removeAll()
-        lastEvaluatedHostForTab.removeAll()
-    }
-
     private func isNewTab(context: TabContext) -> Bool {
         guard let url = context.url?.lowercased() else { return true }
         let newTabPatterns = ["chrome://newtab", "edge://newtab", "brave://newtab", "about:blank", "favorites://", "topsites://", "safari-resource://"]
@@ -377,8 +420,8 @@ class BrowserTabManager {
     private func saveCurrentContext() {
         guard let key = currentKey else { return }
         let currentSource = InputSourceManager.shared.currentInputSourceID()
-        tabMemory[key] = currentSource
-        touchTabMemory(key: key)
+        let existingHost = tabCache.getTab(for: key)?.lastHost
+        self.tabCache.setTab(tabID: key, language: currentSource, lastHost: existingHost)
     }
 
     private func generateTabKey(from context: TabContext, bundleID: String) -> String? {
