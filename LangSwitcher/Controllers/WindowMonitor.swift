@@ -25,7 +25,6 @@ import Foundation
 
 typealias AXUIElementGetWindowFunc = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
 
-// 🌟 [1번 리뷰 수복 포인트: 클래스 전체 전역 메인 액터 격리 수립]
 @MainActor
 class WindowMonitor {
     static let shared = WindowMonitor()
@@ -79,10 +78,8 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
 
-        // 🌟 [4번 리뷰 결속 포인트 1: 구형 메인 액터 프로퍼티 참조를 글로벌 트래커 인출로 수복]
         let latestAppID = globalActiveAppTracker.get()
         
-        // [교통정리 1: 브라우저 충돌 방어]
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
             BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
             if let app = NSRunningApplication(processIdentifier: self.currentPID), let appName = app.localizedName {
@@ -99,7 +96,6 @@ class WindowMonitor {
 
         let cachedData = self.windowMemory.getLanguage(for: windowID)
 
-        // 🌟 [8번 리뷰 완결 수복 포인트: 조건문 평탄화 및 중복 소각 보존]
         if let data = cachedData, snapshot.isWindowMemoryEnabled {
             targetLang = data.language
             traceToRecord = TraceFactory.create(event: .restore, result: .restored, reason: .windowRestore, appName: latestAppID)
@@ -129,18 +125,16 @@ class WindowMonitor {
     func handleWindowDestroyed(element: AXUIElement) {
         guard let windowID = getWindowID(from: element) else { return }
         self.windowMemory.removeWindow(windowID)
+        dprint("🧹 [WindowMonitor] 창 파괴 실시간 감지 성공. 캐시 장부에서 WindowID: \(windowID) 영구 제련 분쇄 완료.")
     }
 
     @objc private func inputSourceChanged() {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
 
         let latestID = InputSourceManager.shared.currentInputSourceID()
-        
-        // 🌟 [4번 리뷰 결속 포인트 2: 수동 인풋 소스 체인지 루프 구역도 글로벌 트래커 인출로 청정 정산]
         let latestAppID = globalActiveAppTracker.get()
         let snapshot = SettingsManager.shared.snapshot
         
-        // [교통정리 2: 수동 언어 변경 바인딩]
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
             BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
             BrowserTabManager.shared.updateManualLanguageChange(latestID)
@@ -180,6 +174,11 @@ class WindowMonitor {
                 if nsNotif == kAXFocusedWindowChangedNotification as String { mon.handleWindowFocusChanged(element: el) }
                 else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
                 else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
+                else if nsNotif == kAXWindowCreatedNotification as String {
+                    // 🌟 [7번 리뷰 수복 핵심 1: 신생 창 동적 결속 파이프라인]
+                    // 유저가 앱을 사용하는 도중 실시간으로 생성한 개별 창에 직접 파괴 보초를 결속합니다.
+                    AXObserverAddNotification(obs, el, kAXUIElementDestroyedNotification as CFString, ref)
+                }
             }
         }
 
@@ -187,8 +186,23 @@ class WindowMonitor {
             self.axObserver = newObs
             let appRef = AXUIElementCreateApplication(pid)
             let refcon = Unmanaged.passUnretained(self).toOpaque()
+            
+            // 앱 공통 메인 액션 가드 등록
             AXObserverAddNotification(newObs, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
             AXObserverAddNotification(newObs, appRef, kAXTitleChangedNotification as CFString, refcon)
+            
+            // 🌟 [7번 리뷰 수복 핵심 2: 창 생성 트리거 라인 개설]
+            AXObserverAddNotification(newObs, appRef, kAXWindowCreatedNotification as CFString, refcon)
+
+            // 🌟 [7번 리뷰 수복 핵심 3: 기상 시점 열려있는 기존 창 선제 정산 스캔]
+            var windowList: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowList) == .success,
+               let windows = windowList as? [AXUIElement] {
+                for window in windows {
+                    // 이미 열려있는 모든 개별 창 원자에 직접 파괴 추적선을 매설합니다.
+                    AXObserverAddNotification(newObs, window, kAXUIElementDestroyedNotification as CFString, refcon)
+                }
+            }
 
             let mainRunLoop = CFRunLoopGetMain()
             CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
@@ -316,10 +330,6 @@ class WindowLRUCache {
     private func removeNode(_ node: WindowNode) {
         let prev = node.prev; let next = node.next
         prev?.next = next; next?.prev = prev
-    }
-
-    private func __moveToHead(_ node: WindowNode) {
-        removeNode(node); addNode(node)
     }
     
     private func moveToHead(_ node: WindowNode) {

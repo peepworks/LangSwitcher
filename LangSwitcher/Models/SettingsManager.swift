@@ -52,9 +52,10 @@ class SettingsManager: ObservableObject {
     nonisolated private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.save", qos: .background)
     
     private let maxLogCount = 500
-    private let logTrimThreshold = 550  // 여유분을 포함한 최대 장부 수용 한도 (500 + 50)
-    private let logTrimCount = 50       // 임계치 도달 시 한 번에 잘라낼 트리밍 단위
-    private var logBufferThreshold: Int { maxLogCount + 50 }
+    private let logTrimBuffer = 50
+
+    // 이제 하단의 addLog() 로직에서는 이 logTrimThreshold 단 하나만 기준선으로 바라봅니다.
+    private var logTrimThreshold: Int { maxLogCount + logTrimBuffer }
     
     @Published var selectedTab: SettingsTab? = .general
     @MainActor var isBatchUpdating: Bool = false
@@ -465,14 +466,11 @@ class SettingsManager: ObservableObject {
     func addLog(_ log: ActionLog) {
         self.recentLogs.append(log)
         
-        // 장부의 크기가 안전 임계값(550개)을 초과했는지 직관적으로 검문
-        if self.recentLogs.count > logTrimThreshold {
-            // 🌟 [5번 리뷰 수복 포인트: 방어적 프로그래밍 안전 가드레일 결속]
-            // 상수가 오염되거나 예외 상황이 발생하더라도 현재 배열 크기를 상한선으로 묶어 런타임 크래시를 원천 분쇄합니다.
-            let trimCount = min(logTrimCount, self.recentLogs.count)
-            self.recentLogs.removeFirst(trimCount)
-
-            dprint("🧹 [SettingsManager] 로그 버퍼가 임계값(\(logTrimThreshold)개)을 초과하여 상위 \(trimCount)개의 구형 장부를 안전하게 트리밍했습니다.")
+        // 🌟 [수복 완료] SSOT 기준선 단 한 곳만 참조하여 정밀 타격
+        if recentLogs.count > logTrimThreshold {
+            // 초과된 버퍼(50개)만큼만 정확하게 잘라내어 maxLogCount(500개)를 유지합니다.
+            let excessCount = recentLogs.count - maxLogCount
+            recentLogs.removeFirst(excessCount)
         }
     }
     

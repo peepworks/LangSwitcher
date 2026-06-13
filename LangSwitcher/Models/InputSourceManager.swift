@@ -27,7 +27,6 @@ struct MacKeyboard: Identifiable, Hashable {
     let name: String
 }
 
-// 🌟 [최종 수복: Swift 6 전역 격리 완벽 수립]
 @MainActor
 class InputSourceManager: ObservableObject {
     static let shared = InputSourceManager()
@@ -41,9 +40,6 @@ class InputSourceManager: ObservableObject {
     // MARK: - 시스템 키보드 입력 소스 동적 인출 엔진
         
     func fetchKeyboards() {
-        // 🌟 [Swift 6 에러 완전 수복]
-        // @MainActor가 상속되는 청정 Task 내부에서 백그라운드 독립 태스크(detached)를 구동하고,
-        // 그 결과물([MacKeyboard])을 리턴값으로 안전하게 수령(await)하는 사상으로 전환합니다.
         Task {
             let keyboards = await Task.detached(priority: .userInitiated) { () -> [MacKeyboard] in
                 guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return [] }
@@ -66,14 +62,10 @@ class InputSourceManager: ObservableObject {
                     localKeyboards.append(MacKeyboard(id: id, name: name))
                 }
                 
-                // 가변 장부를 클로저 캡처 없이 깨끗하게 데이터로 리턴합니다.
                 return localKeyboards
             }.value
 
-            // 🌟 백그라운드 연산이 끝나고 확약된 청정 상수 복사본(let keyboards)을
-            // 메인 액터 컨텍스트 내부에서 직결 대입하므로 데이터 레이스 및 캡처 에러가 완벽하게 박멸됩니다.
             self.availableKeyboards = keyboards
-            
             dprint("✨ [InputSource] 백그라운드 데이터 인출 및 메인 액터 장부 대입 완결.")
         }
 
@@ -99,11 +91,13 @@ class InputSourceManager: ObservableObject {
             // 데이터 분석 커널에 안전 기입
             StatsManager.shared.incrementLanguageSwitch()
             
-            // 🌟 [최적화 정산] 이미 @MainActor 구역이므로 불필요한 main.async 소각, 즉시 피드백 구동
             EdgeGlowManager.shared.showGlow(forLanguage: id)
-            SensoryFeedbackManager.shared.playFeedback(forLanguageID: id)
-                        
-            if SettingsManager.shared.showVisualFeedback {
+            
+            // 🌟 [수복 완료: 라벨 동기화 정산]
+            // expected 'for:' 규칙에 맞춰 라벨 명세를 정확히 매칭시켰습니다.
+            SensoryFeedbackManager.shared.playFeedback(for: id)
+                                
+            if SettingsManager.shared.snapshot.showVisualFeedback {
                 if let namePtr = TISGetInputSourceProperty(target, kTISPropertyLocalizedName) {
                     let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
                     HUDManager.shared.showHUD(languageName: name)
@@ -131,7 +125,6 @@ class InputSourceManager: ObservableObject {
     
     /// 현재 활성화된 키보드 입력 소스의 고유 ID를 안전하게 반환합니다.
     func currentInputSourceID() -> String {
-        // 🌟 [우주 방어 수복] 닐 크래시를 유발하던 날것의 강제 추출을 제거하고 옵셔널 언랩 가드를 결속했습니다.
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
             return ""

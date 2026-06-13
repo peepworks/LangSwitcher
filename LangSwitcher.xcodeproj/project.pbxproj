@@ -14,6 +14,7 @@
 		1220DB552FB15E8C00D8CEAD /* LangSwitcherEnums.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1220DB542FB15E8600D8CEAD /* LangSwitcherEnums.swift */; };
 		1220DB572FB15EB600D8CEAD /* LangSwitcherIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1220DB562FB15EB400D8CEAD /* LangSwitcherIntents.swift */; };
 		1220DB592FB15EF100D8CEAD /* LangSwitcherShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1220DB582FB15EEE00D8CEAD /* LangSwitcherShortcuts.swift */; };
+		1222CD8A2FDD1E1800B85A36 /* InputLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1222CD892FDD1E1600B85A36 /* InputLanguage.swift */; };
 		12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12242E2C2F933CA300690095 /* TypoConverter.swift */; };
 		122AA3F12F9DA544006297F4 /* ClickHigh.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */; };
 		122AA3F22F9DA544006297F4 /* ClickLow.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 122AA3F02F9DA544006297F4 /* ClickLow.mp3 */; };
@@ -90,6 +91,7 @@
 		1220DB542FB15E8600D8CEAD /* LangSwitcherEnums.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherEnums.swift; sourceTree = "<group>"; };
 		1220DB562FB15EB400D8CEAD /* LangSwitcherIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherIntents.swift; sourceTree = "<group>"; };
 		1220DB582FB15EEE00D8CEAD /* LangSwitcherShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherShortcuts.swift; sourceTree = "<group>"; };
+		1222CD892FDD1E1600B85A36 /* InputLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputLanguage.swift; sourceTree = "<group>"; };
 		12242E2C2F933CA300690095 /* TypoConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoConverter.swift; sourceTree = "<group>"; };
 		122AA3EF2F9DA544006297F4 /* ClickHigh.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ClickHigh.mp3; sourceTree = "<group>"; };
 		122AA3F02F9DA544006297F4 /* ClickLow.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ClickLow.mp3; sourceTree = "<group>"; };
@@ -285,6 +287,7 @@
 		127329232FBFFE8100D85255 /* Utils */ = {
 			isa = PBXGroup;
 			children = (
+				1222CD892FDD1E1600B85A36 /* InputLanguage.swift */,
 				127329242FBFFEB900D85255 /* Logger.swift */,
 			);
 			path = Utils;
@@ -584,6 +587,7 @@
 				128F40872FB946EA009B58AF /* ProfileManagementView.swift in Sources */,
 				121445462FB1879F00BAD265 /* Simulation.swift in Sources */,
 				121445472FB1879F00BAD265 /* ShortcutRecorder.swift in Sources */,
+				1222CD8A2FDD1E1800B85A36 /* InputLanguage.swift in Sources */,
 				128F40852FB946C1009B58AF /* ProfileHeaderView.swift in Sources */,
 				121445482FB1879F00BAD265 /* State.swift in Sources */,
 				121445492FB1879F00BAD265 /* Handlers.swift in Sources */,

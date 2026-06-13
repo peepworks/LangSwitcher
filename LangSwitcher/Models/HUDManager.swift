@@ -252,15 +252,8 @@ final class HUDManager {
     // MARK: - 커서 미니 HUD
 
     private func showCursorMiniHUD(text: String, at rect: CGRect) {
-        let lowerText = text.lowercased()
-        let shortText: String
-        if lowerText.contains("u.s.") || lowerText.contains("abc") || lowerText.contains("english") {
-            shortText = "A"
-        } else if lowerText.contains("두벌식") || lowerText.contains("세벌식") || lowerText.contains("korean") || lowerText.contains("한글") {
-            shortText = "한"
-        } else {
-            shortText = String(text.prefix(1)).uppercased()
-        }
+        let language = InputLanguage.determine(from: text)
+        let shortText = language.shortLabel(fallbackText: text)
 
         cursorHUDModel.symbol = shortText
         cursorHUDModel.name = text

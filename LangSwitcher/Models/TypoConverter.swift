@@ -24,6 +24,11 @@ import AppKit
 class TypoConverter {
     static let shared = TypoConverter()
 
+    // 🌟 [2번 리뷰 수복 포인트: 클립보드 독점 상수 수립]
+    // 더 이상 앱 전환 지연 설정(appDelays)에 종속되지 않고, 시스템 표준 상수 라인을 선언합니다.
+    private static let clipboardRestoreDelay: TimeInterval = 0.15
+    private static let clipboardTimeout: TimeInterval = 2.0
+
     private let eventSource: CGEventSource? = CGEventSource(stateID: .combinedSessionState)
     private var isConvertingInProgress = false
     private var savedClipboardString: String?
@@ -70,10 +75,7 @@ class TypoConverter {
 
     // MARK: - 수동 단축키 오타 교정
     func executeCorrection() {
-        guard !isConvertingInProgress else {
-            dprint("⚡️ [TypoConverter] 이미 변환 트랜잭션이 진행 중입니다 — 재진입을 안전하게 차단했습니다.")
-            return
-        }
+        guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
         correctionGeneration &+= 1
@@ -87,14 +89,11 @@ class TypoConverter {
         self.backupClipboard()
         let initialCount = NSPasteboard.general.changeCount
 
-        // 통합 비동기 트랜잭션 발사
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
 
-            // 🌟 [수복 포인트 1] 구형 액터 프로퍼티 대신 글로벌 무격리 트래커에서 안전하게 인출합니다.
-            let currentAppID = globalActiveAppTracker.get()
-            let appDelay = self.getClipboardRestoreDelay(for: currentAppID)
-            let calculatedTimeout = max(2.0, min(5.0, appDelay * 3.0))
+            // 🌟 정산된 클래스 상수를 안전하게 바인딩합니다.
+            let calculatedTimeout = Self.clipboardTimeout
 
             let myTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(calculatedTimeout * 1_000_000_000))
@@ -102,10 +101,7 @@ class TypoConverter {
                 self?.forceCancelAndCleanup()
             }
 
-            defer {
-                myTimeoutTask.cancel()
-            }
-
+            defer { myTimeoutTask.cancel() }
             var wasCancelled = false
 
             do {
@@ -181,30 +177,23 @@ class TypoConverter {
                     try await Task.sleep(nanoseconds: 20_000_000)
                     self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
 
-                    // 🌟 [수복 포인트 2] 이 구역의 딜레이 측정 가드 역시 글로벌 트래커 인출선으로 수복 결속합니다.
-                    let delay = self.getClipboardRestoreDelay(for: globalActiveAppTracker.get())
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    // 🌟 타겟 일렉트론 앱의 전환 딜레이를 완벽히 소각하고 순정 시스템 속도(150ms)로 직결 정산합니다.
+                    try await Task.sleep(nanoseconds: UInt64(Self.clipboardRestoreDelay * 1_000_000_000))
 
                     EventMonitor.shared.clearTypingBuffer()
-                    for char in convertedText {
-                        EventMonitor.shared.appendToTypingBuffer(char)
-                    }
+                    for char in convertedText { EventMonitor.shared.appendToTypingBuffer(char) }
                 } else {
                     self.postKeyEvent(keyCode: 124, modifiers: [])
                 }
             } catch {
                 wasCancelled = true
-                dprint("🛑 [TypoConverter] 클립보드 폴링/대기 도중 태스크 취소가 감지되어 즉시 안전 탈출했습니다.")
             }
 
+            // 장부 정산 구역
             if self.correctionGeneration == myGeneration {
-                if Task.isCancelled || wasCancelled {
-                    self.forceCancelAndCleanup()
-                } else {
-                    await self.cleanupAfterSuccess()
-                }
+                if Task.isCancelled || wasCancelled { self.forceCancelAndCleanup() }
+                else { await self.cleanupAfterSuccess() }
             } else {
-                dprint("👻 [GenerationGuard] 구세대(#\(myGeneration)) 태스크 퇴출. 잠금 플래그를 안정적으로 초기화합니다.")
                 self.isConvertingInProgress = false
             }
         }
@@ -403,12 +392,5 @@ class TypoConverter {
             }
         }
         return result
-    }
-
-    private func getClipboardRestoreDelay(for bundleID: String?) -> TimeInterval {
-        guard let bundleID = bundleID else { return 0.15 }
-        let snapshot = SettingsManager.shared.snapshot
-        if let customApp = snapshot.appDelays.first(where: { $0.bundleIdentifier == bundleID }) { return customApp.delay }
-        return 0.15
     }
 }

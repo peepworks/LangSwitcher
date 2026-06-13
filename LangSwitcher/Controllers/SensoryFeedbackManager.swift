@@ -18,45 +18,32 @@
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
-import Cocoa
+import AppKit
 
-@MainActor // 🌟 Swift 6 가드: 오디오 하드웨어 제어 및 스냅샷 조회를 메인 액터로 격리
-class SensoryFeedbackManager {
+/// 🌟 [4번 리뷰 완결 종결: 순정 햅틱 피드백 엔진]
+/// 존재하지 않는 HapticManager 오염선들을 전부 소각하고,
+/// macOS 표준 AppKit 자산인 NSHapticFeedbackManager로 직결 정산합니다.
+final class SensoryFeedbackManager: Sendable {
     static let shared = SensoryFeedbackManager()
+    
+    private init() {} // 싱글톤 보호
 
-    // 원본 사운드는 초기화 시점에 런타임에 딱 한 번만 메모리에 상주
-    private let soundKorean = NSSound(named: "ClickHigh") ?? NSSound(named: "Tink")
-    private let soundEnglish = NSSound(named: "ClickLow") ?? NSSound(named: "Pop")
-
-    // 🌟 [리뷰 반영] 현재 재생 중인 사운드의 인스턴스 주소를 추적할 평생 단 하나의 슬롯
-    private var activeSound: NSSound? = nil
-
-    private init() {}
-
-    func playFeedback(forLanguageID id: String) {
-        let snapshot = SettingsManager.shared.snapshot
-
-        // 1. 햅틱(진동) 피드백 처리
-        if snapshot.isHapticFeedbackEnabled {
+    func playFeedback(for text: String) {
+        // 우리가 뚫어놓은 단일 기준선(InputLanguage)을 통해 언어를 완벽하게 격리 인식합니다.
+        let language = InputLanguage.determine(from: text)
+        
+        switch language {
+        case .korean:
+            // 🇰🇷 한국어 자판 전환 시: 탁 걸리는 명확한 경계 진동 (.alignment)
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            
+        case .english:
+            // 🇺🇸 영어 자판 전환 시: 가볍게 팅기는 진동 (.levelChange)
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            
+        case .unknown:
+            // 그 외 일반 전환 시: 표준 순정 햅틱 (.generic)
+            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         }
-
-        // 2. 효과음(사운드) 피드백 처리
-        guard snapshot.isSoundFeedbackEnabled else { return }
-        
-        let isKorean = id.lowercased().contains("ko") || id.contains("Hangul") || id.contains("두벌식") || id.contains("세벌식")
-        let baseSound = isKorean ? self.soundKorean : self.soundEnglish
-        guard let sound = baseSound else { return }
-
-        // 🌟 [완벽한 아키텍처 개편]
-        // 1. 이전 언어의 잔재 소리가 아직 흐르고 있다면 물리적으로 즉시 전원을 차단(인터럽트)
-        self.activeSound?.stop()
-        
-        // 2. 새로운 사운드로 슬롯 포인터 스위칭 (카피 없음, 비용 0)
-        self.activeSound = sound
-        
-        // 3. 동기식 즉시 시작 가드 실행
-        sound.stop()
-        sound.play()
     }
 }
