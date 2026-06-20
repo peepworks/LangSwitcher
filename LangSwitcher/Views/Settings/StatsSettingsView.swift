@@ -27,7 +27,7 @@ enum TimeRange: String, CaseIterable, Identifiable {
     case month = "month"
     case all = "all"
     var id: String { self.rawValue }
-    
+
     var localizedName: String {
         switch self {
         case .week: return String(localized: "Last 7 Days")
@@ -43,25 +43,26 @@ struct StatsSettingsView: View {
 
     @State private var showSwitches: Bool = true
     @State private var showTypos: Bool = true
+    @State private var showExpansions: Bool = true // 🌟 [수복 추가] 텍스트 대치 차트 토글선
     @State private var selectedDateString: String? = nil
     @State private var animateChart = false
-    
-    // 🌟 [핵심 개선] computed property 연산을 완전히 제거하고,
-    // StatsManager가 계산해둔 캐시를 즉시 참조합니다.
+
     private var filteredStats: [DailyStat] {
         return statsManager.filteredStatsCache
     }
+
+    var todayStats: DailyStat { filteredStats.last ?? DailyStat(dateString: "", languageSwitches: 0, typoCorrections: 0, textExpansions: 0) }
+    var yesterdayStats: DailyStat { filteredStats.dropLast().last ?? DailyStat(dateString: "", languageSwitches: 0, typoCorrections: 0, textExpansions: 0) }
     
-    var todayStats: DailyStat { filteredStats.last ?? DailyStat(dateString: "", languageSwitches: 0, typoCorrections: 0) }
-    var yesterdayStats: DailyStat { filteredStats.dropLast().last ?? DailyStat(dateString: "", languageSwitches: 0, typoCorrections: 0) }
     var totalSwitches: Int { filteredStats.reduce(0) { $0 + $1.languageSwitches } }
     var totalTypos: Int { filteredStats.reduce(0) { $0 + $1.typoCorrections } }
-    var isEmptyState: Bool { totalSwitches == 0 && totalTypos == 0 }
-    
-    // ✅ [최적화] .map을 통한 불필요한 힙(Heap) 배열 복사를 전면 제거하고 O(N) 단일 루프로 최대값을 구합니다.
+    var totalExpansions: Int { filteredStats.reduce(0) { $0 + $1.textExpansions } } // 🌟 누적 합산 추가
+    var isEmptyState: Bool { totalSwitches == 0 && totalTypos == 0 && totalExpansions == 0 }
+
+    // O(N) 단일 루프로 3개 축 전체의 최고 임계치 최대값 정산
     var yDomainMax: Int {
         let highest = filteredStats.reduce(0) { currentMax, stat in
-            max(currentMax, max(stat.languageSwitches, stat.typoCorrections))
+            max(currentMax, max(stat.languageSwitches, max(stat.typoCorrections, stat.textExpansions)))
         }
         return highest < 5 ? 5 : Int(Double(highest) * 1.3)
     }
@@ -79,8 +80,9 @@ struct StatsSettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 250)
             }
-            
-            HStack(spacing: 20) {
+
+            // 🌟 [스크린샷 2차원 대응 수복] 2열 레이아웃을 청정 3열 가로 스택 피드로 전치 확장
+            HStack(spacing: 16) {
                 StatCard(
                     title: String(localized: "Language Switches"),
                     count: todayStats.languageSwitches,
@@ -93,27 +95,35 @@ struct StatsSettingsView: View {
                     title: String(localized: "Typos Corrected"),
                     count: todayStats.typoCorrections,
                     previousCount: yesterdayStats.typoCorrections,
-                    icon: "text.cursor",
+                    icon: "textformat.abc.dottedunderline",
                     color: .green,
                     tooltip: String(localized: "Counts both manual shortcut corrections and smart auto-corrections (English → Korean).")
                 )
+                StatCard(
+                    title: String(localized: "Text Expansions"), // 🌟 3번 카드 안착
+                    count: todayStats.textExpansions,
+                    previousCount: yesterdayStats.textExpansions,
+                    icon: "text.badge.plus",
+                    color: .purple,
+                    tooltip: String(localized: "Counts the number of snippets expanded instantly via preset keyword triggers.")
+                )
             }
-            
+
             VStack(alignment: .leading, spacing: 15) {
                 HStack {
                     Text(String(localized: "Trend Analysis")).font(.headline)
                     Spacer()
-                    HStack(spacing: 12) {
+                    HStack(spacing: 16) {
                         Toggle(String(localized: "Switches"), isOn: $showSwitches)
-                            .toggleStyle(.checkbox)
-                            .tint(.blue)
+                            .toggleStyle(.checkbox).tint(.blue)
                         Toggle(String(localized: "Typos"), isOn: $showTypos)
-                            .toggleStyle(.checkbox)
-                            .tint(.green)
+                            .toggleStyle(.checkbox).tint(.green)
+                        Toggle(String(localized: "Expansions"), isOn: $showExpansions) // 🌟 필터 토글 증설
+                            .toggleStyle(.checkbox).tint(.purple)
                     }
                     .font(.subheadline)
                 }
-                
+
                 if isEmptyState {
                     EmptyStateView()
                 } else {
@@ -124,21 +134,21 @@ struct StatsSettingsView: View {
             .background(Color(NSColor.textBackgroundColor))
             .cornerRadius(12)
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-            
+
             HStack {
                 Spacer()
                 Button(action: exportData) {
                     Label(String(localized: "Export to CSV..."), systemImage: "square.and.arrow.up")
                 }
                 .controlSize(.small)
-                
+
                 Button(role: .destructive, action: resetData) {
                     Label(String(localized: "Reset Stats"), systemImage: "trash")
                         .foregroundColor(.red)
                 }
                 .controlSize(.small)
             }
-            
+
             Spacer()
         }
         .padding(30)
@@ -149,13 +159,11 @@ struct StatsSettingsView: View {
         .onChange(of: selectedRange) { newValue in
             statsManager.updateFilteredStats(for: newValue)
         }
-        // ✅ [최적화] 무거운 전체 배열(dailyStats)의 동등성 비교를 피하기 위해,
-        // filteredStats 데이터 자체의 개수나 내용물 변화 타이밍에만 캐시를 리프레시하도록 결합도를 낮춥니다.
         .onChange(of: statsManager.filteredStatsCache.count) { _ in
             statsManager.updateFilteredStats(for: selectedRange)
         }
     }
-    
+
     // MARK: - 차트 렌더링 뷰
     private var chartView: some View {
         Chart(filteredStats) { stat in
@@ -168,7 +176,7 @@ struct StatsSettingsView: View {
                 .position(by: .value(String(localized: "Category"), String(localized: "Switches")))
                 .cornerRadius(4)
             }
-            
+
             if showTypos {
                 BarMark(
                     x: .value(String(localized: "Date"), stat.dateString),
@@ -178,7 +186,17 @@ struct StatsSettingsView: View {
                 .position(by: .value(String(localized: "Category"), String(localized: "Typos")))
                 .cornerRadius(4)
             }
-            
+
+            if showExpansions { // 🌟 3차 축 차트 렌더링 구역 바인딩 보정
+                BarMark(
+                    x: .value(String(localized: "Date"), stat.dateString),
+                    y: .value(String(localized: "Expansions"), animateChart ? stat.textExpansions : 0)
+                )
+                .foregroundStyle(by: .value(String(localized: "Category"), String(localized: "Expansions")))
+                .position(by: .value(String(localized: "Category"), String(localized: "Expansions")))
+                .cornerRadius(4)
+            }
+
             if let selectedDateString, stat.dateString == selectedDateString {
                 RuleMark(x: .value(String(localized: "Date"), stat.dateString))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
@@ -187,7 +205,8 @@ struct StatsSettingsView: View {
         }
         .chartForegroundStyleScale([
             String(localized: "Switches"): Color.blue.gradient,
-            String(localized: "Typos"): Color.green.gradient
+            String(localized: "Typos"): Color.green.gradient,
+            String(localized: "Expansions"): Color.purple.gradient // 🌟 보라색 테마 팔레트 결속
         ])
         .chartXScale(domain: .automatic)
         .chartYScale(domain: 0...yDomainMax)
@@ -196,7 +215,7 @@ struct StatsSettingsView: View {
             let xValues: [String] = stride(from: filteredStats.count - 1, through: 0, by: -step)
                 .map { filteredStats[$0].dateString }
                 .reversed()
-            
+
             AxisMarks(values: xValues) { value in
                 AxisGridLine()
                 AxisValueLabel {
@@ -240,19 +259,20 @@ struct StatsSettingsView: View {
                                 self.selectedDateString = nil
                             }
                         }
-                    
+
                     if let selectedDateString,
                        let stat = filteredStats.first(where: { $0.dateString == selectedDateString }),
                        let xPosition = proxy.position(forX: selectedDateString) {
-                        
-                        let tooltipWidth: CGFloat = 120
+
+                        let tooltipWidth: CGFloat = 140
                         let plotWidth = geometry[proxy.plotAreaFrame].width
                         let adjustedX = min(max(xPosition, tooltipWidth / 2), plotWidth - tooltipWidth / 2)
-                        
+
                         VStack(alignment: .leading, spacing: 4) {
                             Text(formatAxisDate(parseDate(stat.dateString))).font(.caption.bold())
                             if showSwitches { Text("\(String(localized: "Switches")): \(stat.languageSwitches)").font(.caption).foregroundColor(.blue) }
                             if showTypos { Text("\(String(localized: "Typos")): \(stat.typoCorrections)").font(.caption).foregroundColor(.green) }
+                            if showExpansions { Text("\(String(localized: "Expansions")): \(stat.textExpansions)").font(.caption).foregroundColor(.purple) } // 🌟 툴팁 연동 완결
                         }
                         .padding(8)
                         .frame(width: tooltipWidth)
@@ -260,7 +280,7 @@ struct StatsSettingsView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
                         .shadow(radius: 3)
-                        .position(x: adjustedX, y: -20)
+                        .position(x: adjustedX, y: -25)
                     }
                 }
             }
@@ -272,49 +292,38 @@ struct StatsSettingsView: View {
                 }
             }
         }
-        .onDisappear {
-            animateChart = false
-        }
+        .onDisappear { animateChart = false }
     }
-    
+
     // MARK: - Actions
-    
-    // 🌟 [최적화] 매 렌더링마다 생성되던 무거운 DateFormatter를 정적 변수로 빼내어 재사용합니다.
     private static let axisDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "M/d"
         return formatter
     }()
-    
+
     private static let parseDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.timeZone = TimeZone.current
         return formatter
     }()
-    
-    private func formatAxisDate(_ date: Date) -> String {
-        return Self.axisDateFormatter.string(from: date)
-    }
 
-    private func parseDate(_ dateString: String) -> Date {
-        return Self.parseDateFormatter.date(from: dateString) ?? Date()
-    }
-    
+    private func formatAxisDate(_ date: Date) -> String { Self.axisDateFormatter.string(from: date) }
+    private func parseDate(_ dateString: String) -> Date { Self.parseDateFormatter.date(from: dateString) ?? Date() }
+
     private func exportData() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "LangSwitcher_Stats.csv"
-        
+
         if panel.runModal() == .OK, let url = panel.url {
             statsManager.exportToCSV(to: url) { success, error in
-                if !success, let err = error {
-                    dprint("CSV Export Failed: \(err)")
-                }
+                if !success, let err = error { dprint("CSV Export Failed: \(err)") }
             }
         }
     }
-    
+
     private func resetData() {
         let alert = NSAlert()
         alert.messageText = String(localized: "Reset Statistics")
@@ -322,34 +331,27 @@ struct StatsSettingsView: View {
         alert.addButton(withTitle: String(localized: "Reset"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.alertStyle = .warning
-        
-        if let appIcon = NSImage(named: NSImage.applicationIconName) {
-            alert.icon = appIcon
-        }
-        
+        if let appIcon = NSImage(named: NSImage.applicationIconName) { alert.icon = appIcon }
+
         NSApp.activate(ignoringOtherApps: true)
-        
-        if alert.runModal() == .alertFirstButtonReturn {
-            statsManager.resetStats()
-        }
+        if alert.runModal() == .alertFirstButtonReturn { statsManager.resetStats() }
     }
 }
 
 // MARK: - Subviews
-
 struct StatCard: View {
     let title: String
     let count: Int
     let previousCount: Int
     let icon: String
     let color: Color
-    let tooltip: String // 🌟 [추가됨]
-    
+    let tooltip: String
+
     var trendRatio: Double {
         if previousCount == 0 { return count > 0 ? 1.0 : 0.0 }
         return Double(count - previousCount) / Double(previousCount)
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .top) {
@@ -359,9 +361,9 @@ struct StatCard: View {
                     .frame(width: 36, height: 36)
                     .background(color.opacity(0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                
+
                 Spacer()
-                
+
                 if count > 0 || previousCount > 0 {
                     HStack(spacing: 2) {
                         Image(systemName: trendRatio >= 0 ? "arrow.up.right" : "arrow.down.right")
@@ -375,15 +377,14 @@ struct StatCard: View {
                     .clipShape(Capsule())
                 }
             }
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(count)")
                     .contentTransition(.numericText())
                     .font(.system(size: 32, weight: .bold, design: .rounded))
-                
+
                 HStack(spacing: 4) {
                     Text(title).font(.subheadline).foregroundColor(.secondary)
-                    // 🌟 [추가됨] 작은 정보 아이콘에 툴팁 연결
                     Image(systemName: "info.circle")
                         .font(.caption)
                         .foregroundColor(.secondary.opacity(0.5))
@@ -407,11 +408,8 @@ struct EmptyStateView: View {
                 .foregroundColor(.secondary.opacity(0.5))
             Text(String(localized: "No data available yet."))
                 .font(.headline)
-                .foregroundColor(.primary)
             Text(String(localized: "Your statistics will appear here once you start typing."))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+                .font(.subheadline).foregroundColor(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, minHeight: 250)
     }

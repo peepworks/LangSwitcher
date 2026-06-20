@@ -147,25 +147,27 @@ extension EventMonitor {
     func getCharacter(from keyCode: UInt16) -> Character? {
         return EventMonitor.charKeyMap[keyCode]
     }
-    
+
     func performTextExpansion(triggerLength: Int, snippet: RenderedSnippet, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
         self.batchDelete(count: triggerLength)
-        
-        // 메인 액터 격리가 확약되었으므로 후행 가우징 클로저가 대단히 청명하게 동작합니다.
+
         self.insertLongUnicodeText(snippet.text) { [weak self] in
             guard let self = self else { return }
-            
+
             Task {
                 try? await Task.sleep(for: .seconds(0.02))
                 self.postTriggerKey(keyCode: triggerKeyCode)
-                
+
                 if let offset = snippet.cursorOffsetFromStart {
                     let moveLeftCount = snippet.text.count - offset
                     if moveLeftCount > 0 {
                         self.moveCursorLeft(count: moveLeftCount)
                     }
                 }
-                
+
+                // 🌟 [통계 아키텍처 결속] 텍스트 스니펫이 화면에 성공적으로 각인된 시점에 카운트를 폭발시킵니다.
+                StatsManager.shared.incrementTextExpansion()
+
                 let trace = TraceFactory.create(event: .snippetExpansion, result: .expanded, reason: .snippetExpanded(trigger: triggerText))
                 DecisionTraceManager.shared.record(trace)
             }

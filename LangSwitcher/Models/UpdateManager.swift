@@ -38,20 +38,16 @@ enum UpdateAlertItem: Identifiable, Equatable {
     }
 }
 
-// 🌟 [최종 수복: Swift 6 전역 격리 수립]
 @MainActor
 class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
 
     @Published var isChecking = false
-    @Published var activeAlert: UpdateAlertItem?
-    
+
     @AppStorage("isAutoUpdateEnabled") var isAutoUpdateEnabled: Bool = true
     @AppStorage("lastUpdateCheckDate") var lastUpdateCheckDate: Double = 0
 
     private let apiURL = "https://api.github.com/repos/peepworks/LangSwitcher/releases/latest"
-    
-    // 🌟 [최종 수복: RunLoop 종속성 타이머 탈출]
     private var updateCheckTask: Task<Void, Never>?
 
     private init() {
@@ -62,31 +58,38 @@ class UpdateManager: ObservableObject {
             object: nil
         )
     }
-    
+
     @objc private func appWillTerminate() {
         stopAutoUpdateCheck()
     }
 
-    /// 앱 실행 시 백그라운드 영구 순환 체크 엔진을 가동합니다.
     func setupAutoUpdateCheck() {
-        updateCheckTask?.cancel() // 중복 실행 원천 차단
-        
+        updateCheckTask?.cancel()
+
         updateCheckTask = Task {
+            dprint("🚀 [UpdateManager] 백그라운드 자동 업데이트 루프 가동 준비 (프로덕션 모드).")
+            
+            do {
+                // 앱 시동 직후 메인 UI 안착을 위한 0.8초 안전 지연선
+                try await Task.sleep(for: .seconds(0.8))
+            } catch {
+                return
+            }
+
             while !Task.isCancelled {
                 self.checkIfAutoUpdateNeeded()
-                
+
                 do {
-                    // 1시간(3600초)마다 스레드 블로킹 없이 정밀 대기
-                    try await Task.sleep(nanoseconds: 3600 * 1_000_000_000)
+                    // 🌟 [프로덕션 세팅] 백그라운드 스레드를 1시간(3600초) 단위로 재우며 쿨다운을 유지합니다.
+                    try await Task.sleep(for: .seconds(3600))
                 } catch {
-                    // 외부 가드 취소(App 종료 등) 시에만 루프를 깔끔하게 브레이크
+                    dprint("🛑 [UpdateManager] 취소 시그널 수신으로 인해 비동기 슬립 루프가 해제되었습니다.")
                     break
                 }
             }
         }
     }
 
-    /// 예약되어 있던 업데이트 감시 태스크를 완전히 소각합니다.
     func stopAutoUpdateCheck() {
         updateCheckTask?.cancel()
         updateCheckTask = nil
@@ -99,60 +102,66 @@ class UpdateManager: ObservableObject {
         let now = Date().timeIntervalSince1970
         let twentyFourHours: TimeInterval = 24 * 60 * 60
 
+        // 🌟 [프로덕션 세팅] 24시간 장부 가드 복구 완료
         if now - lastUpdateCheckDate >= twentyFourHours {
             checkForUpdates(isAutomatic: true)
+        } else {
+            #if DEBUG
+            let remainingTime = twentyFourHours - (now - lastUpdateCheckDate)
+            dprint("ℹ️ [UpdateManager] 24시간 대기열 유지 중. (잔여 시간: \(Int(remainingTime))초)")
+            #endif
         }
     }
 
-    /// GitHub Releases 코어를 통해 최신 릴리즈 정보를 분석합니다.
     func checkForUpdates(isAutomatic: Bool = false) {
         guard !isChecking else { return }
-        
+
         self.isChecking = true
-        if !isAutomatic { self.activeAlert = nil }
 
         guard let url = URL(string: apiURL) else {
             self.isChecking = false
-            if !isAutomatic { self.activeAlert = .error("Invalid URL") }
+            self.displaySystemAlert(for: .error("Invalid URL Blueprint"), isAutomatic: isAutomatic)
             return
         }
 
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        
-        let appName = "LangSwitcher"
-        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let userAgentString = "\(appName)/\(appVersion) (Macintosh; Intel Mac OS X)"
 
-        // HTTP 헤더 필드에 공식 바인딩 락온
+        let appName = "LangSwitcher"
+        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let userAgentString = "\(appName)/\(currentVersion) (Macintosh; Intel Mac OS X)"
+
         request.setValue(userAgentString, forHTTPHeaderField: "User-Agent")
-        
-        // 🌟 [최종 수복: async/await 네트워크 파이프라인 전치]
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+
         Task {
             do {
-                // ── 가드레일 고도화 예시 ──
+                dprint("📡 [UpdateManager] GitHub Releases 원격 저장소 패킷 요청...")
                 let (data, response) = try await URLSession.shared.data(for: request)
-                self.isChecking = false
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.isChecking = false
+                    self.displaySystemAlert(for: .error("Invalid Network Response Spec"), isAutomatic: isAutomatic)
+                    return
+                }
 
-                guard let httpResponse = response as? HTTPURLResponse else { return }
-
-                // 1. 403 제한 검문
                 if httpResponse.statusCode == 403 {
-                    if !isAutomatic { self.activeAlert = .error("GitHub API access restricted. Please check rate limits or network parameters.") }
+                    self.isChecking = false
+                    dprint("🚨 [UpdateManager] GitHub API Rate Limit (403).")
+                    self.displaySystemAlert(for: .error("GitHub API access restricted (403)."), isAutomatic: isAutomatic)
                     return
                 }
 
-                // 2. 🌟 [추가 추천 가드] 200 OK 성공 사양이 아닐 경우 파싱을 전면 차단하고 에러 처리로 분기
                 guard httpResponse.statusCode == 200 else {
-                    if !isAutomatic { self.activeAlert = .error("Server returned an unexpected response (Status: \(httpResponse.statusCode)).") }
+                    self.isChecking = false
+                    dprint("🚨 [UpdateManager] Status code: \(httpResponse.statusCode)")
+                    self.displaySystemAlert(for: .error("Unexpected response (Status: \(httpResponse.statusCode))."), isAutomatic: isAutomatic)
                     return
                 }
 
-                // 3. 무결함 통과 시에만 JSON 디코딩 개시
                 struct GitHubRelease: Codable {
                     let tagName: String
                     let htmlUrl: String
-
                     enum CodingKeys: String, CodingKey {
                         case tagName = "tag_name"
                         case htmlUrl = "html_url"
@@ -161,26 +170,107 @@ class UpdateManager: ObservableObject {
 
                 let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
                 let fetchedVersion = release.tagName.replacingOccurrences(of: "v", with: "")
-                let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
 
                 self.lastUpdateCheckDate = Date().timeIntervalSince1970
+                self.isChecking = false
+                
                 guard let releaseURL = URL(string: release.htmlUrl) else { return }
 
+                // 🌟 [프로덕션 세팅] 버전 정밀 비교 로직 복구 완료
                 if fetchedVersion.compare(currentVersion, options: .numeric) == .orderedDescending {
-                    self.activeAlert = .updateAvailable(version: fetchedVersion, url: releaseURL)
+                    dprint("✨ [UpdateManager] New version available: \(fetchedVersion) (Current: \(currentVersion))")
+                    self.displaySystemAlert(for: .updateAvailable(version: fetchedVersion, url: releaseURL), isAutomatic: isAutomatic)
                 } else {
-                    if !isAutomatic { self.activeAlert = .upToDate }
+                    dprint("✅ [UpdateManager] LangSwitcher is up to date. (Current: \(currentVersion))")
+                    if !isAutomatic { self.displaySystemAlert(for: .upToDate, isAutomatic: isAutomatic) }
                 }
-                
+
             } catch {
                 self.isChecking = false
-                dprint("Update check failed: \(error.localizedDescription)")
-                
-                if let httpError = error as? URLError, httpError.code != .cancelled {
-                    if !isAutomatic { self.activeAlert = .error(error.localizedDescription) }
-                } else if !isAutomatic {
-                    self.activeAlert = .error("Failed to fetch or parse GitHub release data.")
+                dprint("❌ [UpdateManager] Update check failed: \(error.localizedDescription)")
+                self.displaySystemAlert(for: .error("Failed to fetch or parse GitHub release data."), isAutomatic: isAutomatic)
+            }
+        }
+    }
+    
+    // 🌟 AppKit 네이티브 알럿 렌더러 (상태 의존성 탈출 완료본)
+    private func displaySystemAlert(for item: UpdateAlertItem, isAutomatic: Bool) {
+        if isAutomatic {
+            if case .upToDate = item { return }
+            if case .error = item { return }
+        }
+
+        let alert = NSAlert()
+        alert.messageText = ""
+        alert.informativeText = ""
+        alert.icon = NSImage(size: NSSize(width: 1, height: 1))
+
+        let title: String
+        let message: String
+        var downloadURL: URL? = nil
+
+        switch item {
+        case .updateAvailable(let version, let url):
+            title = String(localized: "Update Available")
+            message = String(localized: "A new version (\(version)) of LangSwitcher is available!")
+            downloadURL = url
+            alert.addButton(withTitle: String(localized: "Download"))
+            alert.addButton(withTitle: String(localized: "Later"))
+
+        case .upToDate:
+            title = String(localized: "Up to Date")
+            message = String(localized: "You are running the latest version of LangSwitcher.")
+            alert.addButton(withTitle: String(localized: "OK"))
+
+        case .error(let msg):
+            title = String(localized: "Update Check Failed")
+            message = msg
+            alert.addButton(withTitle: String(localized: "OK"))
+        }
+
+        for button in alert.buttons {
+            button.focusRingType = .none
+        }
+
+        let rootView = VStack(spacing: 12) {
+            if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .frame(width: 64, height: 64)
+            }
+            Text(title)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, -80)
+        .padding(.bottom, 10)
+        .frame(width: 280)
+
+        let hostingController = NSHostingController(rootView: rootView)
+        let targetSize = hostingController.sizeThatFits(in: NSSize(width: 280, height: 1000))
+        hostingController.view.frame = NSRect(origin: .zero, size: targetSize)
+        alert.accessoryView = hostingController.view
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        let targetWindow = NSApp.windows.first { $0.title.contains("LangSwitcher Settings") } ?? NSApp.keyWindow
+
+        if let window = targetWindow, window.isVisible {
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn, let url = downloadURL {
+                    NSWorkspace.shared.open(url)
                 }
+            }
+        } else {
+            if alert.runModal() == .alertFirstButtonReturn, let url = downloadURL {
+                NSWorkspace.shared.open(url)
             }
         }
     }

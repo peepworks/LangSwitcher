@@ -24,13 +24,15 @@ import ServiceManagement
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = SettingsManager.shared
     @ObservedObject private var updateManager = UpdateManager.shared
-    @State private var isAutoLaunchEnabled: Bool = SMAppService.mainApp.status == .enabled
+    
+    // 🌟 [수복 포인트 1] 초기화 시점에 SMAppService 동기 커널 시스템 콜을 절대 호출하지 않도록 분리 선언
+    @State private var isAutoLaunchEnabled: Bool = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(String(localized: "General")).font(.title2.bold())
-                
+
                 // 1. 시작 및 옵션 섹션
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Startup & Options")).font(.headline)
@@ -38,70 +40,82 @@ struct GeneralSettingsView: View {
                         // 로그인 시 자동 실행
                         SettingToggleRow(title: String(localized: "Launch at login"), isOn: $isAutoLaunchEnabled)
                             .onChange(of: isAutoLaunchEnabled) { newValue in
-                                do {
-                                    if newValue { try SMAppService.mainApp.register() }
-                                    else { try SMAppService.mainApp.unregister() }
-                                } catch { dprint("Auto-launch error: \(error)") }
+                                // 🌟 [수복 포인트 2] 스위치 변경 시 시스템 콜 오버헤드를 백그라운드 분기 처리하여 프리즈 원천 차단
+                                DispatchQueue.global(qos: .userInitiated).async {
+                                    do {
+                                        if newValue {
+                                            try SMAppService.mainApp.register()
+                                        } else {
+                                            try SMAppService.mainApp.unregister()
+                                        }
+                                        dprint("🚀 [SMAppService] 로그인 시 자동 실행 상태가 성공적으로 정산되었습니다: \(newValue)")
+                                    } catch {
+                                        dprint("❌ [SMAppService] 자동 실행 등록/해제 집행 실패: \(error)")
+                                        // 실패 시 UI 롤백을 위해 메인 스레드로 홉
+                                        DispatchQueue.main.async {
+                                            self.isAutoLaunchEnabled = (SMAppService.mainApp.status == .enabled)
+                                        }
+                                    }
+                                }
                             }
-                        
+
                         Divider().padding(.horizontal, 15)
-                        
+
                         // 자동 업데이트 확인
                         SettingToggleRow(title: String(localized: "Automatically check for updates"), isOn: $updateManager.isAutoUpdateEnabled)
-                        
+
                         Divider().padding(.horizontal, 15)
-                        
+
                         // 시각적 피드백 (화면 중앙 큰 알림)
                         SettingToggleRow(
                             title: String(localized: "Show visual feedback on center"),
                             isOn: $settings.showVisualFeedback
                         )
-                        
+
                         Divider().padding(.horizontal, 15)
-                        
-                        // 🌟 [수정] if문을 제거하고 완전히 독립적인 옵션으로 승격!
+
                         // 커서 위치 미니 플래그
                         SettingToggleRow(
                             title: String(localized: "Show mini flag near text cursor"),
                             isOn: $settings.isCursorHUDEnabled
                         )
-                        
+
                         Divider().padding(.horizontal, 15)
-                        
+
                         // 노치 엣지 글로우 옵션
                         SettingToggleRow(
                             title: String(localized: "Enable Notch Edge Glow"),
                             isOn: $settings.isEdgeGlowEnabled
                         )
-                            
+
                         Text(String(localized: "Displays a brief overlay indicating the new language."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineSpacing(2)
-                            .multilineTextAlignment(.leading) // 🌟 텍스트가 여러 줄일 경우 좌측 정렬
-                            .frame(maxWidth: .infinity, alignment: .leading) // 🌟 뷰의 최대 너비를 확장하고 좌측으로 밀착
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 15)
                             .padding(.bottom, 12)
                             .padding(.top, -2)
-                        
+
                         // 사운드 및 햅틱 피드백 토글 스위치
                         Divider().padding(.horizontal, 15)
-                        
+
                         SettingToggleRow(title: String(localized: "Play sound on switch"), isOn: $settings.isSoundFeedbackEnabled)
-                        
+
                         Divider().padding(.horizontal, 15)
-                        
+
                         SettingToggleRow(title: String(localized: "Haptic feedback on switch"), isOn: $settings.isHapticFeedbackEnabled)
-                        
+
                         Divider().padding(.horizontal, 15)
-                        
+
                         // 규칙 테스트 모드
                         SettingToggleRow(title: String(localized: "Rule Test"), isOn: $settings.isTestMode)
                     }
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
-                
+
                 // 2. 입력 소스 전환 키 섹션
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Input Source Toggle Key")).font(.headline)
@@ -111,7 +125,7 @@ struct GeneralSettingsView: View {
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
-                
+
                 // 3. 기본 단축키 섹션
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(localized: "Default Shortcuts")).font(.headline)
@@ -125,16 +139,20 @@ struct GeneralSettingsView: View {
                     .background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
-                
+
             }
             .padding(.horizontal, 25)
             .padding(.vertical, 12)
         }
+        // 🌟 [수복 포인트 3] 뷰가 화면에 안착하여 스레드가 진정된 시점에 안전하게 넌블로킹으로 자동 실행 상태 인출 기입
+        .onAppear {
+            let status = SMAppService.mainApp.status
+            self.isAutoLaunchEnabled = (status == .enabled)
+            dprint("ℹ️ [GeneralSettingsView] 자동 실행 커널 등록 상태 안착 정산 완료: \(isAutoLaunchEnabled)")
+        }
     }
-
 }
 
-// 🌟 에러 해결: 올려주신 소스코드 하단에 LanguageRow 컴포넌트가 누락되어 있어 다시 추가했습니다.
 struct LanguageRow: View {
     let title: String
     @Binding var isActive: Bool
