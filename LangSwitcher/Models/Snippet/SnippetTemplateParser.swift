@@ -22,57 +22,64 @@ import Foundation
 
 struct SnippetTemplateParser {
     
-    // 컴파일 타임 문법 정적 검증이 확약된 순정 Modern Swift Regex 리터럴 상주 고정
-    private static let snippetRegex = #/\{\{(date|time|clipboard|cursor)(?::([^}]+))?\}\}/#
-    
+    // 🌟 [수복 포인트] 기존 변수와 신형 달러 문법 플레이스홀더를 동시 포획하는 통합 정규식 패턴 리터럴 상주
+    // 1번 캡처: {{...}} 변수군 | 2번 캡처: ${...} 플레이스홀더군
+    private static let unifiedRegex = #/(?:\{\{(date|time|clipboard)(?::([^}]+))?\}\})|(?:\$\{(selection|selectedText|0|([1-9]\d*)(?::([^}]+))?)\})/#
+
     static func parse(template: String) -> [SnippetToken] {
         var tokens: [SnippetToken] = []
-        
-        // Swift 고유의 String.Index 추적선 수립
         var lastIndex = template.startIndex
         
-        let matches = template.matches(of: snippetRegex)
-       
+        let matches = template.matches(of: unifiedRegex)
+        
         for match in matches {
-            // 강력한 타입 추론이 완료된 튜플 출력부 직결 인출
-            let coreKeyword = String(match.output.1)               // "date", "time", "clipboard", "cursor"
-            let customFormat = match.output.2.map { String($0) }    // 콜론 뒤의 포맷 문자열만 청정 추출
-            let matchRange = match.range                           // Range<String.Index>
+            let matchRange = match.range
             
-            // 1. 태그 이전의 일반 텍스트 구간 분할 추가
+            // 태그 진입 전 정적 일반 텍스트 분할 기입
             if matchRange.lowerBound > lastIndex {
-                let textStr = String(template[lastIndex..<matchRange.lowerBound])
-                tokens.append(.text(textStr))
+                let staticText = String(template[lastIndex..<matchRange.lowerBound])
+                tokens.append(.text(staticText))
             }
             
-            // 2. 글로벌 레지스트리에 이미 선언된 SnippetToken enum 자산과 직결 매핑
-            switch coreKeyword {
-            case "date":
-                let format = customFormat?.trimmingCharacters(in: .whitespaces) ?? "yyyy-MM-dd"
-                tokens.append(.date(format: format))
+            let output = match.output
+            
+            // 분기 1: 레거시 {{...}} 중괄호 매크로 캡처 엔진 검문
+            if let legacyKeyword = output.1 {
+                let keywordStr = String(legacyKeyword)
+                let customFormat = output.2.map { String($0) }
                 
-            case "time":
-                let format = customFormat?.trimmingCharacters(in: .whitespaces) ?? "HH:mm"
-                tokens.append(.time(format: format))
+                switch keywordStr {
+                case "date":
+                    tokens.append(.date(format: customFormat ?? "yyyy-MM-dd"))
+                case "time":
+                    tokens.append(.time(format: customFormat ?? "HH:mm"))
+                case "clipboard":
+                    tokens.append(.clipboard)
+                default:
+                    tokens.append(.text(String(match.output.0)))
+                }
+            }
+            // 분기 2: v0.9.5 신형 ${...} 달러 템플릿 오토마타 검문
+            else if let advancedKeyword = output.3 {
+                let keywordStr = String(advancedKeyword)
                 
-            case "clipboard":
-                tokens.append(.clipboard)
-                
-            case "cursor":
-                tokens.append(.cursor)
-                
-            default:
-                tokens.append(.text(String(match.output.0)))
+                if keywordStr == "selection" || keywordStr == "selectedText" {
+                    tokens.append(.selection)
+                } else if keywordStr == "0" {
+                    tokens.append(.finalCaret)
+                } else if let tabIndex = output.4 { // ${1:default} 또는 ${2} 파싱 라인
+                    let idx = Int(tabIndex) ?? 1
+                    let defaultValue = output.5.map { String($0) }
+                    tokens.append(.tabStop(index: idx, defaultValue: defaultValue))
+                }
             }
             
-            // 마감 인덱스를 매칭 범위의 끝단(upperBound)으로 갱신
             lastIndex = matchRange.upperBound
         }
         
-        // 3. 마지막 태그 이후의 남은 텍스트 정산
+        // 후행 잔여문 정산
         if lastIndex < template.endIndex {
-            let textStr = String(template[lastIndex..<template.endIndex])
-            tokens.append(.text(textStr))
+            tokens.append(.text(String(template[lastIndex..<template.endIndex])))
         }
         
         return tokens

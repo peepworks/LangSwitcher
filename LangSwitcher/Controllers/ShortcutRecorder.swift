@@ -25,37 +25,44 @@ class ShortcutRecorder {
     typealias Completion = (_ keyCode: UInt16, _ modifiers: UInt64, _ displayString: String) -> Void
     private var timeoutTask: DispatchWorkItem?
     private init() {}
-    
-    // 🌟 [핵심 변경] isForAppLaunch 플래그 추가 (기본값 false)
+
     func startRecording(isForAppLaunch: Bool = false, completion: @escaping Completion, onTimeout: @escaping () -> Void) {
         EventMonitor.shared.isPaused = true
         timeoutTask?.cancel()
-        
+
         let task = DispatchWorkItem { [weak self] in
             self?.stopRecording()
             onTimeout()
         }
-        
+
         self.timeoutTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: task)
 
         class RState { var m = Set<UInt16>(); var f: NSEvent.ModifierFlags = []; var r = false }
         let state = RState()
 
+        // 🌟 [수복 포인트] 녹음 콜백 파이프라인의 격리 및 UI 메인 큐 동기 홉 안전화 완결
         EventMonitor.shared.shortcutRecordingCallback = { e in
             let code = e.keyCode
             let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
             if e.type == .flagsChanged {
                 let capturedCode = code
-                if capturedCode == 57 { DispatchQueue.main.async { completion(57, 0, "⇪ Caps Lock") }; return }
-                
-                if !flags.isEmpty { state.m.insert(capturedCode); state.f.formUnion(flags); return }
-                else if !state.r && !state.m.isEmpty {
+                if capturedCode == 57 {
+                    DispatchQueue.main.async { completion(57, 0, "⇪ Caps Lock") }
+                    return
+                }
+
+                if !flags.isEmpty {
+                    state.m.insert(capturedCode)
+                    state.f.formUnion(flags)
+                    return
+                } else if !state.r && !state.m.isEmpty {
                     if state.m.count == 1 {
                         let c = state.m.first!
                         let str = [54:"Right ⌘", 55:"Left ⌘", 56:"Left ⇧", 60:"Right ⇧", 58:"Left ⌥", 61:"Right ⌥", 59:"Left ⌃", 62:"Right ⌃", 63:"fn"][c] ?? "Mod(\(c))"
-                        let capturedC = c; DispatchQueue.main.async { completion(capturedC, 0, str) }
+                        let capturedC = c
+                        DispatchQueue.main.async { completion(capturedC, 0, str) }
                     } else {
                         var str = ""
                         if state.f.contains(.control) { str += "⌃ " }
@@ -68,19 +75,19 @@ class ShortcutRecorder {
                     return
                 }
                 state.m.removeAll(); state.f = []; state.r = false; return
-                
+
             } else if e.type == .keyDown {
-                
-                // 🌟 [핵심 변경] 앱 실행 단축키 화면(isForAppLaunch == true)일 때만 방어 로직 작동!
                 if isForAppLaunch && code == 49 {
-                    let snapshot = SettingsManager.shared.snapshot
-                    let pureFlags = flags.intersection([.control, .command, .option, .shift])
-                    
-                    if pureFlags == .control && snapshot.isCtrlActive { state.r = true; return }
-                    if pureFlags == .command && snapshot.isCmdActive { state.r = true; return }
-                    if pureFlags == .option && snapshot.isOptActive { state.r = true; return }
+                    // 스냅샷 바인딩 안전 인출 보정
+                    Task { @MainActor in
+                        let snapshot = SettingsManager.shared.snapshot
+                        let pureFlags = flags.intersection([.control, .command, .option, .shift])
+                        if pureFlags == .control && snapshot.isCtrlActive { state.r = true; return }
+                        if pureFlags == .command && snapshot.isCmdActive { state.r = true; return }
+                        if pureFlags == .option && snapshot.isOptActive { state.r = true; return }
+                    }
                 }
-                
+
                 state.r = true; var str = ""
                 if flags.contains(.control) { str += "⌃ " }
                 if flags.contains(.option) { str += "⌥ " }
@@ -99,7 +106,7 @@ class ShortcutRecorder {
             }
         }
     }
-    
+
     func stopRecording() {
         timeoutTask?.cancel()
         EventMonitor.shared.cancelShortcutRecording()

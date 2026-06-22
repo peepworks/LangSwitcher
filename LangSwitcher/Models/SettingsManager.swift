@@ -453,6 +453,9 @@ class SettingsManager: ObservableObject {
         
         newSnapshot.buildCaches()
         
+        // 🌟 [단축키 스트림 엔진 도킹선 각인]
+        InputShortcutEngine.shared.syncEngineCache(newSnapshot)
+        
         EventMonitor.shared.snapshotLock.lock()
         EventMonitor.shared.localSnapshot = newSnapshot
         EventMonitor.shared.snapshotLock.unlock()

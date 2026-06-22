@@ -19,220 +19,195 @@
 //
 
 import Cocoa
+import Carbon
 
 extension EventMonitor {
-    
-    // 🌟 공통 키 생성 유틸리티 (keyCode와 modifiers를 하나의 UInt64로 병합)
-    private func makeShortcutKey(keyCode: UInt16, modifiers: UInt64) -> UInt64 {
-        return (UInt64(keyCode) << 32) | modifiers
-    }
-    
+
     func handleFlagsChanged(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
-        
-        EventMonitor.shared.snapshotLock.lock()
-        defer { EventMonitor.shared.snapshotLock.unlock() }
-        
-        guard let snapshot = EventMonitor.shared.localSnapshot else {
-            return Unmanaged.passUnretained(event)
-        }
-        
-        var targetLang: String? = nil; var targetAppBundleID: String? = nil; var targetAppName: String? = nil
-        var isToggle = false; var appliedRule = ""
         let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         if keyCode == 57 {
             if EventMonitor.shared.shouldDebounceCapsLock() { return nil }
-
-            if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == 57 && !snapshot.typoDisplayString.isEmpty {
-                // 🌟 [우주 방어 수복 포인트 1: handleFlagsChanged 데드락 무력화]
-                // 락 가드 내부에서의 동기 호출을 차단하고 비동기 메인 큐 홉으로 안전하게 밀어 올립니다.
-                DispatchQueue.main.async {
-                    TypoConverter.shared.executeCorrection()
-                }
-                return nil
-            }
-
-            if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == 57 && !snapshot.toggleDisplayString.isEmpty {
-                isToggle = true; appliedRule = "Toggle Key"
-            } else {
-                let searchKey = makeShortcutKey(keyCode: 57, modifiers: 0)
-                
-                if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
-                    targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
-                } else if snapshot.isCustomShortcutsEnabled, let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
-                    targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
-                }
-            }
+            InputShortcutEngine.shared.injectEvent(keyCode: 57, modifierFlags: 0)
+            return nil
         } else {
             if !flags.isEmpty {
                 self.updateModifierState(keyCode: keyCode, flags: flags)
             } else {
                 let stateSnap = self.consumeModifierState()
-                
                 if !stateSnap.didPressOtherKey {
                     if let singleCode = stateSnap.singleCode {
-                        if snapshot.isTypoCorrectionEnabled && snapshot.typoModifierFlags == 0 && snapshot.typoKeyCode == singleCode && !snapshot.typoDisplayString.isEmpty {
-                            // 🌟 [우주 방어 수복 포인트 2: 싱글 모디파이어 오타 교정 비동기화]
-                            DispatchQueue.main.async {
-                                TypoConverter.shared.executeCorrection()
-                            }
-                            return nil
-                        }
-
-                        if snapshot.toggleModifierFlags == 0 && snapshot.toggleKeyCode == singleCode && !snapshot.toggleDisplayString.isEmpty {
-                            isToggle = true; appliedRule = "Toggle Key"
-                        } else {
-                            let searchKey = makeShortcutKey(keyCode: singleCode, modifiers: 0)
-                            
-                            if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
-                                targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
-                            } else if snapshot.isCustomShortcutsEnabled, let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
-                                targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
-                            }
-                        }
+                        InputShortcutEngine.shared.injectEvent(keyCode: singleCode, modifierFlags: 0)
+                        return nil
                     } else if !stateSnap.maxMods.isEmpty {
-                        let modsRaw = UInt64(stateSnap.maxMods.rawValue)
-
-                        if snapshot.isTypoCorrectionEnabled && snapshot.typoKeyCode == 0 && snapshot.typoModifierFlags == modsRaw && !snapshot.typoDisplayString.isEmpty {
-                            // 🌟 [우주 방어 수복 포인트 3: 다중 모디파이어 오타 교정 비동기화]
-                            DispatchQueue.main.async {
-                                TypoConverter.shared.executeCorrection()
-                            }
-                            return nil
-                        }
-
-                        if snapshot.toggleKeyCode == 0 && snapshot.toggleModifierFlags == modsRaw && !snapshot.toggleDisplayString.isEmpty {
-                            isToggle = true; appliedRule = "Toggle Key"
-                        } else {
-                            let searchKey = makeShortcutKey(keyCode: 0, modifiers: modsRaw)
-                            
-                            if snapshot.isAppLaunchEnabled, let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
-                                targetAppBundleID = appLaunch.bundleIdentifier; targetAppName = appLaunch.appName; appliedRule = "App Launch"
-                            } else if snapshot.isCustomShortcutsEnabled, let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
-                                targetLang = shortcut.targetLanguage; appliedRule = "Custom Shortcut"
-                            }
-                        }
+                        InputShortcutEngine.shared.injectEvent(keyCode: 0, modifierFlags: UInt64(stateSnap.maxMods.rawValue))
+                        return nil
                     }
                 }
             }
-        }
-        
-        if isToggle || targetAppBundleID != nil || targetLang != nil {
-            // 🌟 [성능 최적화: 핫 패스 오버헤드 평탄화 1]
-            // 액션 실행 엔진을 메인 큐 비동기로 디스패치하여 락 점유 시간을 0ms로 소각합니다.
-            DispatchQueue.main.async {
-                EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-            }
-            
-            if keyCode == 57 { return nil } // Caps Lock 토글시 차단
-            if targetAppBundleID != nil { return nil } // 오직 '앱 실행 단축키'일 때만 시스템 이벤트 무효화
-            
-            return Unmanaged.passUnretained(event)
         }
         return Unmanaged.passUnretained(event)
     }
 
     func handleKeyDown(event: CGEvent, keyCode: CGKeyCode, modifierFlags: NSEvent.ModifierFlags) -> Unmanaged<CGEvent>? {
+        let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
+        if isSimulated {
+            return Unmanaged.passUnretained(event)
+        }
+        
+        if let session = EventMonitor.shared.activeSnippetSession {
+            if session.isExpired {
+                EventMonitor.shared.activeSnippetSession = nil
+            } else if keyCode == 48 {
+                
+                let currentStop = session.currentTabStop
+                
+                if let nextStop = session.advance() {
+                    let currentSnapshot = currentStop
+                    let nextSnapshot = nextStop
+                    
+                    Task {
+                        if let current = currentSnapshot {
+                            await self.jumpToNextTabStopAsync(from: current, to: nextSnapshot)
+                        }
+                    }
+                    return nil
+                } else {
+                    let currentSnapshot = currentStop
+                    let finalOffset = session.finalCaretOffset
+                    
+                    Task {
+                        if let current = currentSnapshot, let targetOffset = finalOffset {
+                            await self.jumpToFinalCaretAsync(from: current, toOffset: targetOffset)
+                        }
+                    }
+                    
+                    EventMonitor.shared.activeSnippetSession = nil
+                    return nil
+                }
+            }
+        }
+        
+        self.markOtherKeyPressed()
+        
+        let flags = modifierFlags.intersection([.command, .control, .option, .shift])
+        let rawFlags = UInt64(flags.rawValue)
 
         EventMonitor.shared.snapshotLock.lock()
-        defer { EventMonitor.shared.snapshotLock.unlock() }
-
         guard let snapshot = EventMonitor.shared.localSnapshot else {
+            EventMonitor.shared.snapshotLock.unlock()
             return Unmanaged.passUnretained(event)
         }
+        EventMonitor.shared.snapshotLock.unlock()
 
-        var targetLang: String? = nil
-        var targetAppBundleID: String? = nil
-        var targetAppName: String? = nil
-        var isToggle = false
-        var appliedRule = ""
-
-        self.markOtherKeyPressed()
-        let flags = modifierFlags.intersection([.command, .control, .option, .shift])
-        let flagsRaw = UInt64(flags.rawValue)
-
-        // 1. 수동/자동 오타 교정 트리거 검사
-        if snapshot.isTypoCorrectionEnabled &&
-           snapshot.typoKeyCode == keyCode &&
-           NSEvent.ModifierFlags(rawValue: UInt(snapshot.typoModifierFlags)).intersection([.command, .control, .option, .shift]) == flags &&
-           !snapshot.typoDisplayString.isEmpty {
+        if keyCode == 49 {
+            let isControl = flags.contains(.control)
+            let isCommand = flags.contains(.command)
+            let isOption = flags.contains(.option)
             
-            DispatchQueue.main.async {
-                TypoConverter.shared.executeCorrection()
-            }
-            return nil
-        }
-
-        // 2. 입력 소스 토글 키 검사
-        if snapshot.toggleKeyCode == keyCode && !snapshot.toggleDisplayString.isEmpty {
-            let savedModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(snapshot.toggleModifierFlags)).intersection([.command, .control, .option, .shift])
-            if flags == savedModifierFlags {
-                isToggle = true
-                appliedRule = "Toggle Key"
-            }
-        }
-
-        let searchKey = makeShortcutKey(keyCode: keyCode, modifiers: flagsRaw)
-
-        // 3. 앱 실행 단축키 규칙 검사
-        if !isToggle && snapshot.isAppLaunchEnabled {
-            if let appLaunch = snapshot.appLaunchShortcutCache[searchKey], !appLaunch.displayString.isEmpty {
-                let isSingleModifier = globalModifierKeyCodes.contains(appLaunch.keyCode) && appLaunch.modifierFlags == 0
-                let isMultiModifierOnly = appLaunch.keyCode == 0 && appLaunch.modifierFlags != 0
-                if !isSingleModifier && !isMultiModifierOnly {
-                    targetAppBundleID = appLaunch.bundleIdentifier
-                    targetAppName = appLaunch.appName
-                    appliedRule = "App Launch"
+            if (isControl && snapshot.isCtrlActive) || (isCommand && snapshot.isCmdActive) || (isOption && snapshot.isOptActive) {
+                let targetLang = targetLangIfPressed(keyCode: keyCode, flags: flags, snapshot: snapshot) ?? ""
+                InputSourceManager.shared.switchLanguage(to: targetLang)
+                
+                let source = CGEventSource(stateID: .combinedSessionState)
+                let spaceDown = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: true)
+                let spaceUp = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: false)
+                
+                spaceDown?.flags = event.flags
+                spaceUp?.flags = event.flags
+                spaceDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
+                spaceUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
+                
+                spaceDown?.post(tap: .cghidEventTap)
+                spaceUp?.post(tap: .cghidEventTap)
+                
+                if snapshot.isCursorHUDEnabled {
+                    DispatchQueue.main.async { HUDManager.shared.showHUD(languageName: InputSourceManager.shared.currentInputSourceName) }
                 }
+                return nil
             }
-        }
-
-        // 4. 커스텀 단축키 규칙 검사
-        if !isToggle && targetAppBundleID == nil && snapshot.isCustomShortcutsEnabled {
-            if let shortcut = snapshot.customShortcutCache[searchKey], !shortcut.displayString.isEmpty {
-                let isSingleModifier = globalModifierKeyCodes.contains(shortcut.keyCode) && shortcut.modifierFlags == 0
-                let isMultiModifierOnly = shortcut.keyCode == 0 && shortcut.modifierFlags != 0
-                if !isSingleModifier && !isMultiModifierOnly {
-                    targetLang = shortcut.targetLanguage
-                    appliedRule = "Custom Shortcut"
-                }
-            }
-        }
-
-        // 5. 기본 조합 단축키 검사 (Ctrl / Cmd / Opt + Space)
-        if !isToggle && targetAppBundleID == nil && targetLang == nil && keyCode == 49 {
-            if flags == .control && snapshot.isCtrlActive { targetLang = snapshot.ctrlLang; appliedRule = "Default Shortcut" }
-            else if flags == .command && snapshot.isCmdActive { targetLang = snapshot.cmdLang; appliedRule = "Default Shortcut" }
-            else if flags == .option && snapshot.isOptActive { targetLang = snapshot.optLang; appliedRule = "Default Shortcut" }
-        }
-
-        // ----------------------------------------------------------------
-        // 최종 정산 및 수복 구역
-        // ----------------------------------------------------------------
-        
-        // 1) 실제 액션(언어 전환 또는 앱 실행)이 발동해야 하는 경우
-        if isToggle || targetAppBundleID != nil || targetLang != nil {
-            // 🌟 [성능 최적화: 핫 패스 오버헤드 평탄화 2]
-            DispatchQueue.main.async {
-                EventMonitor.executeAction(targetLang: targetLang, targetAppID: targetAppBundleID, targetAppName: targetAppName, isToggle: isToggle, rule: appliedRule)
-            }
-
-            if isToggle { return nil }
-            if targetAppBundleID != nil { return nil }
             return Unmanaged.passUnretained(event)
         }
-        
-        // 2) 🌟 [최종 컴파일 에러 수복 완료 구역]
-        // 우리가 3개 파라미터형으로 개조한 targetLangIfPressed 규격에 맞게 keyCode 유닛 변환 및 snapshot 자산을 관통 주입합니다.
-        else if let _ = targetLangIfPressed(keyCode: UInt16(keyCode), flags: flags, snapshot: snapshot), snapshot.isCursorHUDEnabled {
 
-            // 🔧 [우주 방어 & 2프레임 지연 소각]
-            DispatchQueue.main.async {
-                let langName = InputSourceManager.shared.currentInputSourceName
-                HUDManager.shared.showHUD(languageName: langName)
-            }
+        InputShortcutEngine.shared.injectEvent(keyCode: UInt16(keyCode), modifierFlags: rawFlags)
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func jumpToNextTabStopAsync(from current: SnippetTabStop, to next: SnippetTabStop) async {
+        let currentSelectionLength = current.range.length
+        
+        if currentSelectionLength > 0 {
+            await self.simulateArrowMovementAsync(keyCode: 124, count: 1, withShift: false)
+        }
+        
+        let currentEnd = current.range.location + current.range.length
+        let nextStart = next.range.location
+        let delta = nextStart - currentEnd
+        
+        if delta > 0 {
+            await self.simulateArrowMovementAsync(keyCode: 124, count: delta, withShift: false)
+        } else if delta < 0 {
+            await self.simulateArrowMovementAsync(keyCode: 123, count: abs(delta), withShift: false)
+        }
+        
+        if next.range.length > 0 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            await self.simulateArrowMovementAsync(keyCode: 124, count: next.range.length, withShift: true)
+        }
+    }
+
+    private func jumpToFinalCaretAsync(from current: SnippetTabStop, toOffset finalOffset: Int) async {
+        let currentSelectionLength = current.range.length
+        if currentSelectionLength > 0 {
+            await self.simulateArrowMovementAsync(keyCode: 124, count: 1, withShift: false)
+        }
+        
+        let currentEnd = current.range.location + current.range.length
+        let delta = finalOffset - currentEnd
+        
+        if delta > 0 {
+            await self.simulateArrowMovementAsync(keyCode: 124, count: delta, withShift: false)
+        } else if delta < 0 {
+            await self.simulateArrowMovementAsync(keyCode: 123, count: abs(delta), withShift: false)
+        }
+    }
+    
+    // 🌟 [수복 핵심] OS 패킷 증발을 막는 안전 페이싱(2ms) 부활!
+    func simulateArrowMovementAsync(keyCode: CGKeyCode, count: Int, withShift: Bool) async {
+        guard count > 0 else { return }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        
+        if withShift {
+            let shiftDown = CGEvent(keyboardEventSource: source, virtualKey: 56, keyDown: true)
+            shiftDown?.flags = .maskShift
+            shiftDown?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            shiftDown?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
-        return Unmanaged.passUnretained(event)
+        for _ in 0..<count {
+            let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
+            let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+            
+            if withShift {
+                down?.flags = .maskShift
+                up?.flags = .maskShift
+            }
+            down?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            up?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            
+            down?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 2_000_000) // 🌟 2ms 절대 보장
+            up?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 2_000_000) // 🌟 2ms 절대 보장
+        }
+
+        if withShift {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            let shiftUp = CGEvent(keyboardEventSource: source, virtualKey: 56, keyDown: false)
+            shiftUp?.flags = []
+            shiftUp?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            shiftUp?.post(tap: .cghidEventTap)
+        }
     }
 }

@@ -21,44 +21,29 @@
 import Cocoa
 import Foundation
 
+@MainActor
 class TextExpander {
     static let shared = TextExpander()
     private init() {}
-    
-    // 🌟 성능 최적화를 위한 공용 DateFormatter (딱 한 번만 생성됨)
-    private static let sharedDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        return formatter
-    }()
-    
-    // 🌟 [수정/추가] 기존 parseDynamicVariables를 대체하는 새로운 확장 진입점
-    func expand(template: String) -> RenderedSnippet {
+
+    /// 🌟 [v0.9.5 전면 진화] 선택 텍스트 컨텍스트를 흡수하여 동적 변수와 탭스톱 장부를 통합 방출합니다.
+    func expand(template: String, selectedText: String? = nil) -> RenderedSnippet {
         let tokens = SnippetTemplateParser.parse(template: template)
-        return SnippetVariableRenderer.render(tokens: tokens)
+        return SnippetVariableRenderer.render(tokens: tokens, selectedText: selectedText)
     }
-    
-    // 🌟 딕셔너리(dict)를 받아 O(1) 속도로 탐색하는 함수
+
     func findMatch(for buffer: String, dict: [String: TextExpansionRule], maxLength: Int) -> TextExpansionRule? {
-        // 버퍼가 비어있거나 찾을 길이가 없으면 즉시 종료
         guard !buffer.isEmpty, maxLength > 0 else { return nil }
-        
+
         let checkLength = min(buffer.count, maxLength)
-        
-        // 🌟 [핵심 개선] 거대한 원본 buffer 대신, 끝에서부터 필요한 만큼만
-        // 메모리를 공유하는 투명한 창문(Substring)을 딱 한 번만 만듭니다. (비용 0)
         let tail = buffer.suffix(checkLength)
-        
+
         for length in stride(from: checkLength, through: 1, by: -1) {
-            // 이미 짧아진 tail 안에서 자르므로 CPU와 메모리 소모가 거의 없습니다.
             let suffix = String(tail.suffix(length))
-            
-            // 🌟 [추가됨] 딕셔너리에서 규칙을 찾고, 그 규칙이 '켜져 있을 때(isEnabled)'만 반환합니다.
             if let rule = dict[suffix], rule.isEnabled {
                 return rule
             }
         }
-        
         return nil
     }
 }

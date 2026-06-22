@@ -25,12 +25,16 @@ import Carbon
 class EventMonitor {
     static let shared = EventMonitor()
 
+    var activeSnippetSession: ActiveSnippetSession?
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
     var healthCheckTimer: Timer?
     var eventRunLoop: CFRunLoop?
 
+    // 🌟 [수복 핵심 1] 타 파일과의 중복 선언(Invalid redeclaration) 충돌을 완벽히 소각하기 위해,
+    // 오직 순정 백킹 필드 변수인 '_typingBuffer' 단 하나만 남겨두고 모든 유틸리티 함수들을 적출했습니다.
     var _typingBuffer: String = ""
+    
     var _lastKeyTime: Date = Date()
     var _shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
     var _currentModifiers: NSEvent.ModifierFlags = []
@@ -57,10 +61,7 @@ class EventMonitor {
     private init() {}
 
     func start() {
-        if eventTap != nil {
-            if !isEnabled { CGEvent.tapEnable(tap: eventTap!, enable: true) }
-            return
-        }
+        if eventTap != nil { return }
 
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.keyUp.rawValue) |
@@ -98,13 +99,9 @@ class EventMonitor {
 
                         if IsSecureEventInputEnabled() { return Unmanaged.passUnretained(event) }
 
-                        // 1단계: 오직 한 번만 snapshotLock 경유로 원자적 스냅샷 획득 완결
                         EventMonitor.shared.snapshotLock.lock()
                         guard let snapshot = EventMonitor.shared.localSnapshot else {
                             EventMonitor.shared.snapshotLock.unlock()
-                            // 🌟 [우주 방어 수복 포인트 1]
-                            // 스냅샷이 부재할 때 nil을 던지면 키보드 이벤트가 통째로 탈취당해 먹통이 됩니다.
-                            // 원래 유저가 입력하려던 순정 이벤트를 그대로 무혈 통과(passUnretained)시켜 생명줄을 살려놓습니다.
                             return Unmanaged.passUnretained(event)
                         }
                         EventMonitor.shared.snapshotLock.unlock()
@@ -121,20 +118,13 @@ class EventMonitor {
                             }
                         }
 
-                        // 시스템 긴급 제어용 훅
                         if type == .keyDown {
                             let flags = event.flags
-                            let isCommand = flags.contains(.maskCommand)
-                            let isOption = flags.contains(.maskAlternate)
-                            let isControl = flags.contains(.maskControl)
-                            let isShift = flags.contains(.maskShift)
-
-                            if isCommand && isOption && isControl && !isShift && keyCode == 1 {
+                            if flags.contains(.maskCommand) && flags.contains(.maskAlternate) && flags.contains(.maskControl) && !flags.contains(.maskShift) && keyCode == 1 {
                                 return nil
                             }
                         }
 
-                        // Caps Lock (Hyper Key) 엔진 상시 동작
                         if snapshot.isHyperKeyEnabled {
                             if HyperKeyManager.shared.processEvent(type: type, event: event, keyCode: keyCode) { return nil }
                         }
@@ -142,10 +132,8 @@ class EventMonitor {
                         let isSimulated = event.getIntegerValueField(.eventSourceUserData) == 9999
                         if isSimulated { return Unmanaged.passUnretained(event) }
 
-                        // 예외 등록 앱 필터링
                         if snapshot.isExcludedAppsEnabled && !currentAppID.isEmpty {
                             if snapshot.excludedApps.contains(where: { $0.bundleIdentifier == currentAppID }) {
-                                
                                 var isLanguageSwitchKey = false
                                 let nsFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)).intersection(.deviceIndependentFlagsMask)
                                 let toggleFlags = NSEvent.ModifierFlags(rawValue: UInt(snapshot.toggleModifierFlags)).intersection(.deviceIndependentFlagsMask)
@@ -155,11 +143,8 @@ class EventMonitor {
                                     let cleanToggleFlags = toggleFlags.subtracting(.capsLock)
                                     
                                     if keyCode == snapshot.toggleKeyCode {
-                                        if [57, 56, 60, 59, 62, 58, 61].contains(keyCode) {
-                                            isLanguageSwitchKey = true
-                                        } else if cleanNsFlags == cleanToggleFlags {
-                                            isLanguageSwitchKey = true
-                                        }
+                                        if [57, 56, 60, 59, 62, 58, 61].contains(keyCode) { isLanguageSwitchKey = true }
+                                        else if cleanNsFlags == cleanToggleFlags { isLanguageSwitchKey = true }
                                     }
                                     
                                     if keyCode == 49 {
@@ -168,10 +153,7 @@ class EventMonitor {
                                         if cleanNsFlags == .option && snapshot.isOptActive { isLanguageSwitchKey = true }
                                     }
                                 }
-                                
-                                if !isLanguageSwitchKey {
-                                    return Unmanaged.passUnretained(event)
-                                }
+                                if !isLanguageSwitchKey { return Unmanaged.passUnretained(event) }
                             }
                         }
 
@@ -179,33 +161,24 @@ class EventMonitor {
                         if type == .keyDown {
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
+                                
                                 let isEnterTrigger = snapshot.isAutoTypoCorrectionOnEnterEnabled && keyCode == 36
                                 let flags = event.flags
                                 let hasModifiers = flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate)
                                 let isPureSpace = (keyCode == 49) && !hasModifiers
 
                                 if isPureSpace || isEnterTrigger {
+                                    // 🌟 [수복 핵심 2] 타 파일에 구현된 순정 typingBuffer 프로퍼티를 안전하게 호출 소비합니다.
                                     let currentBuffer = EventMonitor.shared.typingBuffer
 
                                     if snapshot.isTextExpansionEnabled,
-                                       let matchedRule = TextExpander.shared.findMatch(
-                                            for: currentBuffer,
-                                            dict: snapshot.textExpansionDict,
-                                            maxLength: snapshot.maxTriggerLength
-                                       ) {
+                                       let matchedRule = TextExpander.shared.findMatch(for: currentBuffer, dict: snapshot.textExpansionDict, maxLength: snapshot.maxTriggerLength) {
 
                                         let renderedSnippet = TextExpander.shared.expand(template: matchedRule.replacement)
-                                        EventMonitor.shared.performTextExpansion(triggerLength: matchedRule.trigger.count, snippet: renderedSnippet, triggerKeyCode: UInt16(keyCode))
+                                        EventMonitor.shared.performTextExpansion(triggerLength: matchedRule.trigger.count, snippet: renderedSnippet, triggerKeyCode: UInt16(keyCode), triggerText: matchedRule.trigger)
 
-                                        let cursorLog = renderedSnippet.cursorOffsetFromStart != nil ? " (Cursor Restored)" : ""
-                                        var log = ActionLog(
-                                            timestamp: Date(),
-                                            targetApp: currentAppID,
-                                            appliedRule: "Text Expansion",
-                                            finalInputSource: "Trigger: [\(matchedRule.trigger)]\(cursorLog)",
-                                            result: .success,
-                                            failureReason: .none
-                                        )
+                                        let cursorLog = renderedSnippet.finalCaretOffset != nil ? " (Cursor Restored)" : ""
+                                        var log = ActionLog(timestamp: Date(), targetApp: currentAppID, appliedRule: "Text Expansion", finalInputSource: "Trigger: [\(matchedRule.trigger)]\(cursorLog)", result: .success, failureReason: .none)
                                         log.actionType = .textExpansion
                                         SettingsManager.shared.addLog(log)
 
@@ -217,11 +190,7 @@ class EventMonitor {
                                         if currentBuffer.count >= 2 {
                                             if EventMonitor.shared.isCurrentLanguageEnglish() {
                                                 if let convertedText = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
-                                                    EventMonitor.shared.performAutoCorrection(
-                                                        originalLength: currentBuffer.count,
-                                                        correctedText: convertedText, // 🌟 상단 바인딩 상수와 칼같이 일치 결속!
-                                                        triggerKeyCode: UInt16(keyCode)
-                                                    )
+                                                    EventMonitor.shared.performAutoCorrection(originalLength: currentBuffer.count, correctedText: convertedText, triggerKeyCode: UInt16(keyCode))
                                                     EventMonitor.shared.clearTypingBuffer()
                                                     return nil
                                                 }
@@ -230,7 +199,14 @@ class EventMonitor {
                                     }
                                     EventMonitor.shared.clearTypingBuffer()
                                 }
-                                else if keyCode == 36 || keyCode == 51 || (123...126).contains(keyCode) {
+                                // 백스페이스 타건 시 장부 동기화 롤백 메커니즘을
+                                // 본체 백킹 멤버 변수(_typingBuffer) 직접 제어로 안정하게 정산 수복
+                                else if keyCode == 51 {
+                                    if !EventMonitor.shared._typingBuffer.isEmpty {
+                                        EventMonitor.shared._typingBuffer.removeLast()
+                                    }
+                                }
+                                else if keyCode == 36 || (123...126).contains(keyCode) {
                                     EventMonitor.shared.clearTypingBuffer()
                                 }
                                 else {
@@ -262,7 +238,6 @@ class EventMonitor {
             let mainRL = CFRunLoopGetMain()
             CFRunLoopAddSource(mainRL, runLoopSource!, .commonModes)
             self.eventRunLoop = mainRL
-            
             CGEvent.tapEnable(tap: tap, enable: true)
             startHealthCheck()
         }
@@ -271,37 +246,18 @@ class EventMonitor {
     func startHealthCheck() {
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
-        
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self = self else { return }
-                
                 if let tap = self.eventTap {
-                    if !self.isEnabled {
+                    if CGEvent.tapIsEnabled(tap: tap) == false {
                         CGEvent.tapEnable(tap: tap, enable: true)
-                        dprint("🛡️ [Self-Healing] OS 타임아웃으로 인해 비활성화된 EventTap을 성공적으로 깨웠습니다.")
-                        let log = ActionLog(
-                            timestamp: Date(),
-                            targetApp: "LangSwitcher System",
-                            appliedRule: "Self-Healing Activation",
-                            finalInputSource: "EventTap Re-enabled",
-                            result: .success,
-                            failureReason: .none
-                        )
+                        let log = ActionLog(timestamp: Date(), targetApp: "LangSwitcher System", appliedRule: "Self-Healing Activation", finalInputSource: "EventTap Re-enabled", result: .success, failureReason: .none)
                         SettingsManager.shared.addLog(log)
                     }
                 } else {
-                    dprint("🚨 [Self-Healing] EventTap 커널 포트 손상 감지. 인프라를 전면 재구축합니다.")
-                    let log = ActionLog(
-                        timestamp: Date(),
-                        targetApp: "LangSwitcher System",
-                        appliedRule: "Self-Healing Infrastructure Rebuild",
-                        finalInputSource: "EventTap Port Recovered",
-                        result: .success,
-                        failureReason: .none
-                    )
+                    let log = ActionLog(timestamp: Date(), targetApp: "LangSwitcher System", appliedRule: "Self-Healing Infrastructure Rebuild", finalInputSource: "EventTap Port Recovered", result: .success, failureReason: .none)
                     SettingsManager.shared.addLog(log)
-                    
                     self.stop()
                     self.start()
                 }

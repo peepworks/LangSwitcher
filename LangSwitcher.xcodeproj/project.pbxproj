@@ -35,6 +35,8 @@
 		126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */; };
 		127329252FBFFEBE00D85255 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127329242FBFFEB900D85255 /* Logger.swift */; };
 		12744D572F89E66C0033C06A /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12744D562F89E66A0033C06A /* UpdateManager.swift */; };
+		127CDE962FE779BB009ED6FD /* ShortcutModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127CDE952FE779B9009ED6FD /* ShortcutModels.swift */; };
+		127CDE982FE77A71009ED6FD /* InputShortcutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127CDE972FE77A6C009ED6FD /* InputShortcutEngine.swift */; };
 		1283B3592FB2F3FC00E04E2B /* RulePriorityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */; };
 		128CF91E2FB439C600B9672C /* DecisionTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128CF91D2FB439C200B9672C /* DecisionTrace.swift */; };
 		128CF9202FB439F100B9672C /* DecisionTraceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128CF91F2FB439EC00B9672C /* DecisionTraceManager.swift */; };
@@ -112,6 +114,8 @@
 		126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeGlowManager.swift; sourceTree = "<group>"; };
 		127329242FBFFEB900D85255 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		12744D562F89E66A0033C06A /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
+		127CDE952FE779B9009ED6FD /* ShortcutModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutModels.swift; sourceTree = "<group>"; };
+		127CDE972FE77A6C009ED6FD /* InputShortcutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputShortcutEngine.swift; sourceTree = "<group>"; };
 		1283B3582FB2F3FB00E04E2B /* RulePriorityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RulePriorityView.swift; sourceTree = "<group>"; };
 		128CF91D2FB439C200B9672C /* DecisionTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionTrace.swift; sourceTree = "<group>"; };
 		128CF91F2FB439EC00B9672C /* DecisionTraceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionTraceManager.swift; sourceTree = "<group>"; };
@@ -238,6 +242,7 @@
 				126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */,
 				125FF4D12F657FDA005DAB0C /* InputSourceManager.swift */,
 				129930792F679EBC00878827 /* SettingsManager.swift */,
+				127CDE952FE779B9009ED6FD /* ShortcutModels.swift */,
 				129D74D32FA4329100227AD9 /* StatsManager.swift */,
 				12A6DB3A2FB191030000A927 /* TextExpander.swift */,
 				12242E2C2F933CA300690095 /* TypoConverter.swift */,
@@ -253,6 +258,7 @@
 				1257F0BE2F8742E500B8AFEE /* AppMonitor.swift */,
 				126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */,
 				125FF4D32F658001005DAB0C /* EventMonitor.swift */,
+				127CDE972FE77A6C009ED6FD /* InputShortcutEngine.swift */,
 				122AA3F32F9DA6F5006297F4 /* SensoryFeedbackManager.swift */,
 				121445442FB1868900BAD265 /* ShortcutRecorder.swift */,
 				12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */,
@@ -548,6 +554,7 @@
 				125FF4D62F658024005DAB0C /* SettingsView.swift in Sources */,
 				1241A8C22FAEECA10078CD5F /* iCloud.swift in Sources */,
 				128F407D2FB93CA9009B58AF /* SnippetModels.swift in Sources */,
+				127CDE982FE77A71009ED6FD /* InputShortcutEngine.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
 				12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */,
 				1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */,
@@ -555,6 +562,7 @@
 				12C6E7F02FA579AA004C7A0A /* BrowserTabManager.swift in Sources */,
 				1241A8C42FAEED310078CD5F /* Backup.swift in Sources */,
 				1257F0BF2F8742E900B8AFEE /* AppMonitor.swift in Sources */,
+				127CDE962FE779BB009ED6FD /* ShortcutModels.swift in Sources */,
 				125FF4D42F658001005DAB0C /* EventMonitor.swift in Sources */,
 				128CF9242FB43AE800B9672C /* DebuggerSettingsView.swift in Sources */,
 				125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */,

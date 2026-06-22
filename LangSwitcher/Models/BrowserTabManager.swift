@@ -53,74 +53,81 @@ protocol BrowserAdapter: Sendable {
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError>
 }
 
-// MARK: - JXA 고성능 비동기 실행 커널
+// MARK: - JXA 고성능 백그라운드 독립 격리 액터 (JXA Isolation Wall)
 
-func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async throws -> String? {
-    try await withThrowingTaskGroup(of: String?.self) { group in
-        group.addTask {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-l", "JavaScript", "-e", script]
+actor JXAExecutor {
+    static let shared = JXAExecutor()
+    private init() {}
 
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardInput = Pipe() // 파이프 깨짐 방지용 더미 입력 결속
-            process.standardOutput = stdout
-            process.standardError = stderr
+    // 🌟 [수복 핵심] 인스턴스 의존성과 'self' 캡처 오염을 원천 차단하기 위해 무결한 타입 상수로 격상 정산
+    private static let taskCancelledMessage = "Task was cancelled before launch"
 
-            return try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { continuation in
-                    process.terminationHandler = { @Sendable proc in
-                        defer {
-                            // 🌟 [현대적 I/O 마이그레이션] 구형 closeFile()을 소각하고 최신 표준 close()로 정산
-                            try? stdout.fileHandleForReading.close()
-                            try? stderr.fileHandleForReading.close()
-                            proc.terminationHandler = nil
+    func executeJXAWithTimeout(script: String, timeoutSeconds: Double = 1.5) async throws -> String? {
+        try await withThrowingTaskGroup(of: String?.self) { group in
+            group.addTask {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-l", "JavaScript", "-e", script]
+
+                let stdout = Pipe()
+                let stderr = Pipe()
+                process.standardInput = Pipe()
+                process.standardOutput = stdout
+                process.standardError = stderr
+
+                return try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { continuation in
+                        process.terminationHandler = { proc in
+                            defer {
+                                try? stdout.fileHandleForReading.close()
+                                try? stderr.fileHandleForReading.close()
+                                proc.terminationHandler = nil
+                            }
+
+                            if proc.terminationStatus == 0 {
+                                let data = (try? stdout.fileHandleForReading.readToEnd()) ?? Data()
+                                let output = String(data: data, encoding: .utf8)?
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                continuation.resume(returning: output)
+                            } else {
+                                let data = (try? stderr.fileHandleForReading.readToEnd()) ?? Data()
+                                let errText = String(data: data, encoding: .utf8)?
+                                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Process terminated or failed"
+                                continuation.resume(throwing: JXAError.scriptFailed(errText))
+                            }
                         }
 
-                        if proc.terminationStatus == 0 {
-                            // 🌟 [현대적 I/O 마이그레이션] readDataToEndOfFile()을 소각하고 넌블로킹 readToEnd()로 전환
-                            let data = (try? stdout.fileHandleForReading.readToEnd()) ?? Data()
-                            let output = String(data: data, encoding: .utf8)?
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                            continuation.resume(returning: output)
-                        } else {
-                            let errData = (try? stderr.fileHandleForReading.readToEnd()) ?? Data()
-                            let errText = String(data: errData, encoding: .utf8)?
-                                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Process terminated or failed"
-                            continuation.resume(throwing: JXAError.scriptFailed(errText))
+                        do {
+                            if Task.isCancelled {
+                                // 🌟 [수복 완료] Self 스코프로 캡처 해제하여 스레드 안전성 확보
+                                continuation.resume(throwing: JXAError.scriptFailed(Self.taskCancelledMessage))
+                                return
+                            }
+                            try process.run()
+                        } catch {
+                            continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
                         }
                     }
-
-                    do {
-                        if Task.isCancelled {
-                            continuation.resume(throwing: JXAError.scriptFailed("Task was cancelled before launch"))
-                            return
-                        }
-                        try process.run()
-                    } catch {
-                        continuation.resume(throwing: JXAError.scriptFailed(error.localizedDescription))
+                } onCancel: {
+                    if process.isRunning {
+                        process.terminate()
                     }
-                }
-            } onCancel: {
-                if process.isRunning {
-                    process.terminate()
                 }
             }
-        }
 
-        group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-            throw JXAError.timeout
-        }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                throw JXAError.timeout
+            }
 
-        do {
-            let result = try await group.next() ?? nil
-            group.cancelAll()
-            return result
-        } catch {
-            group.cancelAll()
-            throw error
+            do {
+                let result = try await group.next() ?? nil
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                throw error
+            }
         }
     }
 }
@@ -133,7 +140,7 @@ class ChromiumAdapter: BrowserAdapter {
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError> {
         let script = "function run(argv) { try { var browser = Application(\"\(appName)\"); if (browser.windows.length === 0) return \"ERROR:NO_WINDOW\"; var tab = browser.windows[0].activeTab(); return JSON.stringify({ \"id\": tab.id().toString(), \"url\": tab.url() }); } catch(e) { if (e.message.includes(\"Not authorized\")) return \"ERROR:PERMISSION\"; return \"ERROR:\" + e.message; } }"
         do {
-            guard let jsonString = try await executeJXAWithTimeout(script: script) else { return .failure(.executionFailed("No result from JXA")) }
+            guard let jsonString = try await JXAExecutor.shared.executeJXAWithTimeout(script: script) else { return .failure(.executionFailed("No result from JXA")) }
             if jsonString.hasPrefix("ERROR:") {
                 if jsonString.contains("NO_WINDOW") { return .failure(.noWindow) }
                 if jsonString.contains("PERMISSION") { return .failure(.permissionDenied) }
@@ -155,7 +162,7 @@ class SafariAdapter: BrowserAdapter {
     func fetchActiveTabInfo(appName: String) async -> Result<TabContext, BrowserFetchError> {
         let script = "function run(argv) { try { var browser = Application(\"Safari\"); if (browser.windows.length === 0) return \"ERROR:NO_WINDOW\"; var tab = browser.windows[0].currentTab(); return JSON.stringify({ \"id\": null, \"url\": tab.url() }); } catch(e) { if (e.message.includes(\"Not authorized\")) return \"ERROR:PERMISSION\"; return \"ERROR:\" + e.message; } }"
         do {
-            guard let jsonString = try await executeJXAWithTimeout(script: script) else { return .failure(.executionFailed("No result from JXA")) }
+            guard let jsonString = try await JXAExecutor.shared.executeJXAWithTimeout(script: script) else { return .failure(.executionFailed("No result from JXA")) }
             if jsonString.hasPrefix("ERROR:") {
                 if jsonString.contains("NO_WINDOW") { return .failure(.noWindow) }
                 if jsonString.contains("PERMISSION") { return .failure(.permissionDenied) }
@@ -315,18 +322,14 @@ class BrowserTabManager {
         let isTabSwitched = (self.currentKey != newKey)
         let currentOSSource = InputSourceManager.shared.currentInputSourceID()
 
-        // ====================================================================
-        // 🌟 [수복 완료] 새 탭 판단 분기선 최상단 격상 완료 (Early Return)
-        // 도메인 모드의 캐시 오염 공격을 완벽하게 원천 차단합니다.
-        // ====================================================================
         if self.isNewTab(context: context) {
             let defaultLang = SettingsManager.shared.snapshot.newTabDefaultLanguage
             if defaultLang != "None" && !defaultLang.isEmpty {
                 let finalLang = existingNode?.language ?? defaultLang
-                
+
                 self.tabCache.setTab(tabID: newKey, language: finalLang, lastHost: context.host)
                 self.currentKey = newKey
-                
+
                 if isTabSwitched && currentOSSource != finalLang {
                     InputSourceManager.shared.switchLanguage(to: finalLang)
                     let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .newTabDefault, appName: bundleID)
@@ -336,7 +339,6 @@ class BrowserTabManager {
             }
         }
 
-        // 1. 도메인 규칙 검사 (이제 일반 사이트 문맥만 청정하게 관통합니다)
         if SettingsManager.shared.snapshot.isBrowserDomainModeEnabled, let urlString = context.url, let host = context.host {
             let lastHost = existingNode?.lastHost
 
@@ -351,7 +353,7 @@ class BrowserTabManager {
                         InputSourceManager.shared.switchLanguage(to: matchedRule.targetInputSourceID)
                         let trace = TraceFactory.create(event: .languageSwitch, result: .switched, reason: .domainRule(domain: host), appName: bundleID, domain: host)
                         DecisionTraceManager.shared.record(trace)
-                        
+
                         self.currentKey = newKey
                         self.tabCache.setTab(tabID: newKey, language: matchedRule.targetInputSourceID, lastHost: host)
                         return
@@ -366,7 +368,6 @@ class BrowserTabManager {
 
         self.currentKey = newKey
 
-        // 3. 탭 캐시 메모리 복구 전개
         if SettingsManager.shared.snapshot.isBrowserTabMemoryEnabled {
             self.restoreContext(for: newKey, bundleID: bundleID)
         }
@@ -407,7 +408,7 @@ class BrowserTabManager {
     private func isNewTab(context: TabContext) -> Bool {
         guard let url = context.url?.lowercased() else { return true }
         if url.isEmpty || url == "about:blank" { return true }
-        
+
         let newTabPatterns = [
             "chrome://newtab", "chrome://new-tab-page",
             "edge://newtab", "brave://newtab",
