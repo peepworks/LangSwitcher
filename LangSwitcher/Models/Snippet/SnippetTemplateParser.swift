@@ -22,9 +22,8 @@ import Foundation
 
 struct SnippetTemplateParser {
     
-    // 🌟 [수복 포인트] 기존 변수와 신형 달러 문법 플레이스홀더를 동시 포획하는 통합 정규식 패턴 리터럴 상주
-    // 1번 캡처: {{...}} 변수군 | 2번 캡처: ${...} 플레이스홀더군
-    private static let unifiedRegex = #/(?:\{\{(date|time|clipboard)(?::([^}]+))?\}\})|(?:\$\{(selection|selectedText|0|([1-9]\d*)(?::([^}]+))?)\})/#
+    // 🌟 [수복 정산] {{cursor}} 문법을 안전하게 포획하도록 1번 캡처 그룹에 cursor 보초를 공식 매립했습니다.
+    private static let unifiedRegex = #/(?:\{\{(date|time|clipboard|cursor)(?::([^}]+))?\}\})|(?:\$\{(selection|selectedText|0|([1-9]\d*)(?::([^}]+))?)\})/#
 
     static func parse(template: String) -> [SnippetToken] {
         var tokens: [SnippetToken] = []
@@ -35,7 +34,6 @@ struct SnippetTemplateParser {
         for match in matches {
             let matchRange = match.range
             
-            // 태그 진입 전 정적 일반 텍스트 분할 기입
             if matchRange.lowerBound > lastIndex {
                 let staticText = String(template[lastIndex..<matchRange.lowerBound])
                 tokens.append(.text(staticText))
@@ -43,7 +41,6 @@ struct SnippetTemplateParser {
             
             let output = match.output
             
-            // 분기 1: 레거시 {{...}} 중괄호 매크로 캡처 엔진 검문
             if let legacyKeyword = output.1 {
                 let keywordStr = String(legacyKeyword)
                 let customFormat = output.2.map { String($0) }
@@ -55,11 +52,13 @@ struct SnippetTemplateParser {
                     tokens.append(.time(format: customFormat ?? "HH:mm"))
                 case "clipboard":
                     tokens.append(.clipboard)
+                case "cursor":
+                    // 🌟 {{cursor}} 기호가 감지되면 신형 ${0}과 동일하게 커서 최종 안착 장부로 완벽 마그네틱 결속합니다!
+                    tokens.append(.finalCaret)
                 default:
                     tokens.append(.text(String(match.output.0)))
                 }
             }
-            // 분기 2: v0.9.5 신형 ${...} 달러 템플릿 오토마타 검문
             else if let advancedKeyword = output.3 {
                 let keywordStr = String(advancedKeyword)
                 
@@ -67,7 +66,7 @@ struct SnippetTemplateParser {
                     tokens.append(.selection)
                 } else if keywordStr == "0" {
                     tokens.append(.finalCaret)
-                } else if let tabIndex = output.4 { // ${1:default} 또는 ${2} 파싱 라인
+                } else if let tabIndex = output.4 {
                     let idx = Int(tabIndex) ?? 1
                     let defaultValue = output.5.map { String($0) }
                     tokens.append(.tabStop(index: idx, defaultValue: defaultValue))
@@ -77,7 +76,6 @@ struct SnippetTemplateParser {
             lastIndex = matchRange.upperBound
         }
         
-        // 후행 잔여문 정산
         if lastIndex < template.endIndex {
             tokens.append(.text(String(template[lastIndex..<template.endIndex])))
         }

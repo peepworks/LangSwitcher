@@ -238,7 +238,7 @@ struct TextExpansionSettingsView: View {
     }
 }
 
-// 🌟 TextExpansionEditView 수정
+// 🌟 스마트 요소 메뉴 기능이 완벽하게 이식된 편집 창 UI 통본
 struct TextExpansionEditView: View {
     @Environment(\.dismiss) var dismiss
     @State var rule: TextExpansionRule
@@ -258,9 +258,83 @@ struct TextExpansionEditView: View {
                     .font(.system(.body, design: .monospaced))
                     .focused($isTriggerFocused)
 
-                Text(String(localized: "Replacement Text")).font(.caption).foregroundColor(.secondary)
+                // ------------------------------------------------------
+                // 🌟 Insert Element Toolbar (Unified Double-Brace Menu)
+                // ------------------------------------------------------
+                HStack {
+                    Text(String(localized: "Replacement Text"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Menu {
+                        Menu(String(localized: "Date")) {
+                            Button(action: { insertSyntax("{{date:yyyy-MM-dd}}") }) {
+                                Label(String(localized: "Full Date (yyyy-MM-dd)"), systemImage: "calendar")
+                            }
+                            Button(action: { insertSyntax("{{date:yyyy}}") }) {
+                                Label(String(localized: "Year (yyyy)"), systemImage: "calendar.badge.clock")
+                            }
+                            Button(action: { insertSyntax("{{date:MM}}") }) {
+                                Label(String(localized: "Month (MM)"), systemImage: "calendar.badge.plus")
+                            }
+                            Button(action: { insertSyntax("{{date:dd}}") }) {
+                                Label(String(localized: "Day (dd)"), systemImage: "calendar.badge.checkmark")
+                            }
+                        }
+                        
+                        Menu(String(localized: "Time")) {
+                            Button(action: { insertSyntax("{{time:HH:mm}}") }) {
+                                Label(String(localized: "Hour:Minute (HH:mm)"), systemImage: "clock")
+                            }
+                            Button(action: { insertSyntax("{{time:HH:mm:ss}}") }) {
+                                Label(String(localized: "Hour:Minute:Second (HH:mm:ss)"), systemImage: "clock.fill")
+                            }
+                        }
+                        
+                        Button(action: { insertSyntax("{{clipboard}}") }) {
+                            Label(String(localized: "Clipboard Contents"), systemImage: "doc.on.clipboard")
+                        }
+                        
+                        Button(action: { insertSyntax("${selectedText}") }) {
+                            Label(String(localized: "Selected Text"), systemImage: "doc.text.magnifyingglass")
+                        }
+                        
+                        Divider()
+                        
+                        Menu(String(localized: "Placeholders")) {
+                            Button(action: { insertSyntax("${1:default}") }) {
+                                Label(String(localized: "Placeholder 1 (with default)"), systemImage: "character.textbox")
+                            }
+                            Button(action: { insertSyntax("${2}") }) {
+                                Label(String(localized: "Placeholder 2"), systemImage: "2.circle")
+                            }
+                            Button(action: { insertSyntax("${3}") }) {
+                                Label(String(localized: "Placeholder 3"), systemImage: "3.circle")
+                            }
+                        }
+                        
+                        // 🌟 [최종 정산] 사용자가 직관적으로 이해할 수 있도록 {{cursor}} 기호를 투하하도록 바꿨습니다!
+                        Button(action: { insertSyntax("{{cursor}}") }) {
+                            Label(String(localized: "Cursor Position"), systemImage: "character.cursor.line")
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle")
+                            Text(String(localized: "Insert Element"))
+                        }
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 130)
+                }
+                .padding(.top, 5)
+
+                // 결과문 텍스트 편집기
                 TextEditor(text: $rule.replacement)
-                    .font(.body)
+                    .font(.system(.body, design: .monospaced))
                     .frame(height: 120)
                     .padding(4)
                     .background(Color(NSColor.controlBackgroundColor))
@@ -300,6 +374,18 @@ struct TextExpansionEditView: View {
         .padding(25)
         .frame(width: 450)
         .onAppear { isTriggerFocused = true }
+    }
+
+    private func insertSyntax(_ syntax: String) {
+        if rule.replacement.isEmpty {
+            rule.replacement = syntax
+        } else {
+            if rule.replacement.hasSuffix(" ") || rule.replacement.hasSuffix("\n") {
+                rule.replacement += syntax
+            } else {
+                rule.replacement += " " + syntax
+            }
+        }
     }
 }
 enum EditAction {
