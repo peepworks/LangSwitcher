@@ -61,10 +61,19 @@ struct SnippetVariableRenderer {
                 
                 let targetRange = NSRange(location: startOffset, length: endOffset - startOffset)
                 tabStops.append(SnippetTabStop(rangeId: UUID(), index: index, range: targetRange, defaultValue: defaultValue))
+                
+            // 🌟 [신설 컴포넌트 프리뷰 가동선] 렌더링 안정성 확보 및 런타임 롤백 대비
+            case .input(let name, let defaultValue):
+                buffer += defaultValue ?? "[\(name)]"
+            case .textarea(let name, let defaultValue):
+                buffer += defaultValue ?? "[\(name)]"
+            case .select(let name, let options):
+                buffer += options.first ?? "[\(name)]"
+            case .optionalBlock(_, let content):
+                buffer += content
             }
         }
         
-        // 🌟 [Fix 4] 파싱 순서와 무관하게 index 오름차순으로 완벽 정렬합니다.
         tabStops.sort { $0.index < $1.index }
         
         return RenderedSnippet(text: buffer, tabStops: tabStops, finalCaretOffset: finalCaret)

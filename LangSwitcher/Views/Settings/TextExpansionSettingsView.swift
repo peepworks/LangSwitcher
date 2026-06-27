@@ -239,6 +239,7 @@ struct TextExpansionSettingsView: View {
 }
 
 // 🌟 스마트 요소 메뉴 기능이 완벽하게 이식된 편집 창 UI 통본
+// 🌟 The Ultimate Context-Aware & Grouped "Insert Element" Editor
 struct TextExpansionEditView: View {
     @Environment(\.dismiss) var dismiss
     @State var rule: TextExpansionRule
@@ -259,7 +260,7 @@ struct TextExpansionEditView: View {
                     .focused($isTriggerFocused)
 
                 // ------------------------------------------------------
-                // 🌟 Insert Element Toolbar (Unified Double-Brace Menu)
+                // 🌟 [UI 대개조] 그룹 분화형 명품 Insert Element 카탈로그
                 // ------------------------------------------------------
                 HStack {
                     Text(String(localized: "Replacement Text"))
@@ -269,55 +270,65 @@ struct TextExpansionEditView: View {
                     Spacer()
                     
                     Menu {
-                        Menu(String(localized: "Date")) {
-                            Button(action: { insertSyntax("{{date:yyyy-MM-dd}}") }) {
-                                Label(String(localized: "Full Date (yyyy-MM-dd)"), systemImage: "calendar")
+                        // 📦 그룹 1: 동적 값 (Dynamic Values)
+                        Menu(String(localized: "Dynamic Values")) {
+                            Menu(String(localized: "Date")) {
+                                Button(action: { insertSyntax("{{date:yyyy-MM-dd}}") }) {
+                                    Label(String(localized: "Full Date (yyyy-MM-dd)"), systemImage: "calendar")
+                                }
+                                Button(action: { insertSyntax("{{date:yyyy}}") }) {
+                                    Label(String(localized: "Year (yyyy)"), systemImage: "calendar.badge.clock")
+                                }
+                                Button(action: { insertSyntax("{{date:MM}}") }) {
+                                    Label(String(localized: "Month (MM)"), systemImage: "calendar.badge.plus")
+                                }
+                                Button(action: { insertSyntax("{{date:dd}}") }) {
+                                    Label(String(localized: "Day (dd)"), systemImage: "calendar.badge.checkmark")
+                                }
                             }
-                            Button(action: { insertSyntax("{{date:yyyy}}") }) {
-                                Label(String(localized: "Year (yyyy)"), systemImage: "calendar.badge.clock")
+                            
+                            Menu(String(localized: "Time")) {
+                                Button(action: { insertSyntax("{{time:HH:mm}}") }) {
+                                    Label(String(localized: "Hour:Minute (HH:mm)"), systemImage: "clock")
+                                }
+                                Button(action: { insertSyntax("{{time:HH:mm:ss}}") }) {
+                                    Label(String(localized: "Hour:Minute:Second (HH:mm:ss)"), systemImage: "clock.fill")
+                                }
                             }
-                            Button(action: { insertSyntax("{{date:MM}}") }) {
-                                Label(String(localized: "Month (MM)"), systemImage: "calendar.badge.plus")
+                            
+                            Button(action: { insertSyntax("{{clipboard}}") }) {
+                                Label(String(localized: "Clipboard Contents"), systemImage: "doc.on.clipboard")
                             }
-                            Button(action: { insertSyntax("{{date:dd}}") }) {
-                                Label(String(localized: "Day (dd)"), systemImage: "calendar.badge.checkmark")
+                            
+                            Button(action: { insertSyntax("${selectedText}") }) {
+                                Label(String(localized: "Selected Text"), systemImage: "doc.text.magnifyingglass")
                             }
                         }
                         
-                        Menu(String(localized: "Time")) {
-                            Button(action: { insertSyntax("{{time:HH:mm}}") }) {
-                                Label(String(localized: "Hour:Minute (HH:mm)"), systemImage: "clock")
+                        // 📦 그룹 2: 사용자 입력 (User Inputs)
+                        Menu(String(localized: "User Inputs")) {
+                            Button(action: { insertSyntax("{{input:LabelName|default}}") }) {
+                                Label(String(localized: "Single-line Input"), systemImage: "rectangle.and.pencil.and.ellipsis")
                             }
-                            Button(action: { insertSyntax("{{time:HH:mm:ss}}") }) {
-                                Label(String(localized: "Hour:Minute:Second (HH:mm:ss)"), systemImage: "clock.fill")
+                            Button(action: { insertSyntax("{{textarea:LabelName|default}}") }) {
+                                Label(String(localized: "Multi-line Input"), systemImage: "text.justify.left")
+                            }
+                            Button(action: { insertSyntax("{{select:MenuName[Option1,Option2]}}") }) {
+                                Label(String(localized: "Dropdown Selection"), systemImage: "list.bullet.rectangle")
                             }
                         }
                         
-                        Button(action: { insertSyntax("{{clipboard}}") }) {
-                            Label(String(localized: "Clipboard Contents"), systemImage: "doc.on.clipboard")
-                        }
-                        
-                        Button(action: { insertSyntax("${selectedText}") }) {
-                            Label(String(localized: "Selected Text"), systemImage: "doc.text.magnifyingglass")
-                        }
-                        
-                        Divider()
-                        
-                        Menu(String(localized: "Placeholders")) {
+                        // 📦 그룹 3: 템플릿 제어 (Template Control)
+                        Menu(String(localized: "Template Control")) {
+                            Button(action: { insertSyntax("{{optional:BlockName[Content Text]}}") }) {
+                                Label(String(localized: "Optional Block"), systemImage: "uiwindow.split.2x1")
+                            }
+                            Button(action: { insertSyntax("{{cursor}}") }) {
+                                Label(String(localized: "Cursor Position"), systemImage: "character.cursor.line")
+                            }
                             Button(action: { insertSyntax("${1:default}") }) {
-                                Label(String(localized: "Placeholder 1 (with default)"), systemImage: "character.textbox")
+                                Label(String(localized: "Jump Placeholder"), systemImage: "character.textbox")
                             }
-                            Button(action: { insertSyntax("${2}") }) {
-                                Label(String(localized: "Placeholder 2"), systemImage: "2.circle")
-                            }
-                            Button(action: { insertSyntax("${3}") }) {
-                                Label(String(localized: "Placeholder 3"), systemImage: "3.circle")
-                            }
-                        }
-                        
-                        // 🌟 [최종 정산] 사용자가 직관적으로 이해할 수 있도록 {{cursor}} 기호를 투하하도록 바꿨습니다!
-                        Button(action: { insertSyntax("{{cursor}}") }) {
-                            Label(String(localized: "Cursor Position"), systemImage: "character.cursor.line")
                         }
                     } label: {
                         HStack(spacing: 4) {

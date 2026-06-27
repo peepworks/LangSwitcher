@@ -22,8 +22,8 @@ import Foundation
 
 struct SnippetTemplateParser {
     
-    // 🌟 [수복 정산] {{cursor}} 문법을 안전하게 포획하도록 1번 캡처 그룹에 cursor 보초를 공식 매립했습니다.
-    private static let unifiedRegex = #/(?:\{\{(date|time|clipboard|cursor)(?::([^}]+))?\}\})|(?:\$\{(selection|selectedText|0|([1-9]\d*)(?::([^}]+))?)\})/#
+    // 🌟 [통합 정규식 확장] 새로운 사용자 입력형 및 제어형 기호 컴포넌트군을 단 한 줄로 완벽 포획합니다.
+    private static let unifiedRegex = #/(?:\{\{(date|time|clipboard|cursor|input|textarea|select|optional)(?::([^\[\}]+))?(?:\[([^\]]+)\])?\}\})|(?:\$\{(selection|selectedText|0|([1-9]\d*)(?::([^\}]+))?)\})/#
 
     static func parse(template: String) -> [SnippetToken] {
         var tokens: [SnippetToken] = []
@@ -43,32 +43,46 @@ struct SnippetTemplateParser {
             
             if let legacyKeyword = output.1 {
                 let keywordStr = String(legacyKeyword)
-                let customFormat = output.2.map { String($0) }
+                let mainParam = output.2.map { String($0) } ?? ""
+                let optionParam = output.3.map { String($0) } ?? ""
                 
                 switch keywordStr {
                 case "date":
-                    tokens.append(.date(format: customFormat ?? "yyyy-MM-dd"))
+                    tokens.append(.date(format: mainParam.isEmpty ? "yyyy-MM-dd" : mainParam))
                 case "time":
-                    tokens.append(.time(format: customFormat ?? "HH:mm"))
+                    tokens.append(.time(format: mainParam.isEmpty ? "HH:mm" : mainParam))
                 case "clipboard":
                     tokens.append(.clipboard)
                 case "cursor":
-                    // 🌟 {{cursor}} 기호가 감지되면 신형 ${0}과 동일하게 커서 최종 안착 장부로 완벽 마그네틱 결속합니다!
                     tokens.append(.finalCaret)
+                    
+                // 🌟 [신설] 동적 기호 정산 처리 체인 링크
+                case "input":
+                    let parts = mainParam.components(separatedBy: "|")
+                    tokens.append(.input(name: parts[0], defaultValue: parts.count > 1 ? parts[1] : nil))
+                case "textarea":
+                    let parts = mainParam.components(separatedBy: "|")
+                    tokens.append(.textarea(name: parts[0], defaultValue: parts.count > 1 ? parts[1] : nil))
+                case "select":
+                    let options = optionParam.components(separatedBy: ",")
+                    tokens.append(.select(name: mainParam, options: options))
+                case "optional":
+                    tokens.append(.optionalBlock(name: mainParam, content: optionParam))
+                    
                 default:
                     tokens.append(.text(String(match.output.0)))
                 }
             }
-            else if let advancedKeyword = output.3 {
+            else if let advancedKeyword = output.4 {
                 let keywordStr = String(advancedKeyword)
                 
                 if keywordStr == "selection" || keywordStr == "selectedText" {
                     tokens.append(.selection)
                 } else if keywordStr == "0" {
                     tokens.append(.finalCaret)
-                } else if let tabIndex = output.4 {
+                } else if let tabIndex = output.5 {
                     let idx = Int(tabIndex) ?? 1
-                    let defaultValue = output.5.map { String($0) }
+                    let defaultValue = output.6.map { String($0) }
                     tokens.append(.tabStop(index: idx, defaultValue: defaultValue))
                 }
             }
