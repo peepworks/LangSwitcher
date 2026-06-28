@@ -31,8 +31,7 @@ class EventMonitor {
     var healthCheckTimer: Timer?
     var eventRunLoop: CFRunLoop?
 
-    // 🌟 [수복 핵심 1] 타 파일과의 중복 선언(Invalid redeclaration) 충돌을 완벽히 소각하기 위해,
-    // 오직 순정 백킹 필드 변수인 '_typingBuffer' 단 하나만 남겨두고 모든 유틸리티 함수들을 적출했습니다.
+    // 백킹 스토리지는 오직 단 하나만 유지
     var _typingBuffer: String = ""
     
     var _lastKeyTime: Date = Date()
@@ -55,7 +54,6 @@ class EventMonitor {
 
     var localSnapshot: SettingsSnapshot?
     let snapshotLock = NSLock()
-
     var pendingInsertTasks: [DispatchWorkItem] = []
 
     private init() {}
@@ -157,7 +155,7 @@ class EventMonitor {
                             }
                         }
 
-                        // 텍스트 대치 및 스마트 자동 오타 교정 코어 엔진 구역
+                        // 🌟 텍스트 대치 및 스마트 자동 오타 교정 코어 엔진 구역 (수복 완료)
                         if type == .keyDown {
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
@@ -168,7 +166,6 @@ class EventMonitor {
                                 let isPureSpace = (keyCode == 49) && !hasModifiers
 
                                 if isPureSpace || isEnterTrigger {
-                                    // 🌟 [수복 핵심 2] 타 파일에 구현된 순정 typingBuffer 프로퍼티를 안전하게 호출 소비합니다.
                                     let currentBuffer = EventMonitor.shared.typingBuffer
 
                                     if snapshot.isTextExpansionEnabled,
@@ -197,16 +194,21 @@ class EventMonitor {
                                             }
                                         }
                                     }
-                                    EventMonitor.shared.clearTypingBuffer()
+                                    
+                                    // 🌟 [핵심 수복선] 매칭에 실패한 순정 스페이스는 버퍼를 폭파하지 않고 공백 문자로 축적합니다!
+                                    // 이를 통해 사용자가 공백을 지우고 이어서 타건할 때 컨텍스트의 연속성이 100% 보장됩니다.
+                                    if isPureSpace {
+                                        EventMonitor.shared.appendToTypingBuffer(" ")
+                                    } else {
+                                        EventMonitor.shared.clearTypingBuffer() // 엔터키는 줄바꿈이므로 안전하게 초기화
+                                    }
                                 }
-                                // 백스페이스 타건 시 장부 동기화 롤백 메커니즘을
-                                // 본체 백킹 멤버 변수(_typingBuffer) 직접 제어로 안정하게 정산 수복
-                                else if keyCode == 51 {
+                                else if keyCode == 51 { // 백스페이스
                                     if !EventMonitor.shared._typingBuffer.isEmpty {
                                         EventMonitor.shared._typingBuffer.removeLast()
                                     }
                                 }
-                                else if keyCode == 36 || (123...126).contains(keyCode) {
+                                else if (123...126).contains(keyCode) { // 화살표 키 이동 시 컨텍스트가 깨지므로 초기화
                                     EventMonitor.shared.clearTypingBuffer()
                                 }
                                 else {
@@ -247,7 +249,7 @@ class EventMonitor {
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
+            let _ = MainActor.assumeIsolated {
                 guard let self = self else { return }
                 if let tap = self.eventTap {
                     if CGEvent.tapIsEnabled(tap: tap) == false {

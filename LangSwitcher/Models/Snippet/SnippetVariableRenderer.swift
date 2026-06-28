@@ -62,13 +62,26 @@ struct SnippetVariableRenderer {
                 let targetRange = NSRange(location: startOffset, length: endOffset - startOffset)
                 tabStops.append(SnippetTabStop(rangeId: UUID(), index: index, range: targetRange, defaultValue: defaultValue))
                 
-            // 🌟 [신설 컴포넌트 프리뷰 가동선] 렌더링 안정성 확보 및 런타임 롤백 대비
             case .input(let name, let defaultValue):
                 buffer += defaultValue ?? "[\(name)]"
+                
             case .textarea(let name, let defaultValue):
                 buffer += defaultValue ?? "[\(name)]"
-            case .select(let name, let options):
-                buffer += options.first ?? "[\(name)]"
+                
+            case .select(let name, let options, let defaultValue):
+                buffer += defaultValue ?? (options.first ?? "[\(name)]")
+                
+            // 🌟 [안전 패딩 매립] 신설 서형 컴포넌트들의 런타임 무결성 가동선 확보
+            case .checkbox(_, let content, let isCheckedByDefault):
+                buffer += isCheckedByDefault ? content : ""
+                
+            case .radio(let name, let options, let defaultValue):
+                buffer += defaultValue ?? (options.first ?? "[\(name)]")
+                
+            case .datePicker(_, let format):
+                let formatter = getCachedFormatter(for: format)
+                buffer += formatter.string(from: currentDate)
+                
             case .optionalBlock(_, let content):
                 buffer += content
             }

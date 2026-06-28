@@ -22,8 +22,9 @@ import Foundation
 
 struct SnippetTemplateParser {
     
-    // 🌟 [통합 정규식 확장] 새로운 사용자 입력형 및 제어형 기호 컴포넌트군을 단 한 줄로 완벽 포획합니다.
-    private static let unifiedRegex = #/(?:\{\{(date|time|clipboard|cursor|input|textarea|select|optional)(?::([^\[\}]+))?(?:\[([^\]]+)\])?\}\})|(?:\$\{(selection|selectedText|0|([1-9]\d*)(?::([^\}]+))?)\})/#
+    // 🌟 [정규식 최종 진화] 이름, 대괄호 옵션란, 파이프 기본값의 경계를 완벽하게 격리 가로채는 마스터 패턴
+    // 2번 캡처: 필드명 / 3번 캡처: [옵션배열] / 4번 캡처: |기본값 또는 포맷문자열
+    private static let unifiedRegex = #/(?:\{\{(date|time|clipboard|cursor|input|textarea|select|optional|checkbox|radio|datepicker)(?::([^\[\}|]+))?(?:\[([^\]]+)\])?(?:\|([^}]+))?\}\})|(?:\$\{(selection|selectedText|0|([1-9]\d*)(?::([^\}]+))?)\})/#
 
     static func parse(template: String) -> [SnippetToken] {
         var tokens: [SnippetToken] = []
@@ -43,46 +44,57 @@ struct SnippetTemplateParser {
             
             if let legacyKeyword = output.1 {
                 let keywordStr = String(legacyKeyword)
-                let mainParam = output.2.map { String($0) } ?? ""
-                let optionParam = output.3.map { String($0) } ?? ""
+                
+                // 🌟 정규식이 미리 컴포넌트별로 정밀 가공해 준 순정 파라미터 획득
+                let nameParam = output.2.map { String($0) } ?? ""
+                let arrayParam = output.3.map { String($0) } ?? ""
+                let defaultParam = output.4.map { String($0) } ?? ""
                 
                 switch keywordStr {
                 case "date":
-                    tokens.append(.date(format: mainParam.isEmpty ? "yyyy-MM-dd" : mainParam))
+                    tokens.append(.date(format: nameParam.isEmpty ? "yyyy-MM-dd" : nameParam))
                 case "time":
-                    tokens.append(.time(format: mainParam.isEmpty ? "HH:mm" : mainParam))
+                    tokens.append(.time(format: nameParam.isEmpty ? "HH:mm" : nameParam))
                 case "clipboard":
                     tokens.append(.clipboard)
                 case "cursor":
                     tokens.append(.finalCaret)
                     
-                // 🌟 [신설] 동적 기호 정산 처리 체인 링크
                 case "input":
-                    let parts = mainParam.components(separatedBy: "|")
-                    tokens.append(.input(name: parts[0], defaultValue: parts.count > 1 ? parts[1] : nil))
+                    tokens.append(.input(name: nameParam, defaultValue: defaultParam.isEmpty ? nil : defaultParam))
                 case "textarea":
-                    let parts = mainParam.components(separatedBy: "|")
-                    tokens.append(.textarea(name: parts[0], defaultValue: parts.count > 1 ? parts[1] : nil))
+                    tokens.append(.textarea(name: nameParam, defaultValue: defaultParam.isEmpty ? nil : defaultParam))
                 case "select":
-                    let options = optionParam.components(separatedBy: ",")
-                    tokens.append(.select(name: mainParam, options: options))
+                    let options = arrayParam.components(separatedBy: ",")
+                    tokens.append(.select(name: nameParam, options: options, defaultValue: defaultParam.isEmpty ? nil : defaultParam))
+                    
+                case "checkbox":
+                    let isChecked = defaultParam.isEmpty ? true : (defaultParam.lowercased() == "true")
+                    tokens.append(.checkbox(name: nameParam, content: arrayParam, isCheckedByDefault: isChecked))
+                case "radio":
+                    let options = arrayParam.components(separatedBy: ",")
+                    tokens.append(.radio(name: nameParam, options: options, defaultValue: defaultParam.isEmpty ? nil : defaultParam))
+                case "datepicker":
+                    // 🌟 파이프 뒤의 포맷(yyyy/MM/dd)을 완벽하게 인식 보장합니다.
+                    tokens.append(.datePicker(name: nameParam, format: defaultParam.isEmpty ? "yyyy-MM-dd" : defaultParam))
+                    
                 case "optional":
-                    tokens.append(.optionalBlock(name: mainParam, content: optionParam))
+                    tokens.append(.optionalBlock(name: nameParam, content: arrayParam))
                     
                 default:
                     tokens.append(.text(String(match.output.0)))
                 }
             }
-            else if let advancedKeyword = output.4 {
+            else if let advancedKeyword = output.5 {
                 let keywordStr = String(advancedKeyword)
                 
                 if keywordStr == "selection" || keywordStr == "selectedText" {
                     tokens.append(.selection)
                 } else if keywordStr == "0" {
                     tokens.append(.finalCaret)
-                } else if let tabIndex = output.5 {
+                } else if let tabIndex = output.6 {
                     let idx = Int(tabIndex) ?? 1
-                    let defaultValue = output.6.map { String($0) }
+                    let defaultValue = output.7.map { String($0) }
                     tokens.append(.tabStop(index: idx, defaultValue: defaultValue))
                 }
             }

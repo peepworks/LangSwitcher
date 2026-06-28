@@ -20,24 +20,31 @@
 
 import Foundation
 
-// MARK: - 🌟 스니펫 오토마타 파싱 토큰 열거형 (문서 조립 도구형 확장 버전)
+// MARK: - 🌟 스니펫 오토마타 파싱 토큰 열거형 (문서 자동 조립기 스펙)
 enum SnippetToken: Equatable, Sendable {
     case text(String)               // 일반 정적 문자열
     case date(format: String)       // {{date:yyyy-MM-dd}}
     case time(format: String)       // {{time:HH:mm}}
     case clipboard                  // {{clipboard}}
-    case selection                  // ${selection} 또는 ${selectedText}
-    case finalCaret                 // {{cursor}} 또는 ${0} 최종 정착 위치
-    case tabStop(index: Int, defaultValue: String?) // ${1:default} 형태
+    case selection                  // ${selectedText} 문맥 흡수
+    case finalCaret                 // {{cursor}} 최종 정착 위치
+    case tabStop(index: Int, defaultValue: String?) // ${1:default} 포커스 점프
     
-    // 🌟 [신설] 동적 사용자 입력 및 템플릿 제어 요소 자산
+    // 📦 사용자 입력 필드군 (동일 name을 가지면 런타임에 동기화 재사용됩니다)
     case input(name: String, defaultValue: String?)                     // {{input:Name|defaultValue}}
     case textarea(name: String, defaultValue: String?)                  // {{textarea:Memo|defaultValue}}
-    case select(name: String, options: [String])                        // {{select:Team[Option1,Option2]}}
-    case optionalBlock(name: String, content: String)                   // {{optional:PS[Included Content]}}
+    case select(name: String, options: [String], defaultValue: String?) // {{select:Signature[Opt1,Opt2]|default}}
+    
+    // 🌟 [보강] 선택 방식 다양화 및 동적 날짜 컴포넌트 자산
+    case checkbox(name: String, content: String, isCheckedByDefault: Bool) // {{checkbox:IncludePS[P.S. 내용]|true}}
+    case radio(name: String, options: [String], defaultValue: String?)     // {{radio:Urgency[High,Normal]|Normal}}
+    case datePicker(name: String, format: String)                          // {{datepicker:Deadline|yyyy-MM-dd}}
+    
+    // ⚙️ 템플릿 제어군
+    case optionalBlock(name: String, content: String)                   // {{optional:Disclaimer[Maturity text]}}
 }
 
-// MARK: - 🌟 최종 렌더링 오프셋 결과물
+// MARK: - 🌟 최종 렌더링 결과물 장부
 struct RenderedSnippet: Sendable {
     let text: String
     let tabStops: [SnippetTabStop]
