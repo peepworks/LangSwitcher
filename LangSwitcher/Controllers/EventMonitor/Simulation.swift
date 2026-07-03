@@ -24,14 +24,6 @@ import Carbon
 @MainActor
 extension EventMonitor {
 
-    func isCurrentLanguageEnglish() -> Bool {
-        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
-              let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return false }
-        let id = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
-        let lower = id.lowercased()
-        return lower.contains("en") || lower.contains("abc") || lower.contains("us")
-    }
-
     func safeSwitchToKorean() {
         let filter: NSDictionary = [
             (kTISPropertyInputSourceType as String): (kTISTypeKeyboardLayout as String)

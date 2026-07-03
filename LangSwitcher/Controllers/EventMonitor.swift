@@ -31,9 +31,7 @@ class EventMonitor {
     var healthCheckTimer: Timer?
     var eventRunLoop: CFRunLoop?
 
-    // 백킹 스토리지는 오직 단 하나만 유지
     var _typingBuffer: String = ""
-    
     var _lastKeyTime: Date = Date()
     var _shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
     var _currentModifiers: NSEvent.ModifierFlags = []
@@ -44,6 +42,9 @@ class EventMonitor {
     var _lastCapsLockTime: Date = Date.distantPast
     var _lastActionTime: Date = Date.distantPast
     let actionCooldown: TimeInterval = 0.15
+
+    // 🌟 [수복 1] 무거운 TIS 조회를 방어하기 위한 언어 상태 캐시 주머니 매립
+    private var _cachedIsEnglish: Bool = true
 
     static let charKeyMap: [UInt16: Character] = [
         0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",
@@ -56,7 +57,35 @@ class EventMonitor {
     let snapshotLock = NSLock()
     var pendingInsertTasks: [DispatchWorkItem] = []
 
-    private init() {}
+    private init() {
+        // 🌟 [Swift 6 동시성 완전 정산]
+        // init() 내부에서 self를 캡처하면 컴파일러가 '초기화 중인 변수 유출'로 판단해 에러를 뿜습니다.
+        // 클로저 외부/내부에서 self 대신 글로벌 정적 인스턴스인 'EventMonitor.shared'를 바라보게 하여
+        // 로컬 self 캡처 트랩을 원천적으로 소각합니다.
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                EventMonitor.shared.updateInputSourceCache()
+            }
+        }
+        updateInputSourceCache() // 초기화 시점 1회 장부 기입
+    }
+
+    private func updateInputSourceCache() {
+        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return }
+        let id = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+        let lower = id.lowercased()
+        self._cachedIsEnglish = lower.contains("en") || lower.contains("abc") || lower.contains("us")
+    }
+
+    // 🌟 이벤트 탭 내부에서 무거운 처리 없이 즉시 캐시값 분출 (O(1) 초고속 반응)
+    func isCurrentLanguageEnglish() -> Bool {
+        return self._cachedIsEnglish
+    }
 
     func start() {
         if eventTap != nil { return }
@@ -73,11 +102,7 @@ class EventMonitor {
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
 
                 return autoreleasepool {
-                    guard Thread.isMainThread else {
-                        dprint("⚠️ [EventMonitor] 콜백이 메인 스레드가 아닌 곳에서 감지되었습니다. 안전하게 바이패스합니다.")
-                        return Unmanaged.passUnretained(event)
-                    }
-
+                    guard Thread.isMainThread else { return Unmanaged.passUnretained(event) }
                     return MainActor.assumeIsolated { () -> Unmanaged<CGEvent>? in
 
                         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -95,7 +120,13 @@ class EventMonitor {
                             return Unmanaged.passUnretained(event)
                         }
 
-                        if IsSecureEventInputEnabled() { return Unmanaged.passUnretained(event) }
+                        // 🌟 보안 입력 상태일 경우 디버그 로그에 남겨 추적이 가능하도록 방어선 보강
+                        if IsSecureEventInputEnabled() {
+                            #if DEBUG
+                            dprint("🔒 [EventMonitor] Secure Event Input 작동 중으로 키 인출이 잠시 보류되었습니다.")
+                            #endif
+                            return Unmanaged.passUnretained(event)
+                        }
 
                         EventMonitor.shared.snapshotLock.lock()
                         guard let snapshot = EventMonitor.shared.localSnapshot else {
@@ -155,7 +186,6 @@ class EventMonitor {
                             }
                         }
 
-                        // 🌟 텍스트 대치 및 스마트 자동 오타 교정 코어 엔진 구역 (수복 완료)
                         if type == .keyDown {
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
@@ -185,6 +215,7 @@ class EventMonitor {
 
                                     if snapshot.isAutoTypoCorrectionEnabled {
                                         if currentBuffer.count >= 2 {
+                                            // 🌟 캐시화된 초고속 불리언 체인 가동
                                             if EventMonitor.shared.isCurrentLanguageEnglish() {
                                                 if let convertedText = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
                                                     EventMonitor.shared.performAutoCorrection(originalLength: currentBuffer.count, correctedText: convertedText, triggerKeyCode: UInt16(keyCode))
@@ -195,20 +226,18 @@ class EventMonitor {
                                         }
                                     }
                                     
-                                    // 🌟 [핵심 수복선] 매칭에 실패한 순정 스페이스는 버퍼를 폭파하지 않고 공백 문자로 축적합니다!
-                                    // 이를 통해 사용자가 공백을 지우고 이어서 타건할 때 컨텍스트의 연속성이 100% 보장됩니다.
                                     if isPureSpace {
                                         EventMonitor.shared.appendToTypingBuffer(" ")
                                     } else {
-                                        EventMonitor.shared.clearTypingBuffer() // 엔터키는 줄바꿈이므로 안전하게 초기화
+                                        EventMonitor.shared.clearTypingBuffer()
                                     }
                                 }
-                                else if keyCode == 51 { // 백스페이스
+                                else if keyCode == 51 {
                                     if !EventMonitor.shared._typingBuffer.isEmpty {
                                         EventMonitor.shared._typingBuffer.removeLast()
                                     }
                                 }
-                                else if (123...126).contains(keyCode) { // 화살표 키 이동 시 컨텍스트가 깨지므로 초기화
+                                else if (123...126).contains(keyCode) {
                                     EventMonitor.shared.clearTypingBuffer()
                                 }
                                 else {
@@ -248,7 +277,8 @@ class EventMonitor {
     func startHealthCheck() {
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
-        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        
+        let timer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
             let _ = MainActor.assumeIsolated {
                 guard let self = self else { return }
                 if let tap = self.eventTap {
@@ -265,6 +295,9 @@ class EventMonitor {
                 }
             }
         }
+        // 🌟 [수복 정산] Foundation 런루프 규격에 맞게 .common 으로 명칭을 수정했습니다.
+        RunLoop.main.add(timer, forMode: .common)
+        self.healthCheckTimer = timer
     }
 
     func stop() {
