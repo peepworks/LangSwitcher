@@ -90,6 +90,8 @@ class EventMonitor {
     func start() {
         if eventTap != nil { return }
 
+        // 이 이벤트 탭은 하단의 CFRunLoopGetMain() 결속을 통해 반드시 메인 런루프에서만 돌려야 합니다.
+        // 그래야 내부 콜백의 MainActor.assumeIsolated 환경이 안전하게 보장됩니다.
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.keyUp.rawValue) |
                         (1 << CGEventType.flagsChanged.rawValue) |

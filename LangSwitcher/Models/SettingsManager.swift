@@ -36,7 +36,7 @@ class SettingsManager: ObservableObject {
     
     nonisolated private static let profileEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted // 줄바꿈/들여쓰기 포맷 사양 고정
+        encoder.outputFormatting = .prettyPrinted
         return encoder
     } ()
     nonisolated private static let profileDecoder = JSONDecoder()
@@ -44,17 +44,12 @@ class SettingsManager: ObservableObject {
     let icloudStore = NSUbiquitousKeyValueStore.default
     private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
     
-    // ── 🌟 [8번 리뷰 수복 포인트 1: 레거시 GCD 디바운서 폐기] ──
-    // 추적이 불가능하여 앱 종료 시 데이터 유실을 유발하던 DispatchWorkItem을 전면 소각하고,
-    // 생명주기를 완벽히 통제할 수 있는 단일 소스 Task 참조선으로 전치합니다.
     private var saveTask: Task<Void, Never>?
-    
     nonisolated private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.save", qos: .background)
     
     private let maxLogCount = 500
     private let logTrimBuffer = 50
 
-    // 이제 하단의 addLog() 로직에서는 이 logTrimThreshold 단 하나만 기준선으로 바라봅니다.
     private var logTrimThreshold: Int { maxLogCount + logTrimBuffer }
     
     @Published var selectedTab: SettingsTab? = .general
@@ -62,22 +57,19 @@ class SettingsManager: ObservableObject {
     
     @Published private(set) var recentLogs: [ActionLog] = []
     
-    // 딕셔너리 캐시는 전역으로 관리하되, 활성 프로필 데이터를 굽습니다.
     private(set) var customShortcutCache: [ShortcutKey: CustomShortcut] = [:]
     private(set) var appLaunchShortcutCache: [ShortcutKey: AppLaunchShortcut] = [:]
  
-    // Application Support 내 앱 전용 안전 폴더 경로 확보
     private var applicationSupportDirectoryURL: URL {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         return paths[0].appendingPathComponent("LangSwitcher", isDirectory: true)
     }
 
-    // 최종 프로필 JSON 파일의 절대 경로
     private var profilesFileURL: URL {
         return applicationSupportDirectoryURL.appendingPathComponent("profiles.json")
     }
 
-    // MARK: - Global Settings (전역 설정)
+    // MARK: - Global Settings (전역 설정 + 일관된 배치 가드 수복)
     
     @Published var isCtrlActive: Bool {
         didSet {
@@ -133,7 +125,15 @@ class SettingsManager: ObservableObject {
             scheduleSave()
         }
     }
-    @Published var isTestMode: Bool { didSet { save("isTestMode", isTestMode); updateSnapshot() } }
+    
+    // 🌟 [수복 완료] 가드가 빠져서 단발성 폭발을 유발하던 구역 철저 방어
+    @Published var isTestMode: Bool {
+        didSet {
+            save("isTestMode", isTestMode)
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+        }
+    }
     
     @Published var toggleKeyCode: UInt16 {
         didSet {
@@ -167,9 +167,25 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true { didSet { updateSnapshot() } }
-    @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true { didSet { updateSnapshot() } }
-    @AppStorage("isExcludedAppsEnabled") var isExcludedAppsEnabled: Bool = true { didSet { updateSnapshot() } }
+    // 🌟 [수복 완료] 마그네틱 배치 업데이트 검문선 감 감사 및 보수 완료
+    @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+        }
+    }
+    @AppStorage("isAppLaunchEnabled") var isAppLaunchEnabled: Bool = true {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+        }
+    }
+    @AppStorage("isExcludedAppsEnabled") var isExcludedAppsEnabled: Bool = true {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+        }
+    }
     
     @AppStorage("isWindowMemoryEnabled") var isWindowMemoryEnabled: Bool = false {
         didSet {
@@ -178,7 +194,13 @@ class SettingsManager: ObservableObject {
             syncToCloud()
         }
     }
-    @AppStorage("isWindowMemoryCleanupEnabled") var isWindowMemoryCleanupEnabled: Bool = true { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isWindowMemoryCleanupEnabled") var isWindowMemoryCleanupEnabled: Bool = true {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
     @AppStorage("isCursorHUDEnabled") var isCursorHUDEnabled: Bool = true {
         didSet {
             guard !isBatchUpdating else { return }
@@ -188,10 +210,26 @@ class SettingsManager: ObservableObject {
     }
     
     @AppStorage("isCloudSyncEnabled") var isCloudSyncEnabled: Bool = false {
-        didSet { updateSnapshot(); if isCloudSyncEnabled { syncToCloud() } }
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            if isCloudSyncEnabled { syncToCloud() }
+        }
     }
-    @AppStorage("isHapticFeedbackEnabled") var isHapticFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
-    @AppStorage("isSoundFeedbackEnabled") var isSoundFeedbackEnabled: Bool = false { didSet { updateSnapshot(); syncToCloud() } }
+    @AppStorage("isHapticFeedbackEnabled") var isHapticFeedbackEnabled: Bool = false {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
+    @AppStorage("isSoundFeedbackEnabled") var isSoundFeedbackEnabled: Bool = false {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
     @AppStorage("isEdgeGlowEnabled") var isEdgeGlowEnabled: Bool = false {
         didSet {
             guard !isBatchUpdating else { return }
@@ -206,10 +244,15 @@ class SettingsManager: ObservableObject {
             syncToCloud()
         }
     }
-    @AppStorage("newTabDefaultLanguage") var newTabDefaultLanguage: String = "None" { didSet { updateSnapshot(); syncToCloud() } }
-    
+    @AppStorage("newTabDefaultLanguage") var newTabDefaultLanguage: String = "None" {
+        didSet {
+            guard !isBatchUpdating else { return }
+            updateSnapshot()
+            syncToCloud()
+        }
+    }
 
-    // MARK: - Profile Management State (프로필 관리 상태)
+    // MARK: - Profile Management State
     
     @Published var profiles: [SettingsProfile] = [] {
         didSet {
@@ -339,8 +382,6 @@ class SettingsManager: ObservableObject {
             }
         }
         
-        // ── 🌟 [우주 방어 수복 포인트 2: 앱 예기치 못한 즉사 방어선 구축] ──
-        // OS 셧다운 알림 커널 스트림을 수신하기 위해 옵저버를 결속합니다.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillTerminate),
@@ -361,8 +402,6 @@ class SettingsManager: ObservableObject {
         UserDefaults.standard.set(value, forKey: key)
     }
 
-    // MARK: - 고성능 디스크 저장 엔티티 (순서 역전 및 데이터 유실 트랩 완벽 소각)
-    
     func saveAll() async {
         let profilesToSave = self.profiles
         let directoryURL = self.applicationSupportDirectoryURL
@@ -416,7 +455,6 @@ class SettingsManager: ObservableObject {
             isTextExpansionEnabled: payload.isTextExpansionEnabled,
             textExpansionRules: payload.textExpansionRules
         )
-        // (참고: 빌드 무결성을 보장하기 위해 파트너님의 순정 snapshot 파라미터 매핑 상태를 그대로 관통 결속합니다)
         newSnapshot = SettingsSnapshot(
             isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive,
             ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
@@ -452,8 +490,6 @@ class SettingsManager: ObservableObject {
         )
         
         newSnapshot.buildCaches()
-        
-        // 🌟 [단축키 스트림 엔진 도킹선 각인]
         InputShortcutEngine.shared.syncEngineCache(newSnapshot)
         
         EventMonitor.shared.snapshotLock.lock()
@@ -464,35 +500,23 @@ class SettingsManager: ObservableObject {
         self._snapshot = newSnapshot
     }
     
-    // MARK: - 고성능 로그 주입 아키텍처
     @MainActor
     func addLog(_ log: ActionLog) {
         self.recentLogs.append(log)
-        
-        // 🌟 [수복 완료] SSOT 기준선 단 한 곳만 참조하여 정밀 타격
         if recentLogs.count > logTrimThreshold {
-            // 초과된 버퍼(50개)만큼만 정확하게 잘라내어 maxLogCount(500개)를 유지합니다.
             let excessCount = recentLogs.count - maxLogCount
             recentLogs.removeFirst(excessCount)
         }
     }
     
-    // MARK: - 🌟 [8번 리뷰 수복 포인트 3: 현대식 순정 비동기 디바운스 대통합]
-    
     func scheduleSave() {
         guard !isBatchUpdating else { return }
         
-        // 새로운 저장이 요청되는 즉시 기존 대기열 태스크 객체 자체를 저격 취소(Cancel)시킵니다.
         saveTask?.cancel()
-        
-        // 비구조화 프레임을 탈출하여 완벽한 소유주(saveTask)가 확약된 구조화 동시성을 전개합니다.
         saveTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             do {
-                // GCD 타이머를 걷어내고 0.5초 동안 메인 스레드를 블로킹하지 않고 청정 비동기 대기
                 try await Task.sleep(for: .seconds(0.5))
-                
-                // 대기 도중 연타가 인입되어 취소 신호를 수신했다면 아래 UI/디스크 플러시 라인을 완벽히 차단
                 guard !Task.isCancelled else { return }
                 
                 await self.saveAll()
@@ -502,23 +526,16 @@ class SettingsManager: ObservableObject {
                     self.syncToCloud()
                 }
             } catch {
-                // 취소 예외 발생 시 스킵 후 우아하게 후퇴
+                // 우아하게 후퇴
             }
         }
     }
     
-    // MARK: - 🌟 [8번 리뷰 수복 포인트 4: 프로세스 강제 사살 즉사 방지 브레이크]
-    
     @MainActor
     @objc private func appWillTerminate() {
         print("🚨 [SettingsManager] OS 시스템 강제 종료 시그널 감지. 긴급 동기 장부 강제 플러시를 집행합니다.")
-        
-        // 1. 대기선에서 0.5초 슬립을 구동 중이던 비동기 태스크를 즉각 전면 차단합니다.
         saveTask?.cancel()
         saveTask = nil
-        
-        // 2. 비동기 await를 호출하면 커널이 즉시 종료시키므로,
-        // 이 비상 상태에서만큼은 메인 스레드 컨텍스트에서 인메모리 장부를 파일 시스템에 동기식(Sync)으로 즉각 각인합니다.
         self.executeEmergencySynchronousSave()
     }
     
@@ -531,13 +548,8 @@ class SettingsManager: ObservableObject {
             if !FileManager.default.fileExists(atPath: directoryURL.path) {
                 try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
             }
-            
-            // 현재 인메모리에 떠 있는 최신 설정 데이터 동기 직렬화
             let data = try Self.profileEncoder.encode(self.profiles)
-            
-            // 동기식(.atomic) 강제 저장을 통해 OS 프로세스가 끊어지기 전 장부 완벽 보존
             try data.write(to: fileURL, options: .atomic)
-            
             print("✨ [SettingsManager] Emergency Sync Save 대성공 — profiles.json 무결성 보존 완결.")
         } catch {
             print("❌ [SettingsManager] 비상 동기화 디스크 저장 대패: \(error.localizedDescription)")
@@ -570,10 +582,8 @@ class SettingsManager: ObservableObject {
         activeProfile = profile
     }
     
-    // MARK: - Text Expansion Only Backup/Restore
     func exportTextExpansionRules(to url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void = { _, _ in }) {
         let rulesToExport = activeProfile.payload.textExpansionRules
-        
         do {
             let data = try Self.profileEncoder.encode(rulesToExport)
             Task.detached(priority: .userInitiated) {
@@ -597,12 +607,17 @@ class SettingsManager: ObservableObject {
                 let decodedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
                 
                 await MainActor.run {
+                    // 🌟 [수복 완료] 데이터 임포트 트랙도 배치 업데이트 자물쇠 범위에 편입합니다.
+                    self.isBatchUpdating = true
+                    defer {
+                        self.isBatchUpdating = false
+                        self.updateSnapshot()
+                        self.scheduleSave()
+                    }
+                    
                     var profile = self.activeProfile
                     profile.payload.textExpansionRules = decodedRules
                     self.activeProfile = profile
-                    
-                    self.updateSnapshot()
-                    self.scheduleSave()
                     
                     let log = ActionLog(
                         timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Text Expansion Import",
@@ -616,7 +631,6 @@ class SettingsManager: ObservableObject {
             } catch {
                 await MainActor.run {
                     dprint("❌ [SettingsManager] 텍스트 대치 규칙 임포트 실패: \(error.localizedDescription)")
-                    
                     let log = ActionLog(
                         timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Text Expansion Import",
                         finalInputSource: "Failed to import rules: \(error.localizedDescription)", result: .failure,
@@ -630,7 +644,6 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // MARK: - 프로필 내보내기/가져오기 고성능 스레드 격리 수복 버전
     func exportProfiles() {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.json]
@@ -640,7 +653,6 @@ class SettingsManager: ObservableObject {
         
         savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }
-            
             do {
                 let data = try Self.profileEncoder.encode(self.profiles)
                 Task.detached(priority: .userInitiated) {
@@ -683,6 +695,14 @@ class SettingsManager: ObservableObject {
                             NSApp.activate(ignoringOtherApps: true)
                             alert.runModal()
                             return
+                        }
+                        
+                        // 🌟 [수복 완료] 백업 이식 시 자물쇠를 채워 N번의 중복 리빌드 연쇄 폭발을 원천 봉쇄합니다.
+                        self.isBatchUpdating = true
+                        defer {
+                            self.isBatchUpdating = false
+                            self.updateSnapshot()
+                            self.scheduleSave()
                         }
                         
                         self.profiles = importedProfiles

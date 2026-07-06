@@ -30,6 +30,11 @@ class WindowMonitor {
     static let shared = WindowMonitor()
 
     private let windowMemory = WindowLRUCache(capacity: 200)
+    
+    // ── 🌟 [수복 포인트 1: 멱등성 윈도우 세션 추적 장부 백킹 필드] ──
+    // 현재 활성화된 앱 세션 내에서 이미 Destruction 옵저버가 연결된 창들의 ID를 록온하여
+    // 생성 알림과 기존 스냅샷 순회 간의 중복 가입 간섭을 완벽히 필터링합니다.
+    private var trackedWindowIDs = Set<CGWindowID>()
 
     private var axObserver: AXObserver?
     private var observerRunLoop: CFRunLoop?
@@ -124,6 +129,9 @@ class WindowMonitor {
 
     func handleWindowDestroyed(element: AXUIElement) {
         guard let windowID = getWindowID(from: element) else { return }
+        
+        // 세션 관리 장부에서도 안전하게 퇴출 정산
+        self.trackedWindowIDs.remove(windowID)
         self.windowMemory.removeWindow(windowID)
         dprint("🧹 [WindowMonitor] 창 파괴 실시간 감지 성공. WindowID: \(windowID) 분쇄 완료.")
     }
@@ -149,6 +157,25 @@ class WindowMonitor {
 
     func clearMemory() {
         self.windowMemory.clear()
+        self.trackedWindowIDs.removeAll()
+    }
+
+    // ── 🌟 [수복 포인트 2: 안전한 멱등성 윈도우 파괴 보초병 이식 커널] ──
+    private func registerWindowDestructionObserver(window: AXUIElement, observer: AXObserver) {
+        guard let windowID = getWindowID(from: window) else { return }
+        
+        // 중복 방어선 작동: 이미 등록된 창이라면 가볍게 무시하여 커널 패킷 지연을 사전에 봉쇄합니다.
+        guard !trackedWindowIDs.contains(windowID) else { return }
+        trackedWindowIDs.insert(windowID)
+        
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let err = AXObserverAddNotification(observer, window, kAXUIElementDestroyedNotification as CFString, refcon)
+        
+        if err != .success && err != .notificationAlreadyRegistered {
+            #if DEBUG
+            dprint("⚠️ [WindowMonitor] 윈도우 파괴 알림 가입 실패 (에러코드: \(err.rawValue))")
+            #endif
+        }
     }
 
     func observeApp(pid: pid_t) {
@@ -157,6 +184,9 @@ class WindowMonitor {
 
         guard self.currentPID != pid else { return }
         self.currentPID = pid
+        
+        // ── 🌟 세션 교체 시 기존 앱의 윈도우 인덱스 잔재를 깨끗이 플러시 ──
+        self.trackedWindowIDs.removeAll()
 
         if let observer = self.axObserver, let rl = self.observerRunLoop {
             CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
@@ -166,8 +196,6 @@ class WindowMonitor {
 
         var observer: AXObserver?
         
-        // 🌟 [@convention(c) 스레드 경계 보수 정산]
-        // Main RunLoop 모드에 직접 기입되므로 실행 안정성은 이미 커널 레벨에서 확약되어 있습니다.
         let callback: AXObserverCallback = { (obs, el, notif, ref) in
             guard let ref = ref else { return }
             let mon = Unmanaged<WindowMonitor>.fromOpaque(ref).takeUnretainedValue()
@@ -178,7 +206,8 @@ class WindowMonitor {
                 else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
                 else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
                 else if nsNotif == kAXWindowCreatedNotification as String {
-                    AXObserverAddNotification(obs, el, kAXUIElementDestroyedNotification as CFString, ref)
+                    // 🌟 [수복 완료] 실시간으로 생성된 새 창도 하단의 멱등성 코어로 안전 라우팅 이식합니다.
+                    mon.registerWindowDestructionObserver(window: el, observer: obs)
                 }
             }
         }
@@ -188,21 +217,25 @@ class WindowMonitor {
             let appRef = AXUIElementCreateApplication(pid)
             let refcon = Unmanaged.passUnretained(self).toOpaque()
 
+            // ── 🔒 [역순 정산 우주방어 파이프라인 정렬 완료] ──
+            // 1) 런루프 소스를 최우선 순위로 대장에 먼저 결속하여, 이 찰나에 발생하는 하드웨어 Mach 알림이 기화되는 것을 막습니다.
+            let mainRunLoop = CFRunLoopGetMain()
+            CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
+            self.observerRunLoop = mainRunLoop
+
+            // 2) 앱 기본 타격 알림판 리스트업 선제 가입
             AXObserverAddNotification(newObs, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
             AXObserverAddNotification(newObs, appRef, kAXTitleChangedNotification as CFString, refcon)
             AXObserverAddNotification(newObs, appRef, kAXWindowCreatedNotification as CFString, refcon)
 
+            // 3) 알림판을 켜둔 안전 상태에서 후방 스냅샷 목록을 긁어와 미감지 유령 창 유실률을 0.0%로 소각합니다.
             var windowList: CFTypeRef?
             if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowList) == .success,
                let windows = windowList as? [AXUIElement] {
                 for window in windows {
-                    AXObserverAddNotification(newObs, window, kAXUIElementDestroyedNotification as CFString, refcon)
+                    self.registerWindowDestructionObserver(window: window, observer: newObs)
                 }
             }
-
-            let mainRunLoop = CFRunLoopGetMain()
-            CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
-            self.observerRunLoop = mainRunLoop
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in

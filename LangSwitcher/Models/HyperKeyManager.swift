@@ -19,6 +19,9 @@
 //
 
 import Cocoa
+import IOKit
+
+private typealias IOHIDSetModifierLockStateFunc = @convention(c) (io_connect_t, Int32, Bool) -> Int32
 
 // ====================================================================
 // 🌟 [5번 리뷰 종결: 명시적 무적 스텔스 변수 선언]
@@ -27,10 +30,7 @@ import Cocoa
 // ====================================================================
 final class HyperKeyResumeGuard: @unchecked Sendable {
     private let lock = NSLock()
-    
-    // 🌟 컴파일러에게 "이 변수는 내 자물쇠로 지키니 액터 검열에서 손 떼라"고 명령합니다.
     nonisolated(unsafe) private var isResumed = false
-    
     private let continuation: CheckedContinuation<Bool, Never>
 
     nonisolated init(continuation: CheckedContinuation<Bool, Never>) {
@@ -50,9 +50,6 @@ final class HyperKeyResumeGuard: @unchecked Sendable {
 class HyperKeyManager {
     static let shared = HyperKeyManager()
 
-    // hidutil 명령어 실행이 절대 겹치지 않도록 조율하는 전용 직렬 백그라운드 큐
-    private let hidutilQueue = DispatchQueue(label: "com.peepworks.langswitcher.hidutil", qos: .userInitiated)
-
     // CGEventTap 스레드 문맥과 설정 UI 문맥 간의 완벽한 스레드 안전성을 보장하는 고성능 자물쇠
     private let stateLock = NSLock()
 
@@ -60,15 +57,26 @@ class HyperKeyManager {
     private var tapStartTime: Date?
     private var isUsedAsModifier = false
 
-    private let f19KeyCode: CGKeyCode = 80 // Mac 백엔드 F19 가상 키코드 고정
+    private let f19KeyCode: CGKeyCode = 80
     private let hyperKeyCodes: [CGKeyCode] = [55, 58, 59, 56]
 
-    // Caps Lock 디바운스를 위한 WorkItem 저장 변수
     private var capsLockWorkItem: DispatchWorkItem?
 
-    // 64비트 시스템 커널용 순정 데시멀 ID 장부 정렬
-    private let capsLockSrc: Int = 30064771129 // 0x700000039 (Caps Lock)
-    private let f19Dst: Int = 30064771182      // 0x70000006E (F19 Key)
+    private let capsLockSrc: Int = 30064771129
+    private let f19Dst: Int = 30064771182
+
+    // ── 🌟 [수복 포인트 1: 직렬 태스크 체이닝 백킹 파이프라인] ──
+    // 무용지물이던 레거시 hidutilQueue를 전면 폐기하고, Swift Concurrency 전용
+    // 직렬화 체인 링크 보관용 태스크 변수를 결속합니다. (stateLock으로 보호)
+    private var currentMappingTask: Task<Void, Never>?
+
+    private var IOHIDSetModifierLockState: IOHIDSetModifierLockStateFunc? = {
+        let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW)
+        if let sym = dlsym(handle, "IOHIDSetModifierLockState") {
+            return unsafeBitCast(sym, to: IOHIDSetModifierLockStateFunc.self)
+        }
+        return nil
+    }()
 
     private init() {}
 
@@ -81,8 +89,14 @@ class HyperKeyManager {
     }
 
     private func setupHardwareMapping(enable: Bool) {
-        // 스위프트 동시성의 협력적 멀티스레드 풀로 태스크를 완전히 독립 격리합니다.
-        Task.detached(priority: .userInitiated) { [weak self] in
+        // ── 🌟 [수복 포인트 2: 원자적 포인터 스왑 및 비블로킹 직렬 파이프라인 집행] ──
+        stateLock.lock()
+        let previousTask = currentMappingTask
+        
+        let newTask = Task.detached(priority: .userInitiated) { [weak self] in
+            // 앞선 hidutil 매핑 공정이 (연타 시에도) 완전히 마감 정산될 때까지 대기줄을 세웁니다.
+            _ = await previousTask?.value
+            
             guard let self = self else { return }
 
             // ── 1단계: hidutil에서 현재 키 매핑 정보 비동기 인출 ──
@@ -92,7 +106,6 @@ class HyperKeyManager {
             let getPipe = Pipe()
             getTask.standardOutput = getPipe
 
-            // 프로세스가 실행되기 전(Pre-Launch) 시점에 비동기 가두리를 개설하여 종료 인터럽트 수신 유실률을 0%로 통제합니다.
             let isGetSuccessful: Bool = await withCheckedContinuation { continuation in
                 getTask.terminationHandler = { proc in
                     continuation.resume(returning: proc.terminationStatus == 0)
@@ -108,7 +121,6 @@ class HyperKeyManager {
 
             guard isGetSuccessful else { return }
 
-            // 현대적 I/O 마이그레이션 적용
             guard let getData = try? getPipe.fileHandleForReading.readToEnd() else { return }
             let getString = String(data: getData, encoding: .utf8) ?? ""
             try? getPipe.fileHandleForReading.close()
@@ -125,7 +137,6 @@ class HyperKeyManager {
                 plutilTask.standardInput = plutilIn
                 plutilTask.standardOutput = plutilOut
 
-                // 이중 재개 방지 가드 안착
                 let isPlutilSuccessful: Bool = await withCheckedContinuation { continuation in
                     let resumeGuard = HyperKeyResumeGuard(continuation: continuation)
                     
@@ -136,13 +147,11 @@ class HyperKeyManager {
                     
                     do {
                         try plutilTask.run()
-                        
                         try plutilIn.fileHandleForWriting.write(contentsOf: getData)
                         try plutilIn.fileHandleForWriting.close()
                     } catch {
                         dprint("⚠️ [HyperKeyManager] plutil 파이프 쓰기 또는 실행 실패: \(error.localizedDescription)")
                         try? plutilIn.fileHandleForWriting.close()
-                        
                         plutilTask.terminationHandler = nil
                         resumeGuard.resume(returning: false)
                     }
@@ -181,7 +190,7 @@ class HyperKeyManager {
                 if proc.terminationStatus != 0 {
                     dprint("❌ [HyperKeyManager] hidutil --set 하드웨어 반영 실패")
                 } else {
-                    dprint("✅ [HyperKeyManager] Caps Lock ➔ F19 하드웨어 매핑 파이프라인 무결성 정산 완결.")
+                    dprint("✅ [HyperKeyManager] Caps Lock ➔ F19 하드웨어 매핑 파이프라인 무결성 직렬 정산 완결.")
                 }
                 proc.terminationHandler = nil
             }
@@ -192,6 +201,10 @@ class HyperKeyManager {
                 dprint("❌ [HyperKeyManager] hidutil set 실행 커널 오류: \(error.localizedDescription)")
             }
         }
+        
+        // 현재 생성된 최신 태스크를 다음 연타의 선행 주자로 교체 후 자물쇠를 해제합니다.
+        currentMappingTask = newTask
+        stateLock.unlock()
     }
 
     private func postHyperModifiers(isDown: Bool) {
@@ -283,38 +296,24 @@ class HyperKeyManager {
         let currentState = currentFlags.contains(.maskAlphaShift)
         let newState = !currentState
 
-        let script = """
-        ObjC.import('IOKit');
-        var ioConnect = Ref();
-        $.IOServiceOpen(
-            $.IOServiceGetMatchingService(0, $.IOServiceMatching('IOHIDSystem')),
-            $.mach_task_self_,
-            0,
-            ioConnect
-        );
-        $.IOHIDSetModifierLockState(ioConnect, 1, \(newState ? "true" : "false"));
-        $.IOServiceClose(ioConnect);
-        """
-
         guard let item = capsLockWorkItem, !item.isCancelled else { return }
 
-        let task = Process()
-        task.launchPath = "/usr/bin/osascript"
-        task.arguments = ["-l", "JavaScript", "-e", script]
-
-        task.terminationHandler = { proc in
-            if proc.terminationStatus != 0 {
-                DispatchQueue.main.async {
-                    dprint("Caps Lock 토글 스크립트 실패 (종료 코드: \(proc.terminationStatus))")
+        if let matchingDict = IOServiceMatching("IOHIDSystem") {
+            let service = IOServiceGetMatchingService(0, matchingDict)
+            if service != 0 {
+                var connect: io_connect_t = 0
+                let openStatus = IOServiceOpen(service, mach_task_self_, 0, &connect)
+                
+                if openStatus == KERN_SUCCESS {
+                    if let toggleFunc = self.IOHIDSetModifierLockState {
+                        _ = toggleFunc(connect, 1, newState)
+                        #if DEBUG
+                        dprint("⚡️ [HyperKey] OS 프로세스 소각 완결 ➔ Caps Lock을 인프로세스 C API로 즉시 정산 [\(newState)]")
+                        #endif
+                    }
+                    IOServiceClose(connect)
                 }
             }
-            proc.terminationHandler = nil
-        }
-
-        do {
-            try task.run()
-        } catch {
-            dprint("Caps Lock toggle 실행 자체를 실패함: \(error)")
         }
     }
 }
