@@ -20,6 +20,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 struct TextExpansionSettingsView: View {
     @ObservedObject var settings = SettingsManager.shared
@@ -236,6 +237,7 @@ struct IdentifiedToken: Identifiable {
     let id = UUID()
     let rawText: String
     let token: SnippetToken
+    var characterRange: NSRange = NSRange(location: 0, length: 0)
     
     var displayName: String {
         switch token {
@@ -275,11 +277,15 @@ struct TextExpansionEditView: View {
         var tokenIdx = 0
         for match in matches {
             let rawStr = String(rule.replacement[match.range])
+            let nsRange = NSRange(match.range, in: rule.replacement)
+            
             while tokenIdx < tokens.count {
                 let t = tokens[tokenIdx]
                 tokenIdx += 1
                 if case .text = t { continue }
-                list.append(IdentifiedToken(rawText: rawStr, token: t))
+                var idToken = IdentifiedToken(rawText: rawStr, token: t)
+                idToken.characterRange = nsRange
+                list.append(idToken)
                 break
             }
         }
@@ -308,33 +314,33 @@ struct TextExpansionEditView: View {
                     Menu {
                         Menu(String(localized: "System Values")) {
                             Menu(String(localized: "Date")) {
-                                Button(action: { insertSyntax("{{date:yyyy-MM-dd}}") }) { Label(String(localized: "Full Date (yyyy-MM-dd)"), systemImage: "calendar") }
-                                Button(action: { insertSyntax("{{date:yyyy}}") }) { Label(String(localized: "Year (yyyy)"), systemImage: "calendar.badge.clock") }
-                                Button(action: { insertSyntax("{{date:MM}}") }) { Label(String(localized: "Month (MM)"), systemImage: "calendar.badge.plus") }
-                                Button(action: { insertSyntax("{{date:dd}}") }) { Label(String(localized: "Day (dd)"), systemImage: "calendar.badge.checkmark") }
+                                Button(action: { self.insertSyntax("{{date:yyyy-MM-dd}}") }) { Label(String(localized: "Full Date (yyyy-MM-dd)"), systemImage: "calendar") }
+                                Button(action: { self.insertSyntax("{{date:yyyy}}") }) { Label(String(localized: "Year (yyyy)"), systemImage: "calendar.badge.clock") }
+                                Button(action: { self.insertSyntax("{{date:MM}}") }) { Label(String(localized: "Month (MM)"), systemImage: "calendar.badge.plus") }
+                                Button(action: { self.insertSyntax("{{date:dd}}") }) { Label(String(localized: "Day (dd)"), systemImage: "calendar.badge.checkmark") }
                             }
                             Menu(String(localized: "Time")) {
-                                Button(action: { insertSyntax("{{time:HH:mm}}") }) { Label(String(localized: "Hour:Minute (HH:mm)"), systemImage: "clock") }
-                                Button(action: { insertSyntax("{{time:HH:mm:ss}}") }) { Label(String(localized: "Hour:Minute:Second (HH:mm:ss)"), systemImage: "clock.fill") }
+                                Button(action: { self.insertSyntax("{{time:HH:mm}}") }) { Label(String(localized: "Hour:Minute (HH:mm)"), systemImage: "clock") }
+                                Button(action: { self.insertSyntax("{{time:HH:mm:ss}}") }) { Label(String(localized: "Hour:Minute:Second (HH:mm:ss)"), systemImage: "clock.fill") }
                             }
-                            Button(action: { insertSyntax("{{clipboard}}") }) { Label(String(localized: "Clipboard Contents"), systemImage: "doc.on.clipboard") }
-                            Button(action: { insertSyntax("${selectedText}") }) { Label(String(localized: "Selected Text"), systemImage: "doc.text.magnifyingglass") }
+                            Button(action: { self.insertSyntax("{{clipboard}}") }) { Label(String(localized: "Clipboard Contents"), systemImage: "doc.on.clipboard") }
+                            Button(action: { self.insertSyntax("${selectedText}") }) { Label(String(localized: "Selected Text"), systemImage: "doc.text.magnifyingglass") }
                         }
                         
                         Menu(String(localized: "Input Fields")) {
-                            Button(action: { insertSyntax("{{input:FieldName|defaultValue}}") }) { Label(String(localized: "Single-line Field"), systemImage: "rectangle.and.pencil.and.ellipsis") }
-                            Button(action: { insertSyntax("{{textarea:FieldName|defaultValue}}") }) { Label(String(localized: "Multi-line Field"), systemImage: "text.justify.left") }
-                            Button(action: { insertSyntax("{{select:FieldName[Option1,Option2]|Option1}}") }) { Label(String(localized: "Dropdown Menu"), systemImage: "list.bullet.rectangle") }
+                            Button(action: { self.insertSyntax("{{input:FieldName|defaultValue}}") }) { Label(String(localized: "Single-line Field"), systemImage: "rectangle.and.pencil.and.ellipsis") }
+                            Button(action: { self.insertSyntax("{{textarea:FieldName|defaultValue}}") }) { Label(String(localized: "Multi-line Field"), systemImage: "text.justify.left") }
+                            Button(action: { self.insertSyntax("{{select:FieldName[Option1,Option2]|Option1}}") }) { Label(String(localized: "Dropdown Menu"), systemImage: "list.bullet.rectangle") }
                             Divider()
-                            Button(action: { insertSyntax("{{checkbox:FieldName[Included Content]|true}}") }) { Label(String(localized: "Checkbox Option"), systemImage: "checkmark.square") }
-                            Button(action: { insertSyntax("{{radio:FieldName[Opt1,Opt2]|Opt1}}") }) { Label(String(localized: "Radio Buttons"), systemImage: "largecircle.fill.and.checkmark") }
-                            Button(action: { insertSyntax("{{datepicker:FieldName|yyyy-MM-dd}}") }) { Label(String(localized: "Date Picker Field"), systemImage: "calendar.badge.plus") }
+                            Button(action: { self.insertSyntax("{{checkbox:FieldName[Included Content]|true}}") }) { Label(String(localized: "Checkbox Option"), systemImage: "checkmark.square") }
+                            Button(action: { self.insertSyntax("{{radio:FieldName[Opt1,Opt2]|Opt1}}") }) { Label(String(localized: "Radio Buttons"), systemImage: "largecircle.fill.and.checkmark") }
+                            Button(action: { self.insertSyntax("{{datepicker:FieldName|yyyy-MM-dd}}") }) { Label(String(localized: "Date Picker Field"), systemImage: "calendar.badge.plus") }
                         }
                         
                         Menu(String(localized: "Template Control")) {
-                            Button(action: { insertSyntax("{{optional:BlockName[Content Text]}}") }) { Label(String(localized: "In/Out Block (Optional)"), systemImage: "uiwindow.split.2x1") }
-                            Button(action: { insertSyntax("{{cursor}}") }) { Label(String(localized: "Next Input Position"), systemImage: "character.cursor.line") }
-                            Button(action: { insertSyntax("${1:default}") }) { Label(String(localized: "Jump Placeholder"), systemImage: "character.textbox") }
+                            Button(action: { self.insertSyntax("{{optional:BlockName[Content Text]}}") }) { Label(String(localized: "Optional Block"), systemImage: "uiwindow.split.2x1") }
+                            Button(action: { self.insertSyntax("{{cursor}}") }) { Label(String(localized: "Cursor Position"), systemImage: "character.cursor.line") }
+                            Button(action: { self.insertSyntax("${1:default}") }) { Label(String(localized: "Tab Stop"), systemImage: "character.textbox") }
                         }
                     } label: {
                         HStack(spacing: 4) {
@@ -349,24 +355,19 @@ struct TextExpansionEditView: View {
                 }
                 .padding(.top, 5)
 
-                TextEditor(text: $rule.replacement)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(height: 120)
-                    .padding(4)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(5)
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                TokenMacroTextEditor(text: $rule.replacement, tokens: reactiveInspectorTokens) { targetToken, action in
+                    self.executeTokenAction(token: targetToken, action: action)
+                }
+                .frame(height: 120)
+                .cornerRadius(5)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
 
-                // ------------------------------------------------------
-                // 🌟 [수복 정산 완료] Reactive Token Inspector Panel Layout
-                // ------------------------------------------------------
                 if !reactiveInspectorTokens.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(String(localized: "Click elements below to edit properties:"))
                             .font(.caption2)
                             .foregroundColor(.secondary)
                         
-                        // maxWidth 및축 정렬 정밀 결속으로 우측 잘림 버그 영구 박멸
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
                                 ForEach(reactiveInspectorTokens) { identifiedToken in
@@ -385,11 +386,23 @@ struct TextExpansionEditView: View {
                                         .cornerRadius(4)
                                     }
                                     .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button(String(localized: "Edit Properties...")) {
+                                            selectedTokenForPropertyEdit = identifiedToken
+                                        }
+                                        Button(String(localized: "Duplicate Element")) {
+                                            self.executeTokenAction(token: identifiedToken, action: .duplicate)
+                                        }
+                                        Divider()
+                                        Button(String(localized: "Delete Element"), role: .destructive) {
+                                            self.executeTokenAction(token: identifiedToken, action: .delete)
+                                        }
+                                    }
                                 }
                             }
-                            .padding(.trailing, 10) // 우측 패딩 마진 추가로 스크롤 호흡 확보
+                            .padding(.trailing, 10)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading) // 🌟 스크롤 뷰가 가로 전체를 채우도록 강제 결속
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.top, 4)
                     .popover(item: $selectedTokenForPropertyEdit) { identifiedToken in
@@ -448,8 +461,167 @@ struct TextExpansionEditView: View {
             }
         }
     }
+
+    private func executeTokenAction(token: IdentifiedToken, action: TokenAction) {
+        switch action {
+        case .edit:
+            self.selectedTokenForPropertyEdit = token
+        case .duplicate:
+            if let range = rule.replacement.range(of: token.rawText) {
+                rule.replacement.insert(contentsOf: " " + token.rawText, at: range.upperBound)
+            }
+        case .delete:
+            if let range = rule.replacement.range(of: token.rawText) {
+                rule.replacement.removeSubrange(range)
+            }
+        }
+    }
 }
 
+// MARK: - 🌟 📟 AppKit 고성능 하이브리드 인라인 토큰 에디터
+// [수복 정산] 오타였던 TokenMacroAction을 TokenAction으로 완전 변경하여 컴파일러 크래시 라인을 원천 소각했습니다.
+enum TokenAction: Sendable { case edit, duplicate, delete }
+
+struct TokenMacroTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    var tokens: [IdentifiedToken]
+    var onTokenAction: @MainActor (IdentifiedToken, TokenAction) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .noBorder
+        
+        let textView = MacroTextView()
+        textView.isRichText = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        textView.delegate = context.coordinator
+        textView.actionHandler = onTokenAction
+        
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? MacroTextView else { return }
+        context.coordinator.isUpdating = true
+        textView.tokenMap = tokens
+        
+        if textView.string != text {
+            textView.string = text
+        }
+        
+        if let textStorage = textView.textStorage {
+            let baseRange = NSRange(location: 0, length: textStorage.length)
+            textStorage.removeAttribute(.foregroundColor, range: baseRange)
+            textStorage.removeAttribute(.backgroundColor, range: baseRange)
+            textStorage.removeAttribute(.underlineStyle, range: baseRange)
+            textStorage.addAttribute(.foregroundColor, value: NSColor.textColor, range: baseRange)
+            
+            for token in tokens {
+                if token.characterRange.location + token.characterRange.length <= textStorage.length {
+                    textStorage.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: token.characterRange)
+                    textStorage.addAttribute(.backgroundColor, value: NSColor.systemBlue.withAlphaComponent(0.12), range: token.characterRange)
+                    textStorage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: token.characterRange)
+                }
+            }
+        }
+        context.coordinator.isUpdating = false
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: TokenMacroTextEditor
+        var isUpdating = false
+
+        init(_ parent: TokenMacroTextEditor) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard !isUpdating, let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+        }
+    }
+}
+
+// MARK: - 🧱 로우레벨 마우스 인터랙션 집행 뷰
+class MacroTextView: NSTextView {
+    var tokenMap: [IdentifiedToken] = []
+    var actionHandler: (@MainActor (IdentifiedToken, TokenAction) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let charIndex = layoutManager?.characterIndex(for: point, in: textContainer!, fractionOfDistanceBetweenInsertionPoints: nil) {
+            if let matchedToken = tokenMap.first(where: { NSLocationInRange(charIndex, $0.characterRange) }) {
+                
+                if event.clickCount == 2 {
+                    if let handler = actionHandler {
+                        DispatchQueue.main.async { MainActor.assumeIsolated { handler(matchedToken, .edit) } }
+                    }
+                    return
+                } else if event.clickCount == 1 {
+                    if let handler = actionHandler {
+                        DispatchQueue.main.async { MainActor.assumeIsolated { handler(matchedToken, .edit) } }
+                    }
+                }
+            }
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        if let charIndex = layoutManager?.characterIndex(for: point, in: textContainer!, fractionOfDistanceBetweenInsertionPoints: nil) {
+            if let matchedToken = tokenMap.first(where: { NSLocationInRange(charIndex, $0.characterRange) }) {
+                
+                let customMenu = NSMenu(title: "Token Context")
+                
+                let editItem = NSMenuItem(title: String(localized: "Edit Properties..."), action: #selector(contextMenuEditAction(_:)), keyEquivalent: "")
+                editItem.representedObject = matchedToken
+                customMenu.addItem(editItem)
+                
+                let duplicateItem = NSMenuItem(title: String(localized: "Duplicate Element"), action: #selector(contextMenuDuplicateAction(_:)), keyEquivalent: "")
+                duplicateItem.representedObject = matchedToken
+                customMenu.addItem(duplicateItem)
+                
+                customMenu.addItem(NSMenuItem.separator())
+                
+                let deleteItem = NSMenuItem(title: String(localized: "Delete Element"), action: #selector(contextMenuDeleteAction(_:)), keyEquivalent: "")
+                deleteItem.representedObject = matchedToken
+                customMenu.addItem(deleteItem)
+                
+                return customMenu
+            }
+        }
+        return super.menu(for: event)
+    }
+
+    @objc private func contextMenuEditAction(_ sender: NSMenuItem) {
+        guard let token = sender.representedObject as? IdentifiedToken, let handler = actionHandler else { return }
+        DispatchQueue.main.async { MainActor.assumeIsolated { handler(token, .edit) } }
+    }
+
+    @objc private func contextMenuDuplicateAction(_ sender: NSMenuItem) {
+        guard let token = sender.representedObject as? IdentifiedToken, let handler = actionHandler else { return }
+        DispatchQueue.main.async { MainActor.assumeIsolated { handler(token, .duplicate) } }
+    }
+
+    @objc private func contextMenuDeleteAction(_ sender: NSMenuItem) {
+        guard let token = sender.representedObject as? IdentifiedToken, let handler = actionHandler else { return }
+        DispatchQueue.main.async { MainActor.assumeIsolated { handler(token, .delete) } }
+    }
+}
+
+// MARK: - 🌟 정밀 속성 제어 및 가이드 툴팁 통합 팝오버 뷰
 struct PropertyEditorPopoverView: View {
     let identifiedToken: IdentifiedToken
     var onSave: (String) -> Void
@@ -458,103 +630,111 @@ struct PropertyEditorPopoverView: View {
     @State private var defaultValue: String = ""
     @State private var optionsString: String = ""
     @State private var isChecked: Bool = true
+    
+    @State private var placeholder: String = ""
+    @State private var isRequired: Bool = false
+    @State private var fieldSize: String = ""
+    @State private var syncByName: Bool = true
+    @State private var showAtTop: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(String(localized: "Edit Properties"))
-                .font(.headline)
-                .foregroundColor(.secondary)
+            HStack {
+                Text(String(localized: "Edit Properties"))
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(getUsageTooltipText())
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(4)
+            }
             
             Divider()
             
-            Group {
-                switch identifiedToken.token {
-                case .input(let name, let def):
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Field Name")).font(.caption)
+            VStack(alignment: .leading, spacing: 10) {
+                switch getTokenTypeString() {
+                case "input", "textarea":
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(String(localized: "Field Name")).font(.caption).foregroundColor(.secondary)
                         TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
                         
-                        Text(String(localized: "Default Value")).font(.caption)
+                        Text(String(localized: "Default Value")).font(.caption).foregroundColor(.secondary)
+                        TextField("", text: $defaultValue).textFieldStyle(.roundedBorder)
+                        
+                        Text(String(localized: "Placeholder Text")).font(.caption).foregroundColor(.secondary)
+                        TextField(String(localized: "e.g. Enter your name"), text: $placeholder).textFieldStyle(.roundedBorder)
+                        
+                        Text(getTokenTypeString() == "textarea" ? String(localized: "Field Height (lines)") : String(localized: "Field Width (px)")).font(.caption).foregroundColor(.secondary)
+                        TextField(getTokenTypeString() == "textarea" ? String(localized: "e.g. 40") : "e.g. 120", text: $fieldSize).textFieldStyle(.roundedBorder)
+                    }
+                    
+                case "select", "radio":
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(String(localized: "Field Name")).font(.caption).foregroundColor(.secondary)
+                        TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
+                        
+                        Text(String(localized: "Options (Comma-separated)")).font(.caption).foregroundColor(.secondary)
+                        TextField(getTokenTypeString() == "radio" ? "e.g. High,Normal,Low" : "e.g. DHL,FedEx,UPS", text: $optionsString).textFieldStyle(.roundedBorder)
+                        
+                        Text(String(localized: "Default Choice")).font(.caption).foregroundColor(.secondary)
                         TextField("", text: $defaultValue).textFieldStyle(.roundedBorder)
                     }
-                    .onAppear { fieldName = name; defaultValue = def ?? "" }
                     
-                case .textarea(let name, let def):
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Field Name")).font(.caption)
+                case "checkbox":
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(String(localized: "Field Name")).font(.caption).foregroundColor(.secondary)
                         TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
                         
-                        Text(String(localized: "Default Value")).font(.caption)
-                        TextField("", text: $defaultValue).textFieldStyle(.roundedBorder)
-                    }
-                    .onAppear { fieldName = name; defaultValue = def ?? "" }
-                    
-                case .select(let name, let options, let def):
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Field Name")).font(.caption)
-                        TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
-                        
-                        Text(String(localized: "Options (Comma-separated)")).font(.caption)
-                        TextField("e.g. DHL,FedEx,UPS", text: $optionsString).textFieldStyle(.roundedBorder)
-                        
-                        Text(String(localized: "Default Choice")).font(.caption)
-                        TextField("", text: $defaultValue).textFieldStyle(.roundedBorder)
-                    }
-                    .onAppear { fieldName = name; optionsString = options.joined(separator: ","); defaultValue = def ?? "" }
-                    
-                case .checkbox(let name, let content, let checked):
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Field Name")).font(.caption)
-                        TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
-                        
-                        Text(String(localized: "Included Block Text")).font(.caption)
+                        Text(String(localized: "Included Block Text")).font(.caption).foregroundColor(.secondary)
                         TextField("", text: $defaultValue).textFieldStyle(.roundedBorder)
                         
                         Toggle(String(localized: "Checked by Default"), isOn: $isChecked)
                             .controlSize(.small)
                     }
-                    .onAppear { fieldName = name; defaultValue = content; isChecked = checked }
                     
-                case .radio(let name, let options, let def):
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Field Name")).font(.caption)
+                case "datepicker":
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(String(localized: "Field Name")).font(.caption).foregroundColor(.secondary)
                         TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
                         
-                        Text(String(localized: "Options (Comma-separated)")).font(.caption)
-                        TextField("e.g. High,Normal,Low", text: $optionsString).textFieldStyle(.roundedBorder)
-                        
-                        Text(String(localized: "Default Choice")).font(.caption)
-                        TextField("", text: $defaultValue).textFieldStyle(.roundedBorder)
-                    }
-                    .onAppear { fieldName = name; optionsString = options.joined(separator: ","); defaultValue = def ?? "" }
-                    
-                case .datePicker(let name, let fmt):
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Field Name")).font(.caption)
-                        TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
-                        
-                        Text(String(localized: "Date Format")).font(.caption)
+                        Text(String(localized: "Date Format")).font(.caption).foregroundColor(.secondary)
                         TextField("yyyy-MM-dd", text: $defaultValue).textFieldStyle(.roundedBorder)
                     }
-                    .onAppear { fieldName = name; defaultValue = fmt }
                     
-                case .optionalBlock(let name, let content):
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(String(localized: "Block Name")).font(.caption)
+                case "optional":
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(String(localized: "Block Name")).font(.caption).foregroundColor(.secondary)
                         TextField("", text: $fieldName).textFieldStyle(.roundedBorder)
                         
-                        Text(String(localized: "Block Content")).font(.caption)
+                        Text(String(localized: "Block Content")).font(.caption).foregroundColor(.secondary)
                         TextField("", text: $defaultValue).textFieldStyle(.roundedBorder)
                     }
-                    .onAppear { fieldName = name; defaultValue = content }
                     
                 default:
                     Text(String(localized: "This system element has no editable properties."))
                         .font(.caption)
                         .foregroundColor(.secondary)
-                        .frame(height: 60)
+                        .frame(maxWidth: .infinity, minHeight: 40, alignment: .center)
+                }
+                
+                if isInputFieldToken() {
+                    Divider().padding(.vertical, 4)
+                    
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(String(localized: "Advanced Rules")).font(.caption.bold()).foregroundColor(.secondary)
+                        
+                        Toggle(String(localized: "Required Field"), isOn: $isRequired)
+                        Toggle(String(localized: "Sync values with same field name"), isOn: $syncByName)
+                        Toggle(String(localized: "Show at top summary panel"), isOn: $showAtTop)
+                    }
+                    .controlSize(.small)
                 }
             }
+            .padding(.horizontal, 2)
             
             HStack {
                 Spacer()
@@ -564,34 +744,148 @@ struct PropertyEditorPopoverView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .disabled(fieldName.isEmpty)
             }
             .padding(.top, 4)
         }
         .padding(15)
-        .frame(width: 280)
+        .frame(width: 310)
+        .onAppear { parseExistingMetaAttributes() }
+    }
+
+    private func isInputFieldToken() -> Bool {
+        let type = getTokenTypeString()
+        return ["input", "textarea", "select", "checkbox", "radio", "datepicker"].contains(type)
+    }
+    
+    private func getTokenTypeString() -> String {
+        let text = identifiedToken.rawText
+        if text.contains("{{input:") { return "input" }
+        if text.contains("{{textarea:") { return "textarea" }
+        if text.contains("{{select:") { return "select" }
+        if text.contains("{{checkbox:") { return "checkbox" }
+        if text.contains("{{radio:") { return "radio" }
+        if text.contains("{{datepicker:") { return "datepicker" }
+        if text.contains("{{optional:") { return "optional" }
+        return "system"
+    }
+    
+    private func getUsageTooltipText() -> String {
+        switch getTokenTypeString() {
+        case "input": return String(localized: "Single-line Input")
+        case "textarea": return String(localized: "Multi-line Area")
+        case "select": return String(localized: "Dropdown Menu")
+        case "checkbox": return String(localized: "On/Off Toggle")
+        case "radio": return String(localized: "Mutual Exclusive (2-4 items)")
+        case "datepicker": return String(localized: "Manual Date Selection")
+        case "optional": return String(localized: "Conditional Paragraph")
+        default: return String(localized: "System Value")
+        }
+    }
+
+    private func parseExistingMetaAttributes() {
+        var cleanText = identifiedToken.rawText
+        if cleanText.hasPrefix("{{") { cleanText = String(cleanText.dropFirst(2)) }
+        if cleanText.hasSuffix("}}") { cleanText = String(cleanText.dropLast(2)) }
+        
+        let typeComponents = cleanText.components(separatedBy: ":")
+        guard typeComponents.count >= 2 else { return }
+        let type = typeComponents[0]
+        let body = typeComponents[1...].joined(separator: ":")
+        
+        let parts = body.components(separatedBy: "|")
+        let firstPart = parts[0]
+        
+        if let openBracketIndex = firstPart.firstIndex(of: "["),
+           let closeBracketIndex = firstPart.lastIndex(of: "]"),
+           openBracketIndex < closeBracketIndex {
+            fieldName = String(firstPart[..<openBracketIndex])
+            let bracketContent = String(firstPart[firstPart.index(after: openBracketIndex)..<closeBracketIndex])
+            optionsString = bracketContent
+            if type == "checkbox" || type == "optional" {
+                defaultValue = bracketContent
+            }
+        } else {
+            fieldName = firstPart
+            optionsString = ""
+            defaultValue = ""
+        }
+        
+        if parts.count > 1 {
+            let secondPart = parts[1]
+            if type == "checkbox" {
+                isChecked = (secondPart == "true")
+            } else if type != "optional" {
+                defaultValue = secondPart
+            }
+        }
+        
+        placeholder = ""
+        isRequired = false
+        fieldSize = ""
+        syncByName = true
+        showAtTop = false
+        
+        if parts.count > 2 {
+            let metaStr = parts[2]
+            let queryItems = metaStr.components(separatedBy: "&")
+            for item in queryItems {
+                let pair = item.components(separatedBy: "=")
+                guard pair.count == 2 else { continue }
+                let key = pair[0], val = pair[1]
+                
+                switch key {
+                case "placeholder": placeholder = val
+                case "required": isRequired = (val == "true")
+                case "size": fieldSize = val
+                case "sync": syncByName = (val == "true")
+                case "top": showAtTop = (val == "true")
+                default: break
+                }
+            }
+        }
     }
 
     private func compileUpdatedSyntax() -> String {
-        switch identifiedToken.token {
-        case .input:
-            return defaultValue.isEmpty ? "{{input:\(fieldName)}}" : "{{input:\(fieldName)|\(defaultValue)}}"
-        case .textarea:
-            return defaultValue.isEmpty ? "{{textarea:\(fieldName)}}" : "{{textarea:\(fieldName)|\(defaultValue)}}"
-        case .select:
+        let type = getTokenTypeString()
+        var coreSyntax = ""
+        
+        switch type {
+        case "input":
+            coreSyntax = defaultValue.isEmpty ? "{{input:\(fieldName)}}" : "{{input:\(fieldName)|\(defaultValue)}}"
+        case "textarea":
+            coreSyntax = defaultValue.isEmpty ? "{{textarea:\(fieldName)}}" : "{{textarea:\(fieldName)|\(defaultValue)}}"
+        case "select":
             let cleanOptions = optionsString.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ",")
-            return defaultValue.isEmpty ? "{{select:\(fieldName)[\(cleanOptions)]}}" : "{{select:\(fieldName)[\(cleanOptions)]|\(defaultValue)}}"
-        case .checkbox:
-            return "{{checkbox:\(fieldName)[\(defaultValue)]|\(isChecked ? "true" : "false")}}"
-        case .radio:
+            coreSyntax = defaultValue.isEmpty ? "{{select:\(fieldName)[\(cleanOptions)]}}" : "{{select:\(fieldName)[\(cleanOptions)]|\(defaultValue)}}"
+        case "checkbox":
+            coreSyntax = "{{checkbox:\(fieldName)[\(defaultValue)]|\(isChecked ? "true" : "false")}}"
+        case "radio":
             let cleanOptions = optionsString.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ",")
-            return defaultValue.isEmpty ? "{{radio:\(fieldName)[\(cleanOptions)]}}" : "{{radio:\(fieldName)[\(cleanOptions)]|\(defaultValue)}}"
-        case .datePicker:
-            return "{{datepicker:\(fieldName)|\(defaultValue)}}"
-        case .optionalBlock:
+            coreSyntax = defaultValue.isEmpty ? "{{radio:\(fieldName)[\(cleanOptions)]}}" : "{{radio:\(fieldName)[\(cleanOptions)]|\(defaultValue)}}"
+        case "datepicker":
+            coreSyntax = "{{datepicker:\(fieldName)|\(defaultValue)}}"
+        case "optional":
             return "{{optional:\(fieldName)[\(defaultValue)]}}"
         default:
             return identifiedToken.rawText
         }
+        
+        if isInputFieldToken() {
+            var metaParams: [String] = []
+            if !placeholder.isEmpty { metaParams.append("placeholder=\(placeholder)") }
+            if isRequired { metaParams.append("required=true") }
+            if !fieldSize.isEmpty { metaParams.append("size=\(fieldSize)") }
+            if !syncByName { metaParams.append("sync=false") }
+            if showAtTop { metaParams.append("top=true") }
+            
+            if !metaParams.isEmpty {
+                let metaString = metaParams.joined(separator: "&")
+                coreSyntax = coreSyntax.replacingOccurrences(of: "}}", with: "|\(metaString)}}")
+            }
+        }
+        
+        return coreSyntax
     }
 }
 enum EditAction {
