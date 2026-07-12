@@ -149,11 +149,11 @@ When this snippet runs, LangSwitcher requests any missing form values before ins
 ## Screenshots
 
 <p align="center">
-  <img src="images/screenmenuv0.9.0.png" width="300" alt="LangSwitcher Menu">
+  <img src="images/screen_menu_v0.9.0.png" width="300" alt="LangSwitcher Menu">
 </p>
 
 <p align="center">
-  <img src="images/screenv0.9.0.png" width="700" alt="LangSwitcher Settings">
+  <img src="images/screen_v0.9.0.png" width="700" alt="LangSwitcher Settings">
 </p>
 
 ---
@@ -423,11 +423,11 @@ LangSwitcher는 앱, 브라우저 탭, Spotlight, Terminal, 메신저, 코드 �
 ## 스크린샷
 
 <p align="center">
-  <img src="images/screenmenuv0.9.0.png" width="300" alt="LangSwitcher 메뉴">
+  <img src="images/screen_menu_v0.9.0.png" width="300" alt="LangSwitcher Menu">
 </p>
 
 <p align="center">
-  <img src="images/screenv0.9.0.png" width="700" alt="LangSwitcher 설정">
+  <img src="images/screen_v0.9.0.png" width="700" alt="LangSwitcher Settings">
 </p>
 
 ---
