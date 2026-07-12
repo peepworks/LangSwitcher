@@ -295,7 +295,7 @@ This project is licensed under the [GNU General Public License v3.0](LICENSE) (`
 
 ---
 
-# 🇰🇷 한국어
+# 한국어
 
 <details>
 <summary><strong>클릭해서 한국어 버전 보기</strong></summary>
