@@ -44,9 +44,15 @@ struct SettingsView: View {
                     Label(String(localized: "Website Keyboards"), systemImage: "globe").tag(SettingsTab.domainRules)
                     Label(String(localized: "App Launch Shortcuts"), systemImage: "square.grid.2x2").tag(SettingsTab.appLaunch)
                     Label(String(localized: "Text Expansion"), systemImage: "text.badge.plus").tag(SettingsTab.textExpansion)
+                    
                     if isKoreanUser {
                         Label(String(localized: "Typo Correction"), systemImage: "text.cursor").tag(SettingsTab.typoCorrection)
+                        
+                        // 🌟 NavigationLink 대신 .tag() 로 통일하여 Selection 바인딩 안정성 확보
+                        Label(String(localized: "Ignored Words"), systemImage: "text.badge.xmark")
+                            .tag(SettingsTab.typoException)
                     }
+                    
                     Label(String(localized: "Excluded Apps"), systemImage: "nosign").tag(SettingsTab.excludedApps)
                 }
                 Section(header: Text(String(localized: "System"))) {
@@ -70,6 +76,8 @@ struct SettingsView: View {
                 case .textExpansion: TextExpansionSettingsView()
                 case .typoCorrection:
                     if isKoreanUser { TypoCorrectionSettingsView() }
+                case .typoException:
+                    if isKoreanUser { TypoExceptionSettingsView() }
                 case .excludedApps: ExcludedAppsSettingsView()
                 case .stats: StatsSettingsView()
                 case .rulePriority: RulePrioritySettingsView()

@@ -69,7 +69,7 @@ class SettingsManager: ObservableObject {
         return applicationSupportDirectoryURL.appendingPathComponent("profiles.json")
     }
 
-    // MARK: - Global Settings (전역 설정 + 일관된 배치 가드 수복)
+    // MARK: - Global Settings
     
     @Published var isCtrlActive: Bool {
         didSet {
@@ -126,7 +126,6 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // 🌟 [수복 완료] 가드가 빠져서 단발성 폭발을 유발하던 구역 철저 방어
     @Published var isTestMode: Bool {
         didSet {
             save("isTestMode", isTestMode)
@@ -167,7 +166,6 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    // 🌟 [수복 완료] 마그네틱 배치 업데이트 검문선 감 감사 및 보수 완료
     @AppStorage("isCustomShortcutsEnabled") var isCustomShortcutsEnabled: Bool = true {
         didSet {
             guard !isBatchUpdating else { return }
@@ -350,10 +348,18 @@ class SettingsManager: ObservableObject {
             migratedPayload.isAutoTypoCorrectionOnEnterEnabled = d.bool(forKey: "isAutoTypoCorrectionOnEnterEnabled")
             migratedPayload.isAppSpecificEnabled = d.bool(forKey: "isAppSpecificEnabled")
             migratedPayload.isBrowserDomainModeEnabled = d.bool(forKey: "isBrowserDomainModeEnabled")
-            
+
+            // 🌟 이 위치에서 구조체 생성이 모호해지지 않도록 명확히 파라미터 매핑을 확약합니다.
+            migratedPayload.typoExcludedWords = TypoExceptionManager.shared.excludedWords
+
             let defaultProfile = SettingsProfile(
-                id: UUID(), name: String(localized: "Default Profile"), note: String(localized: "Basic configuration"),
-                isDefault: true, createdAt: Date(), updatedAt: Date(), payload: migratedPayload
+                id: UUID(),
+                name: String(localized: "Default Profile"),
+                note: String(localized: "Basic configuration"),
+                isDefault: true,
+                createdAt: Date(),
+                updatedAt: Date(),
+                payload: migratedPayload // 🌟 모델의 Payload와 일대일 매칭 보장
             )
             tempProfiles = [defaultProfile]
             needsMigration = true
@@ -403,6 +409,11 @@ class SettingsManager: ObservableObject {
     }
 
     func saveAll() async {
+        // 🌟 저장 직전 실시간 메모리상의 제외 단어 목록을 액티브 프로필 데이터 홀더와 강제 동기화(Sync)합니다.
+        if let index = self.profiles.firstIndex(where: { $0.id == self.activeProfileID }) {
+            self.profiles[index].payload.typoExcludedWords = TypoExceptionManager.shared.excludedWords
+        }
+        
         let profilesToSave = self.profiles
         let directoryURL = self.applicationSupportDirectoryURL
         let fileURL = self.profilesFileURL
@@ -437,6 +448,12 @@ class SettingsManager: ObservableObject {
         DomainRuleManager.shared.rules = payload.domainRules
         updateShortcutCaches()
         
+        // 🌟 [수복 2 구역: 프로필 교체 시 예외 단어 관리자 하이드레이션]
+        // 불러온 프로필에 저장된 고유 예외 단어가 있다면 UI 컴포넌트 실시간 배열로 롤백시킵니다.
+        if !payload.typoExcludedWords.isEmpty {
+            TypoExceptionManager.shared.excludedWords = payload.typoExcludedWords
+        }
+        
         let log = ActionLog(timestamp: Date(), targetApp: "LangSwitcher", appliedRule: "Profile Switched", finalInputSource: "Active Profile: \(activeProfile.name)", result: .success, failureReason: .none)
         addLog(log)
             
@@ -451,11 +468,10 @@ class SettingsManager: ObservableObject {
     func updateSnapshot() {
         let payload = activeProfile.payload
         
+        // 실시간 예외 단어를 매니저 레이어로부터 캡처하여 동기화
+        let activeExcludedWords = TypoExceptionManager.shared.excludedWords
+        
         var newSnapshot = SettingsSnapshot(
-            isTextExpansionEnabled: payload.isTextExpansionEnabled,
-            textExpansionRules: payload.textExpansionRules
-        )
-        newSnapshot = SettingsSnapshot(
             isCtrlActive: isCtrlActive, isCmdActive: isCmdActive, isOptActive: isOptActive,
             ctrlLang: ctrlLang, cmdLang: cmdLang, optLang: optLang,
             showVisualFeedback: showVisualFeedback, isTestMode: isTestMode,
@@ -488,6 +504,9 @@ class SettingsManager: ObservableObject {
             isTextExpansionEnabled: payload.isTextExpansionEnabled,
             textExpansionRules: payload.textExpansionRules
         )
+        
+        // 🌟 [수복 3 구역: 변환 엔진용 고속 조회 스냅샷 데이터 주입]
+        newSnapshot.typoExcludedWords = activeExcludedWords
         
         newSnapshot.buildCaches()
         InputShortcutEngine.shared.syncEngineCache(newSnapshot)
@@ -541,6 +560,10 @@ class SettingsManager: ObservableObject {
     
     @MainActor
     private func executeEmergencySynchronousSave() {
+        if let index = self.profiles.firstIndex(where: { $0.id == self.activeProfileID }) {
+            self.profiles[index].payload.typoExcludedWords = TypoExceptionManager.shared.excludedWords
+        }
+        
         let directoryURL = self.applicationSupportDirectoryURL
         let fileURL = self.profilesFileURL
         
@@ -607,7 +630,6 @@ class SettingsManager: ObservableObject {
                 let decodedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
                 
                 await MainActor.run {
-                    // 🌟 [수복 완료] 데이터 임포트 트랙도 배치 업데이트 자물쇠 범위에 편입합니다.
                     self.isBatchUpdating = true
                     defer {
                         self.isBatchUpdating = false
@@ -650,6 +672,11 @@ class SettingsManager: ObservableObject {
         savePanel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         savePanel.nameFieldStringValue = "LangSwitcher_Profiles_Backup.json"
         savePanel.title = String(localized: "Export Profiles Backup")
+        
+        // 백업 JSON 생성 전 실시간 상태 반영 강제 확약
+        if let index = self.profiles.firstIndex(where: { $0.id == self.activeProfileID }) {
+            self.profiles[index].payload.typoExcludedWords = TypoExceptionManager.shared.excludedWords
+        }
         
         savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }
@@ -697,7 +724,6 @@ class SettingsManager: ObservableObject {
                             return
                         }
                         
-                        // 🌟 [수복 완료] 백업 이식 시 자물쇠를 채워 N번의 중복 리빌드 연쇄 폭발을 원천 봉쇄합니다.
                         self.isBatchUpdating = true
                         defer {
                             self.isBatchUpdating = false
@@ -708,6 +734,9 @@ class SettingsManager: ObservableObject {
                         self.profiles = importedProfiles
                         if let firstProfile = importedProfiles.first {
                             self.activeProfileID = firstProfile.id
+                            
+                            // 🌟 복원 직후 복원된 액티브 프로필의 예외 단어를 실시간 매니저로 완벽 하이드레이션(동기화)
+                            TypoExceptionManager.shared.excludedWords = firstProfile.payload.typoExcludedWords
                         }
                         
                         let alert = NSAlert()

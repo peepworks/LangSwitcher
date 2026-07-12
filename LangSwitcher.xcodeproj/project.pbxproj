@@ -66,6 +66,8 @@
 		12B3CA9C2FB2C78E00C5F49A /* TypoCorrectionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B3CA902FB2C78E00C5F49A /* TypoCorrectionSettingsView.swift */; };
 		12B699572FA71EA800F6B79D /* DomainRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B699562FA71E9D00F6B79D /* DomainRule.swift */; };
 		12B699592FA71ED300F6B79D /* DomainRuleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B699582FA71ED000F6B79D /* DomainRuleManager.swift */; };
+		12B8B311300341E8008E14BA /* TypoExceptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B8B310300341E6008E14BA /* TypoExceptionManager.swift */; };
+		12B8B31330034228008E14BA /* TypoExceptionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B8B31230034226008E14BA /* TypoExceptionSettingsView.swift */; };
 		12C6E7F02FA579AA004C7A0A /* BrowserTabManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */; };
 		12C737C82F9C5E5F00FF6CE1 /* WindowMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */; };
 		12C9C1F62F8B5FDE00A1A99E /* HUDManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */; };
@@ -148,6 +150,8 @@
 		12B3CA902FB2C78E00C5F49A /* TypoCorrectionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoCorrectionSettingsView.swift; sourceTree = "<group>"; };
 		12B699562FA71E9D00F6B79D /* DomainRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainRule.swift; sourceTree = "<group>"; };
 		12B699582FA71ED000F6B79D /* DomainRuleManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainRuleManager.swift; sourceTree = "<group>"; };
+		12B8B310300341E6008E14BA /* TypoExceptionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoExceptionManager.swift; sourceTree = "<group>"; };
+		12B8B31230034226008E14BA /* TypoExceptionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoExceptionSettingsView.swift; sourceTree = "<group>"; };
 		12C6E7EF2FA579A6004C7A0A /* BrowserTabManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTabManager.swift; sourceTree = "<group>"; };
 		12C737C72F9C5E5D00FF6CE1 /* WindowMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowMonitor.swift; sourceTree = "<group>"; };
 		12C9C1F52F8B5FDA00A1A99E /* HUDManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDManager.swift; sourceTree = "<group>"; };
@@ -246,6 +250,7 @@
 				129D74D32FA4329100227AD9 /* StatsManager.swift */,
 				12A6DB3A2FB191030000A927 /* TextExpander.swift */,
 				12242E2C2F933CA300690095 /* TypoConverter.swift */,
+				12B8B310300341E6008E14BA /* TypoExceptionManager.swift */,
 				12744D562F89E66A0033C06A /* UpdateManager.swift */,
 			);
 			path = Models;
@@ -394,6 +399,7 @@
 				12B3CA8E2FB2C78E00C5F49A /* StatsSettingsView.swift */,
 				12B3CA8F2FB2C78E00C5F49A /* TextExpansionSettingsView.swift */,
 				12B3CA902FB2C78E00C5F49A /* TypoCorrectionSettingsView.swift */,
+				12B8B31230034226008E14BA /* TypoExceptionSettingsView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -569,8 +575,10 @@
 				1220DB572FB15EB600D8CEAD /* LangSwitcherIntents.swift in Sources */,
 				12B3CA912FB2C78E00C5F49A /* AboutSettingsView.swift in Sources */,
 				1283B3592FB2F3FC00E04E2B /* RulePriorityView.swift in Sources */,
+				12B8B311300341E8008E14BA /* TypoExceptionManager.swift in Sources */,
 				12B3CA922FB2C78E00C5F49A /* AdvancedSettingsView.swift in Sources */,
 				12B3CA932FB2C78E00C5F49A /* AppLaunchSettingsView.swift in Sources */,
+				12B8B31330034228008E14BA /* TypoExceptionSettingsView.swift in Sources */,
 				12B3CA942FB2C78E00C5F49A /* AppSpecificSettingsView.swift in Sources */,
 				12B3CA952FB2C78E00C5F49A /* CustomShortcutsSettingsView.swift in Sources */,
 				12B3CA962FB2C78E00C5F49A /* DomainRuleSettingsView.swift in Sources */,

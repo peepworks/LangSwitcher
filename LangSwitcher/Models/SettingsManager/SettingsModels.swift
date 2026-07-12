@@ -88,6 +88,7 @@ struct BackupData: Codable, Sendable {
     var activeProfileID: UUID? = nil
     
     // V1: 구버전 단일 프로필 데이터
+    var typoExcludedWords: [String]? = nil
     var customShortcuts: [CustomShortcut]? = nil
     var customApps: [CustomApp]? = nil
     var appLaunchShortcuts: [AppLaunchShortcut]? = nil
@@ -148,6 +149,9 @@ struct SettingsSnapshot: Sendable {
     
     var textExpansionDict: [String: TextExpansionRule] = [:]
     var maxTriggerLength: Int = 0
+    
+    var typoExcludedWords: [String] = []
+    var typoExcludedWordsSet: Set<String> = [] // O(1) 초고속 조회를 위한 셋(Set)
 
     mutating func buildCaches() {
         var tempCustom: [UInt64: CustomShortcut] = [:]
@@ -217,6 +221,7 @@ struct ProfileSettingsPayload: Codable, Sendable {
     var isSentenceMode: Bool = false
     var isAutoTypoCorrectionEnabled: Bool = false
     var isAutoTypoCorrectionOnEnterEnabled: Bool = false
+    var typoExcludedWords: [String] = []
     
     // 4. 프로필 종속적인 일부 고급 설정 (선택적)
     var isAppSpecificEnabled: Bool = true
@@ -234,6 +239,7 @@ enum SettingsTab: Hashable, Sendable {
     case appLaunch
     case textExpansion
     case typoCorrection
+    case typoException // 🌟 [수정] 이 부분을 추가합니다.
     case excludedApps
     case stats
     case rulePriority

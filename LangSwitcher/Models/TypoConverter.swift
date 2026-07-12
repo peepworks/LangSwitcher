@@ -24,7 +24,7 @@ import AppKit
 class TypoConverter {
     static let shared = TypoConverter()
 
-    // 🌟 [2번 리뷰 수복 포인트: 클립보드 독점 상수 수립]
+    // 🌟 [클립보드 독점 상수 수립]
     // 더 이상 앱 전환 지연 설정(appDelays)에 종속되지 않고, 시스템 표준 상수 라인을 선언합니다.
     private static let clipboardRestoreDelay: TimeInterval = 0.15
     private static let clipboardTimeout: TimeInterval = 2.0
@@ -42,6 +42,11 @@ class TypoConverter {
 
     // MARK: - 스마트 자동 오타 감지용 엔진
     func detectAndConvert(englishInput: String) -> String? {
+        // 🛡️ [스마트 자동 감지 차단] 실시간 오타 감지 시에도 예외 목록에 포함된 명령어는 원천 무시합니다.
+        if TypoExceptionManager.shared.isExcluded(englishInput) {
+            return nil
+        }
+        
         guard englishInput.count >= 2 else { return nil }
         
         let containsEnglish = englishInput.contains { $0.isASCII && $0.isLetter }
@@ -75,6 +80,16 @@ class TypoConverter {
 
     // MARK: - 수동 단축키 오타 교정
     func executeCorrection() {
+        // 🌟 [수정 수복] EventMonitor에서 실시간 타이핑 버퍼를 안전하게 로컬 상수로 가져와 스코프 문제를 완벽히 소각합니다.
+        let targetBuffer = EventMonitor.shared.typingBuffer
+        
+        // 🌟 [최적화 수복] 백업/복원과 완벽히 연동되는 엔진 스냅샷 해시셋을 통해 O(1) 속도로 필터링
+        // if CurrentSnapshot.typoExcludedWordsSet.contains(targetBuffer) {
+        if TypoExceptionManager.shared.isExcluded(targetBuffer) {
+            dprint("🛡️ [TypoConverter] 예외 단어 안전 자산 감지 -> 교정 취소.")
+            return
+        }
+        
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
@@ -92,7 +107,7 @@ class TypoConverter {
         correctionTask = Task { [weak self] in
             guard let self = self else { return }
 
-            // 🌟 정산된 클래스 상수를 안전하게 바인딩합니다.
+            // 정산된 클래스 상수를 안전하게 바인딩합니다.
             let calculatedTimeout = Self.clipboardTimeout
 
             let myTimeoutTask = Task { [weak self] in
@@ -105,6 +120,7 @@ class TypoConverter {
             var wasCancelled = false
 
             do {
+                // Task 내부에서도 정밀 분석을 위해 로컬 버퍼 상태를 한 번 더 참조합니다.
                 let currentBuffer = EventMonitor.shared.typingBuffer
                 let localPB = NSPasteboard.general
                 var selectedText = ""
@@ -170,14 +186,14 @@ class TypoConverter {
 
                 // 4. 최종 변환 및 덮어쓰기 집행
                 if !selectedText.isEmpty {
-                    let convertedText = self.convertString(selectedText)
+                    let convertedText = self.convertString(text: selectedText)
                     localPB.clearContents()
                     localPB.setString(convertedText, forType: .string)
 
                     try await Task.sleep(nanoseconds: 20_000_000)
                     self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
 
-                    // 🌟 타겟 일렉트론 앱의 전환 딜레이를 완벽히 소각하고 순정 시스템 속도(150ms)로 직결 정산합니다.
+                    // 타겟 일렉트론 앱의 전환 딜레이를 완벽히 소각하고 순정 시스템 속도(150ms)로 직결 정산합니다.
                     try await Task.sleep(nanoseconds: UInt64(Self.clipboardRestoreDelay * 1_000_000_000))
 
                     EventMonitor.shared.clearTypingBuffer()
@@ -263,7 +279,7 @@ class TypoConverter {
         up?.post(tap: .cghidEventTap)
     }
 
-    private func convertString(_ text: String) -> String {
+    private func convertString(text: String) -> String {
         let containsEnglish = text.contains { $0.isASCII && $0.isLetter }
         let containsKoreanSyllable = text.unicodeScalars.contains { $0.value >= 0xAC00 && $0.value <= 0xD7A3 }
 
