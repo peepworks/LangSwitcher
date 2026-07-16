@@ -31,6 +31,7 @@
 		125FF50A2F658975005DAB0C /* LangSwitcherApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF5092F658975005DAB0C /* LangSwitcherApp.swift */; };
 		125FF50C2F658D00005DAB0C /* AccessibilityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */; };
 		125FF5242F6599E0005DAB0C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 129E052E2F657B6A00F34ABE /* Assets.xcassets */; };
+		126045783008687C005A50EB /* WorkspaceAppTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1260457730086879005A50EB /* WorkspaceAppTracker.swift */; };
 		126A3D6D2F94673500DC62F0 /* HyperKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */; };
 		126B6F3C2F9DD96A000C9ABD /* EdgeGlowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */; };
 		127329252FBFFEBE00D85255 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127329242FBFFEB900D85255 /* Logger.swift */; };
@@ -112,6 +113,7 @@
 		125FF4D72F658041005DAB0C /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		125FF5092F658975005DAB0C /* LangSwitcherApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangSwitcherApp.swift; sourceTree = "<group>"; };
 		125FF50B2F658D00005DAB0C /* AccessibilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityManager.swift; sourceTree = "<group>"; };
+		1260457730086879005A50EB /* WorkspaceAppTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAppTracker.swift; sourceTree = "<group>"; };
 		126A3D6C2F94673200DC62F0 /* HyperKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HyperKeyManager.swift; sourceTree = "<group>"; };
 		126B6F3B2F9DD965000C9ABD /* EdgeGlowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeGlowManager.swift; sourceTree = "<group>"; };
 		127329242FBFFEB900D85255 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
@@ -252,6 +254,7 @@
 				12242E2C2F933CA300690095 /* TypoConverter.swift */,
 				12B8B310300341E6008E14BA /* TypoExceptionManager.swift */,
 				12744D562F89E66A0033C06A /* UpdateManager.swift */,
+				1260457730086879005A50EB /* WorkspaceAppTracker.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -562,6 +565,7 @@
 				128F407D2FB93CA9009B58AF /* SnippetModels.swift in Sources */,
 				127CDE982FE77A71009ED6FD /* InputShortcutEngine.swift in Sources */,
 				125FF4D22F657FDA005DAB0C /* InputSourceManager.swift in Sources */,
+				126045783008687C005A50EB /* WorkspaceAppTracker.swift in Sources */,
 				12242E2D2F933CA400690095 /* TypoConverter.swift in Sources */,
 				1299307A2F679EBC00878827 /* SettingsManager.swift in Sources */,
 				12A6DB392FB190F50000A927 /* TextExpansionRule.swift in Sources */,

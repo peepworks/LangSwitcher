@@ -31,8 +31,7 @@ extension SettingsManager {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             
-            // 1. 원격 대량 업데이트가 시작되므로 인바운드 플래그 가드를 먼저 잠급니다.
-            self.isBatchUpdating = true
+            self.beginBatchUpdate()
             
             let store = NSUbiquitousKeyValueStore.default
             let cloudDict = store.dictionaryRepresentation
@@ -77,7 +76,7 @@ extension SettingsManager {
                 self.updateSnapshot()
                 
                 // 모든 정산 연산이 마감되었으므로 가드 플래그를 안전하게 해제합니다.
-                self.isBatchUpdating = false
+                self.endBatchUpdate()
                 
                 dprint("✨ [iCloud] 클라우드 원격 설정 장부 디스크 플러시 및 엔진 스냅샷 갱신이 완벽하게 완결되었습니다.")
             }

@@ -28,6 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = WorkspaceAppTracker.shared
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
 

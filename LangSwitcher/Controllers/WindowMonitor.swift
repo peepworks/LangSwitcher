@@ -31,9 +31,7 @@ class WindowMonitor {
 
     private let windowMemory = WindowLRUCache(capacity: 200)
     
-    // ── 🌟 [수복 포인트 1: 멱등성 윈도우 세션 추적 장부 백킹 필드] ──
-    // 현재 활성화된 앱 세션 내에서 이미 Destruction 옵저버가 연결된 창들의 ID를 록온하여
-    // 생성 알림과 기존 스냅샷 순회 간의 중복 가입 간섭을 완벽히 필터링합니다.
+    // ── 🌟 [멱등성 윈도우 세션 추적 장부 백킹 필드] ──
     private var trackedWindowIDs = Set<CGWindowID>()
 
     private var axObserver: AXObserver?
@@ -83,7 +81,7 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
 
-        let latestAppID = globalActiveAppTracker.get()
+        let latestAppID = WorkspaceAppTracker.shared.activeBundleID // 🌟 앞서 수복한 WorkspaceTracker 적용으로 무효 지연 해결
 
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
             BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
@@ -130,7 +128,6 @@ class WindowMonitor {
     func handleWindowDestroyed(element: AXUIElement) {
         guard let windowID = getWindowID(from: element) else { return }
         
-        // 세션 관리 장부에서도 안전하게 퇴출 정산
         self.trackedWindowIDs.remove(windowID)
         self.windowMemory.removeWindow(windowID)
         dprint("🧹 [WindowMonitor] 창 파괴 실시간 감지 성공. WindowID: \(windowID) 분쇄 완료.")
@@ -140,7 +137,7 @@ class WindowMonitor {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
 
         let latestID = InputSourceManager.shared.currentInputSourceID()
-        let latestAppID = globalActiveAppTracker.get()
+        let latestAppID = WorkspaceAppTracker.shared.activeBundleID // 🌟 수복된 추적기 적용
         let snapshot = SettingsManager.shared.snapshot
 
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
@@ -160,11 +157,9 @@ class WindowMonitor {
         self.trackedWindowIDs.removeAll()
     }
 
-    // ── 🌟 [수복 포인트 2: 안전한 멱등성 윈도우 파괴 보초병 이식 커널] ──
     private func registerWindowDestructionObserver(window: AXUIElement, observer: AXObserver) {
         guard let windowID = getWindowID(from: window) else { return }
         
-        // 중복 방어선 작동: 이미 등록된 창이라면 가볍게 무시하여 커널 패킷 지연을 사전에 봉쇄합니다.
         guard !trackedWindowIDs.contains(windowID) else { return }
         trackedWindowIDs.insert(windowID)
         
@@ -185,11 +180,11 @@ class WindowMonitor {
         guard self.currentPID != pid else { return }
         self.currentPID = pid
         
-        // ── 🌟 세션 교체 시 기존 앱의 윈도우 인덱스 잔재를 깨끗이 플러시 ──
         self.trackedWindowIDs.removeAll()
 
+        // 🌟 [수복] 기존 옵저버 해제 시에도 공통 모드(.commonModes)에서 소스를 확실히 정리하도록 정산
         if let observer = self.axObserver, let rl = self.observerRunLoop {
-            CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .defaultMode)
+            CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
             self.axObserver = nil
             self.observerRunLoop = nil
         }
@@ -206,7 +201,6 @@ class WindowMonitor {
                 else if nsNotif == kAXTitleChangedNotification as String { mon.handleWindowTitleChanged(element: el) }
                 else if nsNotif == kAXUIElementDestroyedNotification as String { mon.handleWindowDestroyed(element: el) }
                 else if nsNotif == kAXWindowCreatedNotification as String {
-                    // 🌟 [수복 완료] 실시간으로 생성된 새 창도 하단의 멱등성 코어로 안전 라우팅 이식합니다.
                     mon.registerWindowDestructionObserver(window: el, observer: obs)
                 }
             }
@@ -217,18 +211,17 @@ class WindowMonitor {
             let appRef = AXUIElementCreateApplication(pid)
             let refcon = Unmanaged.passUnretained(self).toOpaque()
 
-            // ── 🔒 [역순 정산 우주방어 파이프라인 정렬 완료] ──
-            // 1) 런루프 소스를 최우선 순위로 대장에 먼저 결속하여, 이 찰나에 발생하는 하드웨어 Mach 알림이 기화되는 것을 막습니다.
             let mainRunLoop = CFRunLoopGetMain()
-            CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .defaultMode)
+            
+            // 🌟 [수복] 런루프 소스를 등록할 때 kCFRunLoopCommonModes(.commonModes)로 격상 이식!
+            // 이로써 마우스 스크롤 휠 홀딩, 창 드래깅, 메뉴바 진입 등의 모드 상태 변경 시에도 윈도우 통로가 상시 작동합니다.
+            CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
             self.observerRunLoop = mainRunLoop
 
-            // 2) 앱 기본 타격 알림판 리스트업 선제 가입
             AXObserverAddNotification(newObs, appRef, kAXFocusedWindowChangedNotification as CFString, refcon)
             AXObserverAddNotification(newObs, appRef, kAXTitleChangedNotification as CFString, refcon)
             AXObserverAddNotification(newObs, appRef, kAXWindowCreatedNotification as CFString, refcon)
 
-            // 3) 알림판을 켜둔 안전 상태에서 후방 스냅샷 목록을 긁어와 미감지 유령 창 유실률을 0.0%로 소각합니다.
             var windowList: CFTypeRef?
             if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowList) == .success,
                let windows = windowList as? [AXUIElement] {

@@ -226,20 +226,18 @@ struct ProfileManagementView: View {
         newProfile.id = UUID()
         newProfile.name = newProfile.name + " Copy"
         
-        // 1. 배치 가드를 켜서 뷰 리렌더링 및 불필요한 연속 저장을 일시 차단합니다.
-        settings.isBatchUpdating = true
+        // 1. [수복] 배치 가드 시작: 메서드 호출 방식으로 변경
+        settings.beginBatchUpdate()
         
-        // 2. 인메모리 장부 수정 집행 (이 시점의 didSet은 저장을 스킵합니다)
+        // 2. 인메모리 장부 수정 집행
         settings.profiles.append(newProfile)
         self.selection = newProfile.id
         settings.activeProfileID = newProfile.id
         
-        // 3. 밸브를 열어 배치 가드를 완벽하게 해제합니다.
-        settings.isBatchUpdating = false
+        // 3. [수복] 배치 가드 해제: 메서드 호출 방식으로 변경
+        settings.endBatchUpdate()
         
-        // 🌟 [9번 리뷰 수복 포인트: 최종 상태 명시적 정산 플러시]
-        // 가드가 풀린 깨끗한 시점에 명시적으로 디바운스 디스크 쓰기와
-        // 로컬 스냅샷 갱신 파이프라인을 트리거하여 데이터 무결성을 $100\%$ 확보합니다.
+        // 이후 명시적 저장 및 스냅샷 갱신은 기존과 동일
         settings.scheduleSave()
         settings.updateSnapshot()
 

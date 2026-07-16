@@ -44,7 +44,7 @@ class SettingsManager: ObservableObject {
     let icloudStore = NSUbiquitousKeyValueStore.default
     private var _snapshot = SettingsSnapshot(isTextExpansionEnabled: false, textExpansionRules: [])
     
-    private var saveTask: Task<Void, Never>?
+    private var saveTask: Swift.Task<Void, Never>?
     nonisolated private let saveQueue = DispatchQueue(label: "com.peepworks.langswitcher.save", qos: .background)
     
     private let maxLogCount = 500
@@ -53,7 +53,9 @@ class SettingsManager: ObservableObject {
     private var logTrimThreshold: Int { maxLogCount + logTrimBuffer }
     
     @Published var selectedTab: SettingsTab? = .general
-    @MainActor var isBatchUpdating: Bool = false
+    
+    @Published private(set) var isBatchUpdating: Bool = false
+    private var batchUpdateCount: Int = 0
     
     @Published private(set) var recentLogs: [ActionLog] = []
     
@@ -67,6 +69,23 @@ class SettingsManager: ObservableObject {
 
     private var profilesFileURL: URL {
         return applicationSupportDirectoryURL.appendingPathComponent("profiles.json")
+    }
+
+    @MainActor
+    func beginBatchUpdate() {
+        batchUpdateCount += 1
+        isBatchUpdating = batchUpdateCount > 0
+    }
+    
+    @MainActor
+    func endBatchUpdate() {
+        batchUpdateCount = max(0, batchUpdateCount - 1)
+        isBatchUpdating = batchUpdateCount > 0
+        
+        if batchUpdateCount == 0 {
+            self.updateSnapshot()
+            self.scheduleSave()
+        }
     }
 
     // MARK: - Global Settings
@@ -258,14 +277,15 @@ class SettingsManager: ObservableObject {
         }
     }
     
-    @Published var activeProfileID: UUID {
+    // 🌟 [수복 포인트] 기본값을 넣어주어 초기화 안전망을 통과시킵니다.
+    @Published var activeProfileID: UUID = UUID() {
         didSet {
             guard oldValue != activeProfileID else { return }
             
             applyActiveProfile()
             NotificationCenter.default.post(name: .profileDidSwitch, object: nil)
 
-            Task { @MainActor in
+            Swift.Task { @MainActor in
                 await self.saveAll()
                 self.syncToCloud()
                 
@@ -288,21 +308,32 @@ class SettingsManager: ObservableObject {
     }
     
     private init() {
-        self.isBatchUpdating = true
         let d = UserDefaults.standard
         let fileManager = FileManager.default
         
-        isCtrlActive = d.bool(forKey: "isCtrlActive")
-        isCmdActive = d.bool(forKey: "isCmdActive")
-        isOptActive = d.bool(forKey: "isOptActive")
-        showVisualFeedback = d.object(forKey: "showVisualFeedback") as? Bool ?? true
-        isTestMode = d.bool(forKey: "isTestMode")
-        toggleKeyCode = UInt16(d.integer(forKey: "toggleKeyCode"))
-        toggleModifierFlags = UInt64(d.integer(forKey: "toggleModifierFlags"))
-        toggleDisplayString = d.string(forKey: "toggleDisplayString") ?? ""
-        ctrlLang = d.string(forKey: "ctrlLang") ?? ""
-        cmdLang = d.string(forKey: "cmdLang") ?? ""
-        optLang = d.string(forKey: "optLang") ?? ""
+        self.isCtrlActive = d.bool(forKey: "isCtrlActive")
+        self.isCmdActive = d.bool(forKey: "isCmdActive")
+        self.isOptActive = d.bool(forKey: "isOptActive")
+        self.showVisualFeedback = d.object(forKey: "showVisualFeedback") as? Bool ?? true
+        self.isTestMode = d.bool(forKey: "isTestMode")
+        self.toggleKeyCode = UInt16(d.integer(forKey: "toggleKeyCode"))
+        self.toggleModifierFlags = UInt64(d.integer(forKey: "toggleModifierFlags"))
+        self.toggleDisplayString = d.string(forKey: "toggleDisplayString") ?? ""
+        self.ctrlLang = d.string(forKey: "ctrlLang") ?? ""
+        self.cmdLang = d.string(forKey: "cmdLang") ?? ""
+        self.optLang = d.string(forKey: "optLang") ?? ""
+        
+        self.isBatchUpdating = false
+        self.batchUpdateCount = 0
+        self.recentLogs = []
+        self.customShortcutCache = [:]
+        self.appLaunchShortcutCache = [:]
+        
+        // ✨ 이제 activeProfileID를 비롯한 모든 변수가 채워졌으므로 컴파일러가 안심하고 통과시킵니다.
+        self.beginBatchUpdate()
+        defer {
+            self.endBatchUpdate()
+        }
         
         let appSupportPaths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let localProfilesFileURL = appSupportPaths[0]
@@ -348,18 +379,12 @@ class SettingsManager: ObservableObject {
             migratedPayload.isAutoTypoCorrectionOnEnterEnabled = d.bool(forKey: "isAutoTypoCorrectionOnEnterEnabled")
             migratedPayload.isAppSpecificEnabled = d.bool(forKey: "isAppSpecificEnabled")
             migratedPayload.isBrowserDomainModeEnabled = d.bool(forKey: "isBrowserDomainModeEnabled")
-
-            // 🌟 이 위치에서 구조체 생성이 모호해지지 않도록 명확히 파라미터 매핑을 확약합니다.
+            
             migratedPayload.typoExcludedWords = TypoExceptionManager.shared.excludedWords
-
+            
             let defaultProfile = SettingsProfile(
-                id: UUID(),
-                name: String(localized: "Default Profile"),
-                note: String(localized: "Basic configuration"),
-                isDefault: true,
-                createdAt: Date(),
-                updatedAt: Date(),
-                payload: migratedPayload // 🌟 모델의 Payload와 일대일 매칭 보장
+                id: UUID(), name: String(localized: "Default Profile"), note: String(localized: "Basic configuration"),
+                isDefault: true, createdAt: Date(), updatedAt: Date(), payload: migratedPayload
             )
             tempProfiles = [defaultProfile]
             needsMigration = true
@@ -378,7 +403,7 @@ class SettingsManager: ObservableObject {
         self.applyActiveProfile()
         
         if needsMigration {
-            Task { @MainActor in
+            Swift.Task { @MainActor in
                 await self.saveAll()
             }
             
@@ -409,11 +434,10 @@ class SettingsManager: ObservableObject {
     }
 
     func saveAll() async {
-        // 🌟 저장 직전 실시간 메모리상의 제외 단어 목록을 액티브 프로필 데이터 홀더와 강제 동기화(Sync)합니다.
         if let index = self.profiles.firstIndex(where: { $0.id == self.activeProfileID }) {
             self.profiles[index].payload.typoExcludedWords = TypoExceptionManager.shared.excludedWords
         }
-        
+            
         let profilesToSave = self.profiles
         let directoryURL = self.applicationSupportDirectoryURL
         let fileURL = self.profilesFileURL
@@ -437,19 +461,15 @@ class SettingsManager: ObservableObject {
     }
     
     private func applyActiveProfile() {
-        self.isBatchUpdating = true
-        
+        self.beginBatchUpdate()
         defer {
-            self.isBatchUpdating = false
-            self.updateSnapshot()
+            self.endBatchUpdate()
         }
         
         let payload = activeProfile.payload
         DomainRuleManager.shared.rules = payload.domainRules
         updateShortcutCaches()
         
-        // 🌟 [수복 2 구역: 프로필 교체 시 예외 단어 관리자 하이드레이션]
-        // 불러온 프로필에 저장된 고유 예외 단어가 있다면 UI 컴포넌트 실시간 배열로 롤백시킵니다.
         if !payload.typoExcludedWords.isEmpty {
             TypoExceptionManager.shared.excludedWords = payload.typoExcludedWords
         }
@@ -467,8 +487,6 @@ class SettingsManager: ObservableObject {
     @MainActor
     func updateSnapshot() {
         let payload = activeProfile.payload
-        
-        // 실시간 예외 단어를 매니저 레이어로부터 캡처하여 동기화
         let activeExcludedWords = TypoExceptionManager.shared.excludedWords
         
         var newSnapshot = SettingsSnapshot(
@@ -505,9 +523,7 @@ class SettingsManager: ObservableObject {
             textExpansionRules: payload.textExpansionRules
         )
         
-        // 🌟 [수복 3 구역: 변환 엔진용 고속 조회 스냅샷 데이터 주입]
         newSnapshot.typoExcludedWords = activeExcludedWords
-        
         newSnapshot.buildCaches()
         InputShortcutEngine.shared.syncEngineCache(newSnapshot)
         
@@ -532,7 +548,7 @@ class SettingsManager: ObservableObject {
         guard !isBatchUpdating else { return }
         
         saveTask?.cancel()
-        saveTask = Task { @MainActor [weak self] in
+        saveTask = Swift.Task { @MainActor [weak self] in
             guard let self = self else { return }
             do {
                 try await Task.sleep(for: .seconds(0.5))
@@ -609,7 +625,7 @@ class SettingsManager: ObservableObject {
         let rulesToExport = activeProfile.payload.textExpansionRules
         do {
             let data = try Self.profileEncoder.encode(rulesToExport)
-            Task.detached(priority: .userInitiated) {
+            Swift.Task.detached(priority: .userInitiated) {
                 do {
                     try data.write(to: url)
                     await completion(true, nil)
@@ -624,17 +640,15 @@ class SettingsManager: ObservableObject {
 
     @MainActor
     func importTextExpansionRules(from url: URL, completion: @escaping @MainActor (Bool, Error?) -> Void = { _, _ in }) {
-        Task.detached(priority: .userInitiated) {
+        Swift.Task.detached(priority: .userInitiated) {
             do {
                 let data = try Data(contentsOf: url)
                 let decodedRules = try JSONDecoder().decode([TextExpansionRule].self, from: data)
                 
                 await MainActor.run {
-                    self.isBatchUpdating = true
+                    self.beginBatchUpdate()
                     defer {
-                        self.isBatchUpdating = false
-                        self.updateSnapshot()
-                        self.scheduleSave()
+                        self.endBatchUpdate()
                     }
                     
                     var profile = self.activeProfile
@@ -673,7 +687,6 @@ class SettingsManager: ObservableObject {
         savePanel.nameFieldStringValue = "LangSwitcher_Profiles_Backup.json"
         savePanel.title = String(localized: "Export Profiles Backup")
         
-        // 백업 JSON 생성 전 실시간 상태 반영 강제 확약
         if let index = self.profiles.firstIndex(where: { $0.id == self.activeProfileID }) {
             self.profiles[index].payload.typoExcludedWords = TypoExceptionManager.shared.excludedWords
         }
@@ -682,7 +695,7 @@ class SettingsManager: ObservableObject {
             guard response == .OK, let url = savePanel.url else { return }
             do {
                 let data = try Self.profileEncoder.encode(self.profiles)
-                Task.detached(priority: .userInitiated) {
+                Swift.Task.detached(priority: .userInitiated) {
                     do {
                         try data.write(to: url)
                         dprint("✅ Profiles successfully exported to \(url.lastPathComponent)")
@@ -708,7 +721,7 @@ class SettingsManager: ObservableObject {
             guard response == .OK, let url = openPanel.url else { return }
             let localDecoder = Self.profileDecoder
             
-            Task.detached(priority: .userInitiated) {
+            Swift.Task.detached(priority: .userInitiated) {
                 do {
                     let data = try Data(contentsOf: url)
                     let importedProfiles = try localDecoder.decode([SettingsProfile].self, from: data)
@@ -724,18 +737,14 @@ class SettingsManager: ObservableObject {
                             return
                         }
                         
-                        self.isBatchUpdating = true
+                        self.beginBatchUpdate()
                         defer {
-                            self.isBatchUpdating = false
-                            self.updateSnapshot()
-                            self.scheduleSave()
+                            self.endBatchUpdate()
                         }
                         
                         self.profiles = importedProfiles
                         if let firstProfile = importedProfiles.first {
                             self.activeProfileID = firstProfile.id
-                            
-                            // 🌟 복원 직후 복원된 액티브 프로필의 예외 단어를 실시간 매니저로 완벽 하이드레이션(동기화)
                             TypoExceptionManager.shared.excludedWords = firstProfile.payload.typoExcludedWords
                         }
                         

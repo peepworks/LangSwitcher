@@ -32,20 +32,18 @@ class InputSourceManager: ObservableObject {
     static let shared = InputSourceManager()
     @Published var availableKeyboards: [MacKeyboard] = []
 
+    // 🌟 [수복] 연속 언어 변경 시 무거운 UI/햅틱/사운드의 낭비를 막는 스로틀링 타임 (80ms)
+    private let uiEffectDebounceInterval: TimeInterval = 0.08
+    private var uiEffectTask: Swift.Task<Void, Never>?
+
     private init() {
-        // 초기화 시점에 안전하게 메인 스레드 비동기 루프로 스케줄링을 이관합니다.
         fetchKeyboards()
     }
 
     // MARK: - 시스템 키보드 입력 소스 동적 인출 엔진
 
     func fetchKeyboards() {
-        // 🌟 [우주 방어 수복 포인트] Carbon TIS/TSM 계통 커널 API는 반드시 메인 스레드(Queue)에서 실행되어야 합니다.
-        // Task 구조 안에서 명시적으로 메인 스레드 바인딩을 보장하여 SIGTRAP 5 크래시를 원천 박멸합니다.
         Task { @MainActor in
-            
-            // 데이터 수집 연산은 메인 스레드에서 안전하게 집행합니다.
-            // (이 API는 캐시된 장부를 긁어오므로 메인 큐에서 동작해도 프레임 드롭이 전혀 없습니다)
             guard let sourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else {
                 self.availableKeyboards = []
                 return
@@ -70,12 +68,12 @@ class InputSourceManager: ObservableObject {
                 localKeyboards.append(MacKeyboard(id: id, name: name))
             }
 
-            // 인메모리 장부에 원자적 플러시 대입 완료
             self.availableKeyboards = localKeyboards
             dprint("✨ [InputSource] 메인 액터 격리 보장 하에 순정 TIS 키보드 레지스트리 \(localKeyboards.count)개 인출 완료.")
         }
     }
 
+    // 🌟 [수복 정산 완료] 저수준 언어 전환은 딜레이 없이 실행하고, 무거운 피드백(UI/Sound/HUD)만 스로틀링 적용
     func switchLanguage(to id: String) {
         if let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
            let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) {
@@ -90,20 +88,38 @@ class InputSourceManager: ObservableObject {
         let filter = [kTISPropertyInputSourceID: id] as CFDictionary
         if let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
            let target = list.first {
+            
+            // 1. [즉시 처리] OS 입력 레이아웃 전환은 지연 없이 바로 즉시 집행합니다. (타이핑 무결성 유지)
             TISSelectInputSource(target)
 
-            // 데이터 분석 커널에 안전 기입
-            StatsManager.shared.incrementLanguageSwitch()
+            // 2. [부수 효과 예약 제거] 기존 대기 중인 UI 렌더링/사운드 재생 태스크가 있다면 빛의 속도로 취소시킵니다.
+            uiEffectTask?.cancel()
 
-            EdgeGlowManager.shared.showGlow(forLanguage: id)
+            // 3. [스로틀링 레이어 작동] 80ms 디바운스 대기열을 새로이 수립합니다.
+            uiEffectTask = Swift.Task { @MainActor in
+                do {
+                    // 지정된 시간 동안 추가 입력 소스 요청이 없는지 관망합니다.
+                    try await Swift.Task.sleep(for: .seconds(self.uiEffectDebounceInterval))
+                    guard !Swift.Task.isCancelled else { return }
 
-            // 라벨 동기화 정산
-            SensoryFeedbackManager.shared.playFeedback(for: id)
+                    // 🌟 관망 시간 동안 조용했다면, 최종 결정된 최적 소스의 무거운 피드백을 단 한 번만 일괄 배출합니다.
+                    StatsManager.shared.incrementLanguageSwitch()
+                    EdgeGlowManager.shared.showGlow(forLanguage: id)
+                    SensoryFeedbackManager.shared.playFeedback(for: id)
 
-            if SettingsManager.shared.snapshot.showVisualFeedback {
-                if let namePtr = TISGetInputSourceProperty(target, kTISPropertyLocalizedName) {
-                    let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
-                    HUDManager.shared.showHUD(languageName: name)
+                    if SettingsManager.shared.snapshot.showVisualFeedback {
+                        if let namePtr = TISGetInputSourceProperty(target, kTISPropertyLocalizedName) {
+                            let name = Unmanaged<CFString>.fromOpaque(namePtr).takeUnretainedValue() as String
+                            HUDManager.shared.showHUD(languageName: name)
+                        }
+                    }
+                    
+                    #if DEBUG
+                    dprint("🎨 [UI Sync] 최종 정산 언어(\(id))의 헤비 비주얼/하드웨어 이펙트 정산 완결.")
+                    #endif
+
+                } catch {
+                    // Task가 취소되면 리소스 회수 후 가볍게 아웃
                 }
             }
         }
@@ -126,7 +142,6 @@ class InputSourceManager: ObservableObject {
 
     // MARK: - Browser Tab Memory Helpers
 
-    /// 현재 활성화된 키보드 입력 소스의 고유 ID를 안전하게 반환합니다.
     func currentInputSourceID() -> String {
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
@@ -135,7 +150,6 @@ class InputSourceManager: ObservableObject {
         return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
     }
 
-    /// 주어진 고유 ID를 가진 입력 소스로 즉시 전환합니다.
     func switchInputSource(to sourceID: String) {
         let filter = [kTISPropertyInputSourceID as String: sourceID] as CFDictionary
         guard let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource],
@@ -144,7 +158,6 @@ class InputSourceManager: ObservableObject {
         TISSelectInputSource(source)
     }
 
-    /// 현재 선택된 입력 소스의 로컬라이즈 이름을 반환합니다.
     var currentInputSourceName: String {
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let namePtr = TISGetInputSourceProperty(currentSource, kTISPropertyLocalizedName) else {
