@@ -22,9 +22,7 @@ import Cocoa
 import Foundation
 
 // ====================================================================
-// 메인 액터(@MainActor) 요새 외부에 독립적인 Sendable 구조체를 신설합니다.
-// 이제 EventMonitor의 백그라운드 CGEvent 콜백 스레드에서도 아무런 런타임 크래시 위협이나
-// await 지연 없이 0ms 만에 즉각적으로 현재 앱 ID를 조회할 수 있습니다.
+// 🌟 활성 앱 글로벌 무격리 추적자 (Nonisolated Tracker)
 // ====================================================================
 struct ActiveAppTracker: Sendable {
     private final class Storage: @unchecked Sendable {
@@ -44,7 +42,6 @@ struct ActiveAppTracker: Sendable {
     }
 }
 
-// 앱 전역에서 락 없이 자유롭게 찌를 수 있는 글로벌 장부 인스턴스 개설
 let globalActiveAppTracker = ActiveAppTracker()
 
 // ====================================================================
@@ -63,7 +60,6 @@ class AppMonitor {
     func start() {
         if observer != nil { return }
         
-        // 시동 시 메모리 자동 치유 타이머 가동
         MemoryMonitor.shared.startMonitoring()
         
         let initialBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
@@ -94,7 +90,19 @@ class AppMonitor {
                     guard !Task.isCancelled else { return }
                     guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID else { return }
                     
-                    WindowMonitor.shared.observeApp(pid: app.processIdentifier)
+                    // 🌟 [수복] 크롬/엣지 웹앱(PWA)은 실제 UI 엘리먼트가 메인 브라우저 커널 소유이므로 PID 우회 관측 집행
+                    var pidToObserve = app.processIdentifier
+                    if bundleID.hasPrefix("com.google.Chrome.app.") {
+                        if let chrome = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first {
+                            pidToObserve = chrome.processIdentifier
+                        }
+                    } else if bundleID.hasPrefix("com.microsoft.Edge.app.") {
+                        if let edge = NSRunningApplication.runningApplications(withBundleIdentifier: "com.microsoft.Edge").first {
+                            pidToObserve = edge.processIdentifier
+                        }
+                    }
+                    
+                    WindowMonitor.shared.observeApp(pid: pidToObserve)
                 }
             }
         }
@@ -149,7 +157,6 @@ class MemoryMonitor {
     
     private let thresholdInBytes: UInt64 = 200_000_000
     
-    // ─── 🌟 [수복: 자가 치유 주기적 관측성 영구 장부 필드] ───
     private var memoryRecoveryCount: Int {
         get { UserDefaults.standard.integer(forKey: "memoryRecoveryCount") }
         set { UserDefaults.standard.set(newValue, forKey: "memoryRecoveryCount") }
@@ -159,7 +166,6 @@ class MemoryMonitor {
         get { UserDefaults.standard.double(forKey: "lastMemoryRecoveryAt") }
         set { UserDefaults.standard.set(newValue, forKey: "lastMemoryRecoveryAt") }
     }
-    // ────────────────────────────────────────────────────────
     
     private init() {} // 싱글톤 보호
     
@@ -185,8 +191,6 @@ class MemoryMonitor {
         dprint("🧠 [MemoryMonitor] 메모리 자동 치유 타이머 자원을 클린하게 해제 정산했습니다.")
     }
 
-    // MARK: - 능동적 메모리 자기치유 커널 (즉시 동기 집행 및 로그 관측 사양)
-
     private func checkMemoryUsage() {
         guard let currentMemory = Self.getCurrentPhysicalFootprint() else { return }
     
@@ -194,7 +198,6 @@ class MemoryMonitor {
             let memoryInMB = currentMemory / 1024 / 1024
             dprint("🚨 [MemoryMonitor] 임계값 초과 감지: \(memoryInMB) MB. 즉각적인 자기치유(Self-Healing)를 집행합니다.")
             
-            // 🌟 [수복 핵심] 메모리 퍼지 시점에 관측성 카운터 가산 및 타임스탬프 영구 박제
             self.memoryRecoveryCount += 1
             self.lastMemoryRecoveryAt = Date().timeIntervalSince1970
             
@@ -206,18 +209,16 @@ class MemoryMonitor {
                 timestamp: Date(),
                 targetApp: "LangSwitcher System",
                 appliedRule: "Memory Alert",
-                finalInputSource: "Purged at \(memoryInMB) MB (Total: \(self.memoryRecoveryCount)연속)",
+                finalInputSource: "Purged at \(memoryInMB) MB (Total: \(self.memoryRecoveryCount)회)",
                 result: .success,
                 failureReason: .none
             )
             SettingsManager.shared.addLog(log)
     
-            // 실제 메모리 소각 집행 구역
             BrowserTabManager.shared.clearMemory()
             DecisionTraceManager.shared.clear()
             SettingsManager.shared.clearLogs()
             
-            // 필요 시 창 메모리 캐시도 함께 동기 정산 연동 가능
             WindowMonitor.shared.clearMemory()
     
             dprint("🧹 [MemoryMonitor] 메인 액터 동기 결속 영역 내에서 모든 캐시 퍼지가 지연 없이 즉시 완료되었습니다.")

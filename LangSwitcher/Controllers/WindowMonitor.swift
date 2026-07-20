@@ -33,7 +33,6 @@ class WindowMonitor {
 
     private let windowMemory = WindowLRUCache(capacity: 200)
     
-    // ── 🌟 [멱등성 윈도우 세션 추적 장부 백킹 필드] ──
     private var trackedWindowIDs = Set<CGWindowID>()
 
     private var axObserver: AXObserver?
@@ -78,7 +77,6 @@ class WindowMonitor {
 
     // MARK: - 🌟 윈도우 포커스 제어 커널 및 더블 체크 디바운스 트랙
     func handleWindowFocusChanged(element: AXUIElement) {
-        // 1단계: 선행 예약되어 타이밍 대기 중이던 모든 유령 비동기 작업 즉시 파괴
         pendingWindowSwitch?.cancel()
         
         let snapshot = SettingsManager.shared.snapshot
@@ -87,7 +85,8 @@ class WindowMonitor {
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
 
-        let latestAppID = WorkspaceAppTracker.shared.activeBundleID
+        // 🌟 [수복] 데드 링크였던 추적기를 글로벌 장부 연동형(globalActiveAppTracker)으로 전면 교체!
+        let latestAppID = globalActiveAppTracker.get()
 
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
             BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
@@ -123,27 +122,23 @@ class WindowMonitor {
         if let lang = targetLang {
             let delay = snapshot.appDelays.first(where: { $0.bundleIdentifier == latestAppID })?.delay ?? 0.05
             
-            // 컨텍스트 정보 락 박제
             let expectedPID = pid
             let expectedWindowID = windowID
             let currentTrace = traceToRecord
             
-            // 2단계: 무명 클로저를 철회 가능한 명시적 DispatchWorkItem 구조로 격상 수복
             let work = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 
-                // [최종 더블 체크 가드 체결] 자고 깨어났더니 이미 사용자가 다른 창으로 포커스를 옮겼는지 검증
                 guard let currentActiveElement = self.activeWindowElement,
                       let nowWindowID = self.getWindowID(from: currentActiveElement),
                       self.currentPID == expectedPID,
                       nowWindowID == expectedWindowID else {
                     #if DEBUG
-                    dprint("🛑 [WindowMonitor] 유령 포커스(Stale Action) 완벽 차단 — 사용자가 대기 지연 시간 내에 다른 창으로 이동함.")
+                    dprint("🛑 [WindowMonitor] 유령 포커스 완벽 차단.")
                     #endif
                     return
                 }
                 
-                // 3단계: 무결성이 확약된 최종 컨텍스트 시점에 안전하게 OS 언어 토글 집행
                 InputSourceManager.shared.switchLanguage(to: lang)
                 if let trace = currentTrace { DecisionTraceManager.shared.record(trace) }
             }
@@ -168,7 +163,8 @@ class WindowMonitor {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
 
         let latestID = InputSourceManager.shared.currentInputSourceID()
-        let latestAppID = WorkspaceAppTracker.shared.activeBundleID
+        // 🌟 [수복] 여기도 동일하게 새 글로벌 추적기로 안전하게 전환 마이그레이션
+        let latestAppID = globalActiveAppTracker.get()
         let snapshot = SettingsManager.shared.snapshot
 
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
@@ -208,10 +204,19 @@ class WindowMonitor {
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isWindowMemoryEnabled || snapshot.isAppSpecificEnabled || snapshot.isBrowserTabMemoryEnabled else { return }
 
-        guard self.currentPID != pid else { return }
-        self.currentPID = pid
+        // 🌟 [수복] 크롬 ↔ 크롬 웹앱 전환 시 PID(크롬 본체)가 일치하여 얼어붙는 하드 가드를 격파!
+        // 동일 브라우저 코어 내에서 타겟 웹앱 컨텍스트만 바뀐 것이므로 옵저버는 유지하되, 포커스 판단부만 강제 새로고침 유도
+        if self.currentPID == pid {
+            let appElement = AXUIElementCreateApplication(pid)
+            var focusedWindow: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
+               let windowRef = focusedWindow, CFGetTypeID(windowRef) == AXUIElementGetTypeID() {
+                self.handleWindowFocusChanged(element: windowRef as! AXUIElement)
+            }
+            return
+        }
         
-        // 🌟 [수복] observeApp이 엉뚱한 WorkItem 블록을 안고 오동작하던 구역을 원복 및 순정 포맷 정산
+        self.currentPID = pid
         self.trackedWindowIDs.removeAll()
 
         if let observer = self.axObserver, let rl = self.observerRunLoop {
