@@ -134,33 +134,44 @@ extension EventMonitor {
     }
 
     // MARK: - 🌟 IDE 컨텍스트 인지형 하이브리드 대치 엔진
-    func performTextExpansion(triggerLength: Int, snippet: RenderedSnippet, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
+    func performTextExpansion(triggerLength: Int, template: String, triggerKeyCode: UInt16, triggerText: String = "Unknown") {
+        self.snippetInsertionTask?.cancel()
+
         self.batchDelete(count: triggerLength)
 
-        let insertText = snippet.text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\n", with: "\r")
-        let insertLength = insertText.count
-
-        Task {
-            let currentAppID = globalActiveAppTracker.get()
+        self.snippetInsertionTask = Task { [weak self] in
+            guard let self = self else { return }
             
-            // 🌟 [수복 정산 핵심] VSCode, Xcode 등 자동완성 에디터 목록을 타격 감지합니다.
+            let snippet = TextExpander.shared.expand(template: template)
+            
+            let insertText = snippet.text
+                .replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\n", with: "\r")
+            let insertLength = insertText.count
+
+            let currentAppID = globalActiveAppTracker.get()
             let autoCompletingIDEs = ["com.microsoft.VSCode", "com.apple.dt.Xcode", "com.google.android.studio"]
             let isIDE = autoCompletingIDEs.contains(where: { currentAppID.lowercased().contains($0.lowercased()) }) || autoCompletingIDEs.contains(currentAppID)
             
-            if isIDE {
-                // 1) IDE 환경: 클립보드 복사/붙여넣기 우회 트랙 전개 (자동완성 간섭 강제 소각)
+            let hasNavigation = !snippet.tabStops.isEmpty || snippet.finalCaretOffset != nil
+            let isLongText = insertLength >= 200
+
+            guard !Task.isCancelled else { return }
+            
+            if isIDE || (isLongText && !hasNavigation) {
                 await self.insertViaClipboardPacingAsync(insertText)
             } else {
-                // 2) 일반 환경: 순정 1-by-1 아토믹 타이핑 트랙 전개
                 await self.insertLongUnicodeTextAsync(insertText)
             }
             
-            // 에디터 내부 안착 대기 마진
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
             
-            let hasNavigation = !snippet.tabStops.isEmpty || snippet.finalCaretOffset != nil
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch { return }
+            
+            guard !Task.isCancelled else { return }
+            
             if !hasNavigation {
                 self.postTriggerKey(keyCode: triggerKeyCode)
             }
@@ -182,8 +193,14 @@ extension EventMonitor {
                     await self.moveCursorLeftAsync(count: initialMoveLeft)
                 }
                 
+                guard !Task.isCancelled else { return }
+                
                 if firstStop.range.length > 0 {
-                    try? await Task.sleep(nanoseconds: 20_000_000)
+                    do {
+                        try await Task.sleep(nanoseconds: 20_000_000)
+                    } catch { return }
+                    
+                    guard !Task.isCancelled else { return }
                     await self.simulateArrowMovementAsync(keyCode: 124, count: firstStop.range.length, withShift: true)
                 }
             } else if let offset = snippet.finalCaretOffset {
@@ -192,6 +209,8 @@ extension EventMonitor {
                     await self.moveCursorLeftAsync(count: moveLeftCount)
                 }
             }
+
+            guard !Task.isCancelled else { return }
 
             StatsManager.shared.incrementTextExpansion()
             let trace = TraceFactory.create(event: .snippetExpansion, result: .expanded, reason: .snippetExpanded(trigger: triggerText))
@@ -204,25 +223,34 @@ extension EventMonitor {
         let leftArrowKeyCode: CGKeyCode = 123
         let source = CGEventSource(stateID: .combinedSessionState)
         for _ in 0..<count {
+            guard !Task.isCancelled else { break }
+            
             let down = CGEvent(keyboardEventSource: source, virtualKey: leftArrowKeyCode, keyDown: true)
             let up = CGEvent(keyboardEventSource: source, virtualKey: leftArrowKeyCode, keyDown: false)
             down?.setIntegerValueField(.eventSourceUserData, value: 9999)
             up?.setIntegerValueField(.eventSourceUserData, value: 9999)
             
             down?.post(tap: .cghidEventTap)
-            try? await Task.sleep(nanoseconds: 2_000_000)
-            up?.post(tap: .cghidEventTap)
-            try? await Task.sleep(nanoseconds: 2_000_000)
+            
+            do {
+                try await Task.sleep(nanoseconds: 2_000_000)
+                guard !Task.isCancelled else { break }
+                up?.post(tap: .cghidEventTap)
+                try await Task.sleep(nanoseconds: 2_000_000)
+            } catch {
+                break
+            }
         }
     }
 
-    // 🌟 일반 메모장 환경용 1-by-1 스트림 주입 커널
     func insertLongUnicodeTextAsync(_ text: String) async {
         let chars = Array(text.utf16)
         if chars.isEmpty { return }
 
         let source = CGEventSource(stateID: .combinedSessionState)
         for char in chars {
+            guard !Task.isCancelled else { break }
+            
             var unicodeChar = char
             if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
                let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
@@ -231,18 +259,26 @@ extension EventMonitor {
                 down.setIntegerValueField(.eventSourceUserData, value: 9999)
                 
                 up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unicodeChar)
+                // 🌟 [정산] 오타 수정 완료: .setIntegerValueField -> .eventSourceUserData
                 up.setIntegerValueField(.eventSourceUserData, value: 9999)
 
                 down.post(tap: .cghidEventTap)
-                try? await Task.sleep(nanoseconds: 1_000_000)
-                up.post(tap: .cghidEventTap)
-                try? await Task.sleep(nanoseconds: 1_000_000)
+                
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                    guard !Task.isCancelled else { break }
+                    up.post(tap: .cghidEventTap)
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                } catch {
+                    break
+                }
             }
         }
     }
 
-    // 🌟 IDE 환경 전용 고정밀 클립보드 원자적 주입 커널 (드르륵 현상 완전 무력화)
     private func insertViaClipboardPacingAsync(_ text: String) async {
+        guard !Task.isCancelled else { return }
+        
         let pasteboard = NSPasteboard.general
         let oldString = pasteboard.string(forType: .string)
         
@@ -262,8 +298,15 @@ extension EventMonitor {
             vUp.post(tap: .cghidEventTap)
         }
 
-        // 🌟 OS 이벤트 루프가 붙여넣기를 안전하게 집행할 수 있도록 비동기 타임 마진을 칼같이 보장합니다.
-        try? await Task.sleep(nanoseconds: 80_000_000) // 80ms 정밀 홀딩
+        do {
+            try await Task.sleep(nanoseconds: 80_000_000)
+        } catch {
+            if let old = oldString {
+                pasteboard.clearContents()
+                pasteboard.setString(old, forType: .string)
+            }
+            return
+        }
 
         if let old = oldString {
             pasteboard.clearContents()
@@ -272,7 +315,8 @@ extension EventMonitor {
     }
     
     func insertLongUnicodeText(_ text: String, completion: @escaping @MainActor @Sendable () -> Void) {
-        Task {
+        self.snippetInsertionTask?.cancel()
+        self.snippetInsertionTask = Task {
             await insertLongUnicodeTextAsync(text)
             completion()
         }

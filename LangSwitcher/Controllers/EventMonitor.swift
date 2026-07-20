@@ -41,8 +41,6 @@ class EventMonitor {
     var _singleModifierKeyCode: UInt16? = nil
     
     // 🌟 [충돌 회피 & 원자적 격리 락]
-    // 프로젝트 어딘가에 이미 선언된 isPaused와의 이름 충돌을 피하기 위해,
-    // 원본 이름인 `_isPaused`를 연산 프로퍼티로 승격시키고 내부 변수는 `internalIsPaused`로 은닉합니다.
     private let stateLock = NSLock()
     private var internalIsPaused: Bool = false
     
@@ -75,7 +73,9 @@ class EventMonitor {
 
     var localSnapshot: SettingsSnapshot?
     let snapshotLock = NSLock()
-    var pendingInsertTasks: [DispatchWorkItem] = []
+    
+    // 🌟 [수복] Simulation.swift에서 가로채서 취소할 수 있도록 private 제거 (internal로 변경)
+    var snippetInsertionTask: Task<Void, Never>?
 
     private init() {
         DistributedNotificationCenter.default().addObserver(
@@ -212,46 +212,35 @@ class EventMonitor {
                                 if isPureSpace || isEnterTrigger {
                                     let currentBuffer = EventMonitor.shared.typingBuffer
 
-                                    if snapshot.isTextExpansionEnabled,
-                                       let matchedRule = TextExpander.shared.findMatch(for: currentBuffer, dict: snapshot.textExpansionDict, maxLength: snapshot.maxTriggerLength) {
+                                    if snapshot.isTextExpansionEnabled {
+                                        // 🌟 [수복] O(1) 해시 맵 즉시 매칭으로 루프 연산 비용 소각
+                                        if let matchedRule = snapshot.textExpansionDict[currentBuffer] {
+                                            
+                                            // 🌟 [Hot Path 혁명] 비싼 템플릿 파싱(TextExpander.shared.expand)을
+                                            // 동기 콜백에서 완전히 도려내고, 비동기 파이프라인으로 원문(replacement)만 넘깁니다.
+                                            EventMonitor.shared.performTextExpansion(
+                                                triggerLength: matchedRule.trigger.count,
+                                                template: matchedRule.replacement, // 스니펫 템플릿 원문을 그대로 전달
+                                                triggerKeyCode: UInt16(keyCode),
+                                                triggerText: matchedRule.trigger
+                                            )
 
-                                        let renderedSnippet = TextExpander.shared.expand(template: matchedRule.replacement)
-                                        EventMonitor.shared.performTextExpansion(triggerLength: matchedRule.trigger.count, snippet: renderedSnippet, triggerKeyCode: UInt16(keyCode), triggerText: matchedRule.trigger)
-
-                                        let cursorLog = renderedSnippet.finalCaretOffset != nil ? " (Cursor Restored)" : ""
-                                        var log = ActionLog(timestamp: Date(), targetApp: currentAppID, appliedRule: "Text Expansion", finalInputSource: "Trigger: [\(matchedRule.trigger)]\(cursorLog)", result: .success, failureReason: .none)
-                                        log.actionType = .textExpansion
-                                        SettingsManager.shared.addLog(log)
-
-                                        EventMonitor.shared.clearTypingBuffer()
-                                        return nil
+                                            EventMonitor.shared.clearTypingBuffer()
+                                            return nil // 이벤트 핫패스 즉시 탈출 (Timeout 위험률 0%)
+                                        }
                                     }
 
-                                    if snapshot.isAutoTypoCorrectionEnabled {
-                                        if currentBuffer.count >= 2 {
-                                            if EventMonitor.shared.isCurrentLanguageEnglish() {
-                                                if let result = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
-                                                    let correctedText: String
-                                                    #if swift(>=5.0)
-                                                    if let unwrapped = (result as Any) as? String {
-                                                        correctedText = unwrapped
-                                                    } else {
-                                                        let mirror = Mirror(reflecting: result)
-                                                        if let firstChild = mirror.children.first?.value as? String {
-                                                            correctedText = firstChild
-                                                        } else {
-                                                            correctedText = "\(result)"
-                                                        }
-                                                    }
-                                                    #else
-                                                    correctedText = result
-                                                    #endif
-                                                    
-                                                    EventMonitor.shared.performAutoCorrection(originalLength: currentBuffer.count, correctedText: correctedText, triggerKeyCode: UInt16(keyCode))
-                                                    EventMonitor.shared.clearTypingBuffer()
-                                                    return nil
-                                                }
-                                            }
+                                    // 오토 코렉션 및 버퍼 비우기 트랙 (기존 유지하되 최소화)
+                                    if snapshot.isAutoTypoCorrectionEnabled && currentBuffer.count >= 2 {
+                                        if EventMonitor.shared.isCurrentLanguageEnglish(),
+                                           let result = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
+                                            
+                                            // 🌟 [수복] result가 이미 완벽한 String이므로 불필요한 안전 가이드(as? String)를 완전히 소각합니다.
+                                            let correctedText = result
+                                            
+                                            EventMonitor.shared.performAutoCorrection(originalLength: currentBuffer.count, correctedText: correctedText, triggerKeyCode: UInt16(keyCode))
+                                            EventMonitor.shared.clearTypingBuffer()
+                                            return nil
                                         }
                                     }
                                     
@@ -280,7 +269,6 @@ class EventMonitor {
                             }
                         }
 
-                        // 🌟 [충돌 회피 완료] 원본 이름인 _isPaused를 안전하게 호출합니다.
                         if EventMonitor.shared._isPaused { return Unmanaged.passUnretained(event) }
 
                         var cleanRouterFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
@@ -345,4 +333,5 @@ class EventMonitor {
         }
         return nil
     }
+
 }

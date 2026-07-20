@@ -28,6 +28,8 @@ typealias AXUIElementGetWindowFunc = @convention(c) (AXUIElement, UnsafeMutableP
 @MainActor
 class WindowMonitor {
     static let shared = WindowMonitor()
+    
+    private var pendingWindowSwitch: DispatchWorkItem?
 
     private let windowMemory = WindowLRUCache(capacity: 200)
     
@@ -74,14 +76,18 @@ class WindowMonitor {
         self.windowMemory.removeWindowsForPID(terminatedPID)
     }
 
+    // MARK: - 🌟 윈도우 포커스 제어 커널 및 더블 체크 디바운스 트랙
     func handleWindowFocusChanged(element: AXUIElement) {
+        // 1단계: 선행 예약되어 타이밍 대기 중이던 모든 유령 비동기 작업 즉시 파괴
+        pendingWindowSwitch?.cancel()
+        
         let snapshot = SettingsManager.shared.snapshot
         guard snapshot.isAppSpecificEnabled || snapshot.isWindowMemoryEnabled else { return }
 
         self.activeWindowElement = element
         guard let windowID = getWindowID(from: element) else { return }
 
-        let latestAppID = WorkspaceAppTracker.shared.activeBundleID // 🌟 앞서 수복한 WorkspaceTracker 적용으로 무효 지연 해결
+        let latestAppID = WorkspaceAppTracker.shared.activeBundleID
 
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
             BrowserTabManager.shared.supportedBrowserBundleIDs.contains(latestAppID) {
@@ -116,10 +122,35 @@ class WindowMonitor {
 
         if let lang = targetLang {
             let delay = snapshot.appDelays.first(where: { $0.bundleIdentifier == latestAppID })?.delay ?? 0.05
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            
+            // 컨텍스트 정보 락 박제
+            let expectedPID = pid
+            let expectedWindowID = windowID
+            let currentTrace = traceToRecord
+            
+            // 2단계: 무명 클로저를 철회 가능한 명시적 DispatchWorkItem 구조로 격상 수복
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                
+                // [최종 더블 체크 가드 체결] 자고 깨어났더니 이미 사용자가 다른 창으로 포커스를 옮겼는지 검증
+                guard let currentActiveElement = self.activeWindowElement,
+                      let nowWindowID = self.getWindowID(from: currentActiveElement),
+                      self.currentPID == expectedPID,
+                      nowWindowID == expectedWindowID else {
+                    #if DEBUG
+                    dprint("🛑 [WindowMonitor] 유령 포커스(Stale Action) 완벽 차단 — 사용자가 대기 지연 시간 내에 다른 창으로 이동함.")
+                    #endif
+                    return
+                }
+                
+                // 3단계: 무결성이 확약된 최종 컨텍스트 시점에 안전하게 OS 언어 토글 집행
                 InputSourceManager.shared.switchLanguage(to: lang)
-                if let trace = traceToRecord { DecisionTraceManager.shared.record(trace) }
+                if let trace = currentTrace { DecisionTraceManager.shared.record(trace) }
             }
+            
+            self.pendingWindowSwitch = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            
         } else if let trace = traceToRecord {
             DecisionTraceManager.shared.record(trace)
         }
@@ -137,7 +168,7 @@ class WindowMonitor {
         guard let element = activeWindowElement, let windowID = getWindowID(from: element) else { return }
 
         let latestID = InputSourceManager.shared.currentInputSourceID()
-        let latestAppID = WorkspaceAppTracker.shared.activeBundleID // 🌟 수복된 추적기 적용
+        let latestAppID = WorkspaceAppTracker.shared.activeBundleID
         let snapshot = SettingsManager.shared.snapshot
 
         if (snapshot.isBrowserTabMemoryEnabled || snapshot.isBrowserDomainModeEnabled) &&
@@ -180,9 +211,9 @@ class WindowMonitor {
         guard self.currentPID != pid else { return }
         self.currentPID = pid
         
+        // 🌟 [수복] observeApp이 엉뚱한 WorkItem 블록을 안고 오동작하던 구역을 원복 및 순정 포맷 정산
         self.trackedWindowIDs.removeAll()
 
-        // 🌟 [수복] 기존 옵저버 해제 시에도 공통 모드(.commonModes)에서 소스를 확실히 정리하도록 정산
         if let observer = self.axObserver, let rl = self.observerRunLoop {
             CFRunLoopRemoveSource(rl, AXObserverGetRunLoopSource(observer), .commonModes)
             self.axObserver = nil
@@ -213,8 +244,6 @@ class WindowMonitor {
 
             let mainRunLoop = CFRunLoopGetMain()
             
-            // 🌟 [수복] 런루프 소스를 등록할 때 kCFRunLoopCommonModes(.commonModes)로 격상 이식!
-            // 이로써 마우스 스크롤 휠 홀딩, 창 드래깅, 메뉴바 진입 등의 모드 상태 변경 시에도 윈도우 통로가 상시 작동합니다.
             CFRunLoopAddSource(mainRunLoop, AXObserverGetRunLoopSource(newObs), .commonModes)
             self.observerRunLoop = mainRunLoop
 
