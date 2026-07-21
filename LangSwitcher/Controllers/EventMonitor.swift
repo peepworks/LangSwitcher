@@ -95,6 +95,23 @@ class EventMonitor {
         let isKorean = lower.contains("ko") || lower.contains("hangul") || lower.contains("두벌식") || lower.contains("3벌식") || lower.contains("세벌식")
         self._cachedIsEnglish = !isKorean
     }
+    
+    // 🌟 [수복 핵심 1] TIS 캐시 지연을 완벽히 극복하는 '실시간 물리 타자 판독기'
+    func updateRealTimeLanguage(from event: CGEvent) {
+        guard let nsEvent = NSEvent(cgEvent: event), let chars = nsEvent.characters, let first = chars.first else { return }
+        
+        let val = first.unicodeScalars.first?.value ?? 0
+        // 방금 친 글자가 한글 유니코드 영역(완성형, 자모음)에 속하는지 판별
+        let isHangul = (val >= 0xAC00 && val <= 0xD7A3) ||
+                       (val >= 0x1100 && val <= 0x11FF) ||
+                       (val >= 0x3130 && val <= 0x318F)
+        
+        if isHangul {
+            self._cachedIsEnglish = false
+        } else if first.isASCII && first.isLetter {
+            self._cachedIsEnglish = true
+        }
+    }
 
     func isCurrentLanguageEnglish() -> Bool {
         return self._cachedIsEnglish
@@ -134,9 +151,6 @@ class EventMonitor {
                         }
 
                         if IsSecureEventInputEnabled() {
-                            #if DEBUG
-                            dprint("🔒 [EventMonitor] Secure Event Input 작동 중으로 키 인출이 잠시 보류되었습니다.")
-                            #endif
                             return Unmanaged.passUnretained(event)
                         }
 
@@ -199,6 +213,9 @@ class EventMonitor {
                         }
 
                         if type == .keyDown {
+                            // 🌟 [수복 핵심 2] 매 타자마다 진짜 한글을 치고 있는지 영어를 치고 있는지 실시간으로 추적!
+                            EventMonitor.shared.updateRealTimeLanguage(from: event)
+                            
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
                                 
@@ -227,15 +244,18 @@ class EventMonitor {
 
                                     // 2. 스마트 자동 오타 교정
                                     if snapshot.isAutoTypoCorrectionEnabled && currentBuffer.count >= 2 {
-                                        if let result = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
-                                            
-                                            EventMonitor.shared.performAutoCorrection(
-                                                originalLength: currentBuffer.count,
-                                                correctedText: result,
-                                                triggerKeyCode: UInt16(keyCode)
-                                            )
-                                            EventMonitor.shared.clearTypingBuffer()
-                                            return nil
+                                        // 🌟 [수복 핵심 3] 한글 모드일 때 폭주하던 현상을 100% 차단하기 위해 가드 철통 복구
+                                        if EventMonitor.shared.isCurrentLanguageEnglish() {
+                                            if let result = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
+                                                
+                                                EventMonitor.shared.performAutoCorrection(
+                                                    originalLength: currentBuffer.count,
+                                                    correctedText: result,
+                                                    triggerKeyCode: UInt16(keyCode)
+                                                )
+                                                EventMonitor.shared.clearTypingBuffer()
+                                                return nil
+                                            }
                                         }
                                     }
                                     
