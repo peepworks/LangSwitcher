@@ -31,7 +31,6 @@ class EventMonitor {
     var healthCheckTimer: Timer?
     var eventRunLoop: CFRunLoop?
 
-    // 🌟 [수복] 동시성 안전 가이드 및 상태값 정의
     var _typingBuffer: String = ""
     var _lastKeyTime: Date = Date()
     var _shortcutRecordingCallback: ((NSEvent) -> Void)? = nil
@@ -40,7 +39,6 @@ class EventMonitor {
     var _didPressOtherKey = false
     var _singleModifierKeyCode: UInt16? = nil
     
-    // 🌟 [충돌 회피 & 원자적 격리 락]
     private let stateLock = NSLock()
     private var internalIsPaused: Bool = false
     
@@ -61,7 +59,6 @@ class EventMonitor {
     var _lastActionTime: Date = Date.distantPast
     let actionCooldown: TimeInterval = 0.15
 
-    // 🌟 TIS 조회를 방어하기 위한 언어 상태 캐시
     private var _cachedIsEnglish: Bool = true
 
     static let charKeyMap: [UInt16: Character] = [
@@ -74,7 +71,6 @@ class EventMonitor {
     var localSnapshot: SettingsSnapshot?
     let snapshotLock = NSLock()
     
-    // 🌟 [수복] Simulation.swift에서 가로채서 취소할 수 있도록 private 제거 (internal로 변경)
     var snippetInsertionTask: Task<Void, Never>?
 
     private init() {
@@ -95,7 +91,9 @@ class EventMonitor {
               let ptr = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else { return }
         let id = Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
         let lower = id.lowercased()
-        self._cachedIsEnglish = lower.contains("en") || lower.contains("abc") || lower.contains("us")
+        
+        let isKorean = lower.contains("ko") || lower.contains("hangul") || lower.contains("두벌식") || lower.contains("3벌식") || lower.contains("세벌식")
+        self._cachedIsEnglish = !isKorean
     }
 
     func isCurrentLanguageEnglish() -> Bool {
@@ -150,7 +148,7 @@ class EventMonitor {
                         EventMonitor.shared.snapshotLock.unlock()
 
                         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-                        let currentAppID = WorkspaceAppTracker.shared.activeBundleID
+                        let currentAppID = globalActiveAppTracker.get()
                         
                         if let callback = EventMonitor.shared.shortcutRecordingCallback {
                             if type == .keyDown || type == .flagsChanged {
@@ -212,33 +210,30 @@ class EventMonitor {
                                 if isPureSpace || isEnterTrigger {
                                     let currentBuffer = EventMonitor.shared.typingBuffer
 
+                                    // 1. 텍스트 스니펫 대치
                                     if snapshot.isTextExpansionEnabled {
-                                        // 🌟 [수복] O(1) 해시 맵 즉시 매칭으로 루프 연산 비용 소각
                                         if let matchedRule = snapshot.textExpansionDict[currentBuffer] {
-                                            
-                                            // 🌟 [Hot Path 혁명] 비싼 템플릿 파싱(TextExpander.shared.expand)을
-                                            // 동기 콜백에서 완전히 도려내고, 비동기 파이프라인으로 원문(replacement)만 넘깁니다.
                                             EventMonitor.shared.performTextExpansion(
                                                 triggerLength: matchedRule.trigger.count,
-                                                template: matchedRule.replacement, // 스니펫 템플릿 원문을 그대로 전달
+                                                template: matchedRule.replacement,
                                                 triggerKeyCode: UInt16(keyCode),
                                                 triggerText: matchedRule.trigger
                                             )
 
                                             EventMonitor.shared.clearTypingBuffer()
-                                            return nil // 이벤트 핫패스 즉시 탈출 (Timeout 위험률 0%)
+                                            return nil
                                         }
                                     }
 
-                                    // 오토 코렉션 및 버퍼 비우기 트랙 (기존 유지하되 최소화)
+                                    // 2. 스마트 자동 오타 교정
                                     if snapshot.isAutoTypoCorrectionEnabled && currentBuffer.count >= 2 {
-                                        if EventMonitor.shared.isCurrentLanguageEnglish(),
-                                           let result = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
+                                        if let result = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
                                             
-                                            // 🌟 [수복] result가 이미 완벽한 String이므로 불필요한 안전 가이드(as? String)를 완전히 소각합니다.
-                                            let correctedText = result
-                                            
-                                            EventMonitor.shared.performAutoCorrection(originalLength: currentBuffer.count, correctedText: correctedText, triggerKeyCode: UInt16(keyCode))
+                                            EventMonitor.shared.performAutoCorrection(
+                                                originalLength: currentBuffer.count,
+                                                correctedText: result,
+                                                triggerKeyCode: UInt16(keyCode)
+                                            )
                                             EventMonitor.shared.clearTypingBuffer()
                                             return nil
                                         }
@@ -259,8 +254,14 @@ class EventMonitor {
                                     EventMonitor.shared.clearTypingBuffer()
                                 }
                                 else {
-                                    if let nsEvent = NSEvent(cgEvent: event), let chars = nsEvent.characters, !chars.isEmpty {
-                                        let char = chars.first!
+                                    let charToAppend: Character? = EventMonitor.charKeyMap[UInt16(keyCode)] ?? {
+                                        if let nsEvent = NSEvent(cgEvent: event), let chars = nsEvent.characters, let first = chars.first {
+                                            return first
+                                        }
+                                        return nil
+                                    }()
+
+                                    if let char = charToAppend {
                                         if char.isLetter || char.isNumber || char.isPunctuation || char == ";" {
                                             EventMonitor.shared.appendToTypingBuffer(char)
                                         }
@@ -333,5 +334,4 @@ class EventMonitor {
         }
         return nil
     }
-
 }

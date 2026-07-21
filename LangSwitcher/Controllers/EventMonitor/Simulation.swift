@@ -88,12 +88,47 @@ extension EventMonitor {
         }
     }
 
+    // 🌟 [수복 핵심] 스마트 오타 자동 교정 직렬화 비동기 커널
     func performAutoCorrection(originalLength: Int, correctedText: String, triggerKeyCode: UInt16) {
-        self.safeSwitchToKorean()
-        self.batchDelete(count: originalLength)
-        self.postUnicodeString(correctedText)
-        self.postUnicodeString(" ")
-        StatsManager.shared.incrementTypoCorrection()
+        self.snippetInsertionTask?.cancel()
+
+        self.snippetInsertionTask = Task { [weak self] in
+            guard let self = self else { return }
+            
+            // 1단계: 기존 영문 오타(gksrmf)를 1.5ms 미세 간격 백스페이스로 100% 누락 없이 삭제
+            await self.batchDeleteAsync(count: originalLength)
+            
+            guard !Task.isCancelled else { return }
+            
+            // 2단계: 변환된 한글 단어 + 스페이스("한글 ")를 정밀 유니코드 스트림으로 인출 주입
+            await self.insertLongUnicodeTextAsync(correctedText + " ")
+            
+            guard !Task.isCancelled else { return }
+            
+            // 3단계: 주입 완료 후 다음 타이핑을 위해 한글 입력기로 원활하게 복원 전환
+            self.safeSwitchToKorean()
+            
+            // 4단계: 오타 교정 통계 가산
+            StatsManager.shared.incrementTypoCorrection()
+        }
+    }
+
+    // 🌟 [수복] 백스페이스 키 누락 방지용 고정밀 비동기 삭제 엔진
+    func batchDeleteAsync(count: Int) async {
+        guard count > 0 else { return }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for _ in 0..<count {
+            guard !Task.isCancelled else { break }
+            let down = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true)
+            let up = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false)
+            down?.setIntegerValueField(.eventSourceUserData, value: 9999)
+            up?.setIntegerValueField(.eventSourceUserData, value: 9999)
+
+            down?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 1_500_000) // 1.5ms 백스페이스 안착 대기
+            up?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 1_500_000)
+        }
     }
 
     func batchDelete(count: Int) {
@@ -259,7 +294,6 @@ extension EventMonitor {
                 down.setIntegerValueField(.eventSourceUserData, value: 9999)
                 
                 up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unicodeChar)
-                // 🌟 [정산] 오타 수정 완료: .setIntegerValueField -> .eventSourceUserData
                 up.setIntegerValueField(.eventSourceUserData, value: 9999)
 
                 down.post(tap: .cghidEventTap)
