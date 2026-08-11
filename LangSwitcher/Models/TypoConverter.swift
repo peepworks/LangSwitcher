@@ -24,7 +24,6 @@ import AppKit
 class TypoConverter {
     static let shared = TypoConverter()
 
-    // 🌟 [2번 리뷰 수복 포인트: 클립보드 독점 상수 수립]
     private static let clipboardRestoreDelay: TimeInterval = 0.15
     private static let clipboardTimeout: TimeInterval = 2.0
 
@@ -39,8 +38,18 @@ class TypoConverter {
 
     private init() {}
 
-    // MARK: - 스마트 자동 오타 감지용 엔진
+    // MARK: - Smart Auto Typo Detection Engine
     func detectAndConvert(englishInput: String) -> String? {
+        // 🛡️ [수복 포인트 1] 특수문자(' ") 및 대소문자 정제 후 예외 단어 검사
+        let cleanedInput = englishInput
+            .lowercased()
+            .trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
+
+        if TypoExceptionManager.shared.isExcluded(cleanedInput) || TypoExceptionManager.shared.isExcluded(englishInput) {
+            dprint("🛡️ [TypoConverter] 예외 단어 감지됨 (\(englishInput)). 스마트 오타 교정을 스킵합니다.")
+            return nil
+        }
+
         guard englishInput.count >= 2 else { return nil }
 
         let containsEnglish = englishInput.contains { $0.isASCII && $0.isLetter }
@@ -72,13 +81,15 @@ class TypoConverter {
         return nil
     }
 
-    // MARK: - 수동 단축키 오타 교정
+    // MARK: - Manual Shortcut Typo Correction
     func executeCorrection() {
-        // 🌟 [스코프 오류 수정] currentBuffer를 함수 최상단으로 분리하여 재사용성 확보
         let currentBuffer = EventMonitor.shared.typingBuffer
-        
+        let cleanedBuffer = currentBuffer
+            .lowercased()
+            .trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
+
         // 🛡️ 1. [방어 로직] 오타 교정 예외 단어 검증
-        if TypoExceptionManager.shared.isExcluded(currentBuffer) {
+        if TypoExceptionManager.shared.isExcluded(cleanedBuffer) || TypoExceptionManager.shared.isExcluded(currentBuffer) {
             dprint("🛡️ [TypoConverter] 예외 단어 감지됨 (\(currentBuffer)). 스마트 오타 교정을 스킵합니다.")
             return
         }
@@ -86,9 +97,8 @@ class TypoConverter {
         guard !isConvertingInProgress else { return }
         isConvertingInProgress = true
 
-        // 🌟 [리뷰 5번 반영: UX 개선] 버퍼가 10자 이상일 경우 사용자에게 지연 상황을 시각적으로 알림
         if currentBuffer.count >= 10 {
-            HUDManager.shared.showHUD(languageName: "⏳ Correcting...")
+            HUDManager.shared.showHUD(languageName: String(localized: "⏳ Correcting..."))
         }
 
         correctionGeneration &+= 1
@@ -122,7 +132,6 @@ class TypoConverter {
                 var didFallback = false
                 var currentChangeCount = initialCount
 
-                // [전략 1] 정밀 타겟팅 (Shift + Left Arrow 기반 선택)
                 if !currentBuffer.isEmpty {
                     let length = currentBuffer.count
                     for _ in 0..<length {
@@ -130,7 +139,7 @@ class TypoConverter {
                         try await Task.sleep(nanoseconds: 2_000_000)
                     }
 
-                    self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
+                    self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
 
                     for _ in 0..<30 {
                         try await Task.sleep(nanoseconds: 10_000_000)
@@ -159,15 +168,14 @@ class TypoConverter {
                     } else { didFallback = true }
                 }
 
-                // [전략 2] 정밀 타겟팅 실패 시 네이티브 단어 선택 폴백
                 if didFallback && selectedText.isEmpty {
                     self.postKeyEvent(keyCode: 124, modifiers: [])
                     try await Task.sleep(nanoseconds: 10_000_000)
 
-                    self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift]) // Opt+Shift+Left
+                    self.postKeyEvent(keyCode: 123, modifiers: [.maskAlternate, .maskShift])
                     try await Task.sleep(nanoseconds: 20_000_000)
 
-                    self.postKeyEvent(keyCode: 8, modifiers: .maskCommand) // Cmd+C
+                    self.postKeyEvent(keyCode: 8, modifiers: .maskCommand)
 
                     for _ in 0..<30 {
                         try await Task.sleep(nanoseconds: 10_000_000)
@@ -179,14 +187,13 @@ class TypoConverter {
                     }
                 }
 
-                // 4. 최종 변환 및 덮어쓰기 집행
                 if !selectedText.isEmpty {
                     let convertedText = self.convertString(selectedText)
                     localPB.clearContents()
                     localPB.setString(convertedText, forType: .string)
 
                     try await Task.sleep(nanoseconds: 20_000_000)
-                    self.postKeyEvent(keyCode: 9, modifiers: .maskCommand) // Cmd+V
+                    self.postKeyEvent(keyCode: 9, modifiers: .maskCommand)
 
                     try await Task.sleep(nanoseconds: UInt64(Self.clipboardRestoreDelay * 1_000_000_000))
 
@@ -199,7 +206,6 @@ class TypoConverter {
                 wasCancelled = true
             }
 
-            // 장부 정산 구역
             if self.correctionGeneration == myGeneration {
                 if Task.isCancelled || wasCancelled { self.forceCancelAndCleanup() }
                 else { await self.cleanupAfterSuccess() }
@@ -209,7 +215,6 @@ class TypoConverter {
         }
     }
 
-    // MARK: - 정리 및 초기화 로직
     private func cleanupAfterSuccess() async {
         self.timeoutTask?.cancel()
         self.timeoutTask = nil
@@ -292,7 +297,7 @@ class TypoConverter {
         return hasKorean ? convertToEn(text) : convertToKo(text)
     }
 
-    // MARK: - 두벌식 자모 오토마타 변환 코어 엔진
+    // MARK: - 2-Bulsik Hangul Automata Engine
     func convertToKo(_ englishText: String) -> String {
         let chos = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
         let jungs = Array("ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ")
@@ -345,7 +350,7 @@ class TypoConverter {
                         if jong.isEmpty { jong = kor }
                         else if let combined = doubleJongs[jong + kor] { jong = combined }
                         else {
-                            commit(c: cho, ju: jung, jo: jong)
+                            commit(c: cho, ju: jung, jo: "")
                             cho = kor; jung = ""; jong = ""
                         }
                     }
