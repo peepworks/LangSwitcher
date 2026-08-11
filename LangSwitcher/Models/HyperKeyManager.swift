@@ -23,11 +23,7 @@ import IOKit
 
 private typealias IOHIDSetModifierLockStateFunc = @convention(c) (io_connect_t, Int32, Bool) -> Int32
 
-// ====================================================================
-// 🌟 [5번 리뷰 종결: 명시적 무적 스텔스 변수 선언]
-// nonisolated(unsafe) 키워드를 사용하여 변수 자체의 격리 검열을 완전히 파괴합니다.
-// 자물쇠(NSLock)로 이미 보호 중이므로 시스템 공학적으로 100% 안전한 정석 해법입니다.
-// ====================================================================
+// MARK: - Thread Safety Guard for Continuation Resume
 final class HyperKeyResumeGuard: @unchecked Sendable {
     private let lock = NSLock()
     nonisolated(unsafe) private var isResumed = false
@@ -46,11 +42,9 @@ final class HyperKeyResumeGuard: @unchecked Sendable {
 }
 
 // MARK: - Core Manager
-
 class HyperKeyManager {
     static let shared = HyperKeyManager()
 
-    // CGEventTap 스레드 문맥과 설정 UI 문맥 간의 완벽한 스레드 안전성을 보장하는 고성능 자물쇠
     private let stateLock = NSLock()
 
     private var isHyperDown = false
@@ -65,9 +59,6 @@ class HyperKeyManager {
     private let capsLockSrc: Int = 30064771129
     private let f19Dst: Int = 30064771182
 
-    // ── 🌟 [수복 포인트 1: 직렬 태스크 체이닝 백킹 파이프라인] ──
-    // 무용지물이던 레거시 hidutilQueue를 전면 폐기하고, Swift Concurrency 전용
-    // 직렬화 체인 링크 보관용 태스크 변수를 결속합니다. (stateLock으로 보호)
     private var currentMappingTask: Task<Void, Never>?
 
     private var IOHIDSetModifierLockState: IOHIDSetModifierLockStateFunc? = {
@@ -89,17 +80,14 @@ class HyperKeyManager {
     }
 
     private func setupHardwareMapping(enable: Bool) {
-        // ── 🌟 [수복 포인트 2: 원자적 포인터 스왑 및 비블로킹 직렬 파이프라인 집행] ──
         stateLock.lock()
         let previousTask = currentMappingTask
         
         let newTask = Task.detached(priority: .userInitiated) { [weak self] in
-            // 앞선 hidutil 매핑 공정이 (연타 시에도) 완전히 마감 정산될 때까지 대기줄을 세웁니다.
             _ = await previousTask?.value
-            
             guard let self = self else { return }
 
-            // ── 1단계: hidutil에서 현재 키 매핑 정보 비동기 인출 ──
+            // 1단계: hidutil에서 현재 키 매핑 정보 비동기 인출
             let getTask = Process()
             getTask.launchPath = "/usr/bin/hidutil"
             getTask.arguments = ["property", "--get", "UserKeyMapping"]
@@ -119,15 +107,13 @@ class HyperKeyManager {
                 }
             }
 
-            guard isGetSuccessful else { return }
-
-            guard let getData = try? getPipe.fileHandleForReading.readToEnd() else { return }
+            guard isGetSuccessful, let getData = try? getPipe.fileHandleForReading.readToEnd() else { return }
             let getString = String(data: getData, encoding: .utf8) ?? ""
             try? getPipe.fileHandleForReading.close()
 
             var mappings: [[String: Int]] = []
 
-            // ── 2단계: Plist 바이너리를 비동기적으로 안전하게 JSON 파싱 ──
+            // 2단계: Plist 바이너리를 비동기적으로 안전하게 JSON 파싱하여 기존 매핑 보존
             if !getString.contains("(null)") && !getString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let plutilTask = Process()
                 plutilTask.launchPath = "/usr/bin/plutil"
@@ -167,7 +153,7 @@ class HyperKeyManager {
                 }
             }
 
-            // ── 3단계: 장부 조율 및 캡락 매핑 목적지 주입 ──
+            // 3단계: 장부 조율 및 CapsLock ➔ F19 매핑 적용
             mappings.removeAll { $0["HIDKeyboardModifierMappingSrc"] == self.capsLockSrc }
 
             if enable {
@@ -181,7 +167,7 @@ class HyperKeyManager {
             guard let finalJsonData = try? JSONSerialization.data(withJSONObject: finalMappingDict, options: []),
                   let finalJsonString = String(data: finalJsonData, encoding: .utf8) else { return }
 
-            // ── 4단계: hidutil --set 최종 시스템 커널 적용 ──
+            // 4단계: hidutil --set 최종 시스템 커널 적용
             let setTask = Process()
             setTask.launchPath = "/usr/bin/hidutil"
             setTask.arguments = ["property", "--set", finalJsonString]
@@ -202,14 +188,12 @@ class HyperKeyManager {
             }
         }
         
-        // 현재 생성된 최신 태스크를 다음 연타의 선행 주자로 교체 후 자물쇠를 해제합니다.
         currentMappingTask = newTask
         stateLock.unlock()
     }
 
     private func postHyperModifiers(isDown: Bool) {
         guard let eventSource = CGEventSource(stateID: .hidSystemState) else { return }
-
         let hyperFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
 
         for keyCode in hyperKeyCodes {

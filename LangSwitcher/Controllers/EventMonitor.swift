@@ -96,19 +96,36 @@ class EventMonitor {
         self._cachedIsEnglish = !isKorean
     }
     
-    // 🌟 [수복 핵심 1] TIS 캐시 지연을 완벽히 극복하는 '실시간 물리 타자 판독기'
+    // 🌟 [수복 수용] Zero-Allocation 최적화가 적용된 실시간 물리 타자 언어 판독기
+    @inline(__always)
     func updateRealTimeLanguage(from event: CGEvent) {
-        guard let nsEvent = NSEvent(cgEvent: event), let chars = nsEvent.characters, let first = chars.first else { return }
+        // 1. 커맨드, 옵션, 컨트롤 단축키 입력 시 스킵하여 오버헤드 차단
+        let flags = event.flags
+        if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
+            return
+        }
         
-        let val = first.unicodeScalars.first?.value ?? 0
-        // 방금 친 글자가 한글 유니코드 영역(완성형, 자모음)에 속하는지 판별
-        let isHangul = (val >= 0xAC00 && val <= 0xD7A3) ||
-                       (val >= 0x1100 && val <= 0x11FF) ||
-                       (val >= 0x3130 && val <= 0x318F)
+        // 2. NSEvent/String 생성 없이 C-Style 유니코드 버퍼 직접 조회 (O(1) 메모리 Zero)
+        let maxStringLength = 4 // 🌟 var -> let 으로 변경
+        var actualStringLength = 0
+        var unicodeChars = [UniChar](repeating: 0, count: maxStringLength)
+        
+        event.keyboardGetUnicodeString(maxStringLength: maxStringLength, actualStringLength: &actualStringLength, unicodeString: &unicodeChars)
+        
+        guard actualStringLength > 0 else { return }
+        let charCode = unicodeChars[0]
+        
+        // 3. 한글 유니코드 스칼라 영역 판별
+        let isHangul = (charCode >= 0xAC00 && charCode <= 0xD7A3) ||
+                       (charCode >= 0x1100 && charCode <= 0x11FF) ||
+                       (charCode >= 0x3130 && charCode <= 0x318F)
+        
+        // 영문 알파벳 범위 판별 (A-Z, a-z)
+        let isEnglish = (charCode >= 0x41 && charCode <= 0x5A) || (charCode >= 0x61 && charCode <= 0x7A)
         
         if isHangul {
             self._cachedIsEnglish = false
-        } else if first.isASCII && first.isLetter {
+        } else if isEnglish {
             self._cachedIsEnglish = true
         }
     }
@@ -213,7 +230,7 @@ class EventMonitor {
                         }
 
                         if type == .keyDown {
-                            // 🌟 [수복 핵심 2] 매 타자마다 진짜 한글을 치고 있는지 영어를 치고 있는지 실시간으로 추적!
+                            // 🌟 매 타자마다 최적화된 실시간 언어 판별기 호출
                             EventMonitor.shared.updateRealTimeLanguage(from: event)
                             
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
@@ -244,7 +261,6 @@ class EventMonitor {
 
                                     // 2. 스마트 자동 오타 교정
                                     if snapshot.isAutoTypoCorrectionEnabled && currentBuffer.count >= 2 {
-                                        // 🌟 [수복 핵심 3] 한글 모드일 때 폭주하던 현상을 100% 차단하기 위해 가드 철통 복구
                                         if EventMonitor.shared.isCurrentLanguageEnglish() {
                                             if let result = TypoConverter.shared.detectAndConvert(englishInput: currentBuffer) {
                                                 
