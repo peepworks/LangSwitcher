@@ -95,40 +95,6 @@ class EventMonitor {
         let isKorean = lower.contains("ko") || lower.contains("hangul") || lower.contains("두벌식") || lower.contains("3벌식") || lower.contains("세벌식")
         self._cachedIsEnglish = !isKorean
     }
-    
-    // 🌟 [수복 수용] Zero-Allocation 최적화가 적용된 실시간 물리 타자 언어 판독기
-    @inline(__always)
-    func updateRealTimeLanguage(from event: CGEvent) {
-        // 1. 커맨드, 옵션, 컨트롤 단축키 입력 시 스킵하여 오버헤드 차단
-        let flags = event.flags
-        if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
-            return
-        }
-        
-        // 2. NSEvent/String 생성 없이 C-Style 유니코드 버퍼 직접 조회 (O(1) 메모리 Zero)
-        let maxStringLength = 4 // 🌟 var -> let 으로 변경
-        var actualStringLength = 0
-        var unicodeChars = [UniChar](repeating: 0, count: maxStringLength)
-        
-        event.keyboardGetUnicodeString(maxStringLength: maxStringLength, actualStringLength: &actualStringLength, unicodeString: &unicodeChars)
-        
-        guard actualStringLength > 0 else { return }
-        let charCode = unicodeChars[0]
-        
-        // 3. 한글 유니코드 스칼라 영역 판별
-        let isHangul = (charCode >= 0xAC00 && charCode <= 0xD7A3) ||
-                       (charCode >= 0x1100 && charCode <= 0x11FF) ||
-                       (charCode >= 0x3130 && charCode <= 0x318F)
-        
-        // 영문 알파벳 범위 판별 (A-Z, a-z)
-        let isEnglish = (charCode >= 0x41 && charCode <= 0x5A) || (charCode >= 0x61 && charCode <= 0x7A)
-        
-        if isHangul {
-            self._cachedIsEnglish = false
-        } else if isEnglish {
-            self._cachedIsEnglish = true
-        }
-    }
 
     func isCurrentLanguageEnglish() -> Bool {
         return self._cachedIsEnglish
@@ -230,8 +196,7 @@ class EventMonitor {
                         }
 
                         if type == .keyDown {
-                            // 🌟 매 타자마다 최적화된 실시간 언어 판별기 호출
-                            EventMonitor.shared.updateRealTimeLanguage(from: event)
+                            // 🌟 [수복 포인트 1] 물리 키 유니코드로 언어를 착각하게 만들던 updateRealTimeLanguage(from:) 삭제 완료
                             
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
@@ -275,11 +240,8 @@ class EventMonitor {
                                         }
                                     }
                                     
-                                    if isPureSpace {
-                                        EventMonitor.shared.appendToTypingBuffer(" ")
-                                    } else {
-                                        EventMonitor.shared.clearTypingBuffer()
-                                    }
+                                    // 🌟 [수복 포인트 2] 스페이스바 누적 로직 제거 ➔ 띄어쓰기 및 엔터 시 버퍼를 무조건 비워 단어 단위로만 격리
+                                    EventMonitor.shared.clearTypingBuffer()
                                 }
                                 else if keyCode == 51 {
                                     if !EventMonitor.shared._typingBuffer.isEmpty {
