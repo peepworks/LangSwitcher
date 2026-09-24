@@ -137,12 +137,16 @@ class EventMonitor {
                             return Unmanaged.passUnretained(event)
                         }
 
-                        EventMonitor.shared.snapshotLock.lock()
-                        guard let snapshot = EventMonitor.shared.localSnapshot else {
-                            EventMonitor.shared.snapshotLock.unlock()
+                        // 🌟 [수복 최적화] defer 문을 이용해 Lock 경합 소유 시간(Critical Section)을 최소화
+                        let currentSnapshot: SettingsSnapshot? = {
+                            EventMonitor.shared.snapshotLock.lock()
+                            defer { EventMonitor.shared.snapshotLock.unlock() }
+                            return EventMonitor.shared.localSnapshot
+                        }()
+
+                        guard let snapshot = currentSnapshot else {
                             return Unmanaged.passUnretained(event)
                         }
-                        EventMonitor.shared.snapshotLock.unlock()
 
                         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
                         let currentAppID = globalActiveAppTracker.get()
@@ -196,8 +200,6 @@ class EventMonitor {
                         }
 
                         if type == .keyDown {
-                            // 🌟 [수복 포인트 1] 물리 키 유니코드로 언어를 착각하게 만들던 updateRealTimeLanguage(from:) 삭제 완료
-                            
                             if snapshot.isAutoTypoCorrectionEnabled || snapshot.isTextExpansionEnabled {
                                 EventMonitor.shared.checkStaleAndResetBuffer()
                                 
@@ -240,7 +242,6 @@ class EventMonitor {
                                         }
                                     }
                                     
-                                    // 🌟 [수복 포인트 2] 스페이스바 누적 로직 제거 ➔ 띄어쓰기 및 엔터 시 버퍼를 무조건 비워 단어 단위로만 격리
                                     EventMonitor.shared.clearTypingBuffer()
                                 }
                                 else if keyCode == 51 {
