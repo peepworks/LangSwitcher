@@ -39,7 +39,7 @@ struct GeneralSettingsView: View {
                     VStack(spacing: 0) {
                         // 로그인 시 자동 실행
                         SettingToggleRow(title: String(localized: "Launch at login"), isOn: $isAutoLaunchEnabled)
-                            .onChange(of: isAutoLaunchEnabled) { newValue in
+                            .onChange(of: isAutoLaunchEnabled) { _, newValue in
                                 // 🌟 [수복 포인트 2] 스위치 변경 시 시스템 콜 오버헤드를 백그라운드 분기 처리하여 프리즈 원천 차단
                                 DispatchQueue.global(qos: .userInitiated).async {
                                     do {

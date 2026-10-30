@@ -252,65 +252,60 @@ struct AppLaunchShortcutRow: View {
     @State private var conflictMessage = ""
 
     var body: some View {
-        HStack(spacing: 8) {
-            if shortcut.bundleIdentifier.isEmpty {
-                Button(String(localized: "Select App...")) {
-                    selectApp()
-                }
-            } else {
-                HStack(spacing: 8) {
-                    if let icon = appIcon {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .frame(width: 20, height: 20)
-                    } else {
-                        Image(systemName: "app.dashed")
-                            .resizable()
-                            .frame(width: 20, height: 20)
-                            .foregroundColor(.secondary)
+            HStack(spacing: 8) {
+                if shortcut.bundleIdentifier.isEmpty {
+                    Button(String(localized: "Select App...")) {
+                        selectApp()
                     }
-                    Text(shortcut.appName).lineLimit(1)
+                } else {
+                    HStack(spacing: 8) {
+                        if let icon = appIcon {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .frame(width: 20, height: 20)
+                        } else {
+                            Image(systemName: "app.dashed")
+                                .resizable()
+                                .frame(width: 20, height: 20)
+                                .foregroundColor(.secondary)
+                        }
+                        Text(shortcut.appName).lineLimit(1)
+                    }
                 }
-                // ❌ 기존의 중복되고 에러 나던 .onAppear / .onDisappear 블록을 제거했습니다.
-            }
 
-            Spacer()
+                Spacer()
 
-            Button(action: {
-                if isRecording { stopRecording() } else { startRecording() }
-            }) {
-                Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString)))
-                    .frame(width: 90)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .foregroundColor(showDuplicateWarning ? .red : (isRecording ? .red : .primary))
-            }
-            .padding(.trailing, 5)
+                Button(action: {
+                    if isRecording { stopRecording() } else { startRecording() }
+                }) {
+                    Text(showDuplicateWarning ? conflictMessage : (isRecording ? String(localized: "Recording...") : (shortcut.displayString.isEmpty ? String(localized: "Record") : shortcut.displayString)))
+                        .frame(width: 90)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .foregroundColor(showDuplicateWarning ? .red : (isRecording ? .red : .primary))
+                }
+                .padding(.trailing, 5)
 
-            Button(action: {
-                settings.activeProfile.payload.appLaunchShortcuts.removeAll { $0.id == shortcut.id }
-            }) {
-                Image(systemName: "trash").foregroundColor(.red)
+                Button(action: {
+                    settings.activeProfile.payload.appLaunchShortcuts.removeAll { $0.id == shortcut.id }
+                }) {
+                    Image(systemName: "trash").foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 2)
+            .onAppear {
+                loadIcon()
+            }
+            .onChange(of: shortcut.bundleIdentifier) { _, _ in
+                loadIcon()
+            }
+            .onDisappear {
+                stopRecording()
+                self.appIcon = nil
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 2)
-        .onAppear {
-            // 🌟 최초 뷰가 로드될 때 아이콘을 안전하게 비동기로 가져옵니다.
-            loadIcon()
-        }
-        .onChange(of: shortcut.bundleIdentifier) { _ in
-            // 앱이 바뀌면 새로운 아이콘으로 갱신합니다.
-            loadIcon()
-        }
-        // 🌟 [핵심 수정] 행 전체가 화면에서 사라질 때 단축키 녹음을 강제 중단하고,
-        // 무거운 고해상도 앱 아이콘 메모리(NSImage)를 완벽하게 방출합니다!
-        .onDisappear {
-            stopRecording()
-            self.appIcon = nil
-        }
-    }
 
     private func loadIcon() {
         let bundleID = shortcut.bundleIdentifier

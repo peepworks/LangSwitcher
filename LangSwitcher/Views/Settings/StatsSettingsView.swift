@@ -43,7 +43,7 @@ struct StatsSettingsView: View {
 
     @State private var showSwitches: Bool = true
     @State private var showTypos: Bool = true
-    @State private var showExpansions: Bool = true // 🌟 [수복 추가] 텍스트 대치 차트 토글선
+    @State private var showExpansions: Bool = true
     @State private var selectedDateString: String? = nil
     @State private var animateChart = false
 
@@ -56,10 +56,9 @@ struct StatsSettingsView: View {
     
     var totalSwitches: Int { filteredStats.reduce(0) { $0 + $1.languageSwitches } }
     var totalTypos: Int { filteredStats.reduce(0) { $0 + $1.typoCorrections } }
-    var totalExpansions: Int { filteredStats.reduce(0) { $0 + $1.textExpansions } } // 🌟 누적 합산 추가
+    var totalExpansions: Int { filteredStats.reduce(0) { $0 + $1.textExpansions } }
     var isEmptyState: Bool { totalSwitches == 0 && totalTypos == 0 && totalExpansions == 0 }
 
-    // O(N) 단일 루프로 3개 축 전체의 최고 임계치 최대값 정산
     var yDomainMax: Int {
         let highest = filteredStats.reduce(0) { currentMax, stat in
             max(currentMax, max(stat.languageSwitches, max(stat.typoCorrections, stat.textExpansions)))
@@ -81,7 +80,6 @@ struct StatsSettingsView: View {
                 .frame(width: 250)
             }
 
-            // 🌟 [스크린샷 2차원 대응 수복] 2열 레이아웃을 청정 3열 가로 스택 피드로 전치 확장
             HStack(spacing: 16) {
                 StatCard(
                     title: String(localized: "Language Switches"),
@@ -100,7 +98,7 @@ struct StatsSettingsView: View {
                     tooltip: String(localized: "Counts both manual shortcut corrections and smart auto-corrections (English → Korean).")
                 )
                 StatCard(
-                    title: String(localized: "Text Expansions"), // 🌟 3번 카드 안착
+                    title: String(localized: "Text Expansions"),
                     count: todayStats.textExpansions,
                     previousCount: yesterdayStats.textExpansions,
                     icon: "text.badge.plus",
@@ -118,7 +116,7 @@ struct StatsSettingsView: View {
                             .toggleStyle(.checkbox).tint(.blue)
                         Toggle(String(localized: "Typos"), isOn: $showTypos)
                             .toggleStyle(.checkbox).tint(.green)
-                        Toggle(String(localized: "Expansions"), isOn: $showExpansions) // 🌟 필터 토글 증설
+                        Toggle(String(localized: "Expansions"), isOn: $showExpansions)
                             .toggleStyle(.checkbox).tint(.purple)
                     }
                     .font(.subheadline)
@@ -156,15 +154,15 @@ struct StatsSettingsView: View {
         .onAppear {
             statsManager.updateFilteredStats(for: selectedRange)
         }
-        .onChange(of: selectedRange) { newValue in
+        .onChange(of: selectedRange) { _, newValue in
             statsManager.updateFilteredStats(for: newValue)
         }
-        .onChange(of: statsManager.filteredStatsCache.count) { _ in
+        .onChange(of: statsManager.filteredStatsCache.count) { _, _ in
             statsManager.updateFilteredStats(for: selectedRange)
         }
     }
 
-    // MARK: - 차트 렌더링 뷰
+    // MARK: - 차트 렌더링 서브 뷰
     private var chartView: some View {
         Chart(filteredStats) { stat in
             if showSwitches {
@@ -187,7 +185,7 @@ struct StatsSettingsView: View {
                 .cornerRadius(4)
             }
 
-            if showExpansions { // 🌟 3차 축 차트 렌더링 구역 바인딩 보정
+            if showExpansions {
                 BarMark(
                     x: .value(String(localized: "Date"), stat.dateString),
                     y: .value(String(localized: "Expansions"), animateChart ? stat.textExpansions : 0)
@@ -206,7 +204,7 @@ struct StatsSettingsView: View {
         .chartForegroundStyleScale([
             String(localized: "Switches"): Color.blue.gradient,
             String(localized: "Typos"): Color.green.gradient,
-            String(localized: "Expansions"): Color.purple.gradient // 🌟 보라색 테마 팔레트 결속
+            String(localized: "Expansions"): Color.purple.gradient
         ])
         .chartXScale(domain: .automatic)
         .chartYScale(domain: 0...yDomainMax)
@@ -243,47 +241,7 @@ struct StatsSettingsView: View {
         .padding(.top, 50)
         .padding(.trailing, 10)
         .chartOverlay { proxy in
-            GeometryReader { geometry in
-                ZStack(alignment: .topLeading) {
-                    Rectangle()
-                        .fill(Color.clear)
-                        .contentShape(Rectangle())
-                        .onContinuousHover { phase in
-                            switch phase {
-                            case .active(let location):
-                                let xPosition = location.x - geometry[proxy.plotAreaFrame].origin.x
-                                if let dateStr: String = proxy.value(atX: xPosition) {
-                                    self.selectedDateString = dateStr
-                                }
-                            case .ended:
-                                self.selectedDateString = nil
-                            }
-                        }
-
-                    if let selectedDateString,
-                       let stat = filteredStats.first(where: { $0.dateString == selectedDateString }),
-                       let xPosition = proxy.position(forX: selectedDateString) {
-
-                        let tooltipWidth: CGFloat = 140
-                        let plotWidth = geometry[proxy.plotAreaFrame].width
-                        let adjustedX = min(max(xPosition, tooltipWidth / 2), plotWidth - tooltipWidth / 2)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(formatAxisDate(parseDate(stat.dateString))).font(.caption.bold())
-                            if showSwitches { Text("\(String(localized: "Switches")): \(stat.languageSwitches)").font(.caption).foregroundColor(.blue) }
-                            if showTypos { Text("\(String(localized: "Typos")): \(stat.typoCorrections)").font(.caption).foregroundColor(.green) }
-                            if showExpansions { Text("\(String(localized: "Expansions")): \(stat.textExpansions)").font(.caption).foregroundColor(.purple) } // 🌟 툴팁 연동 완결
-                        }
-                        .padding(8)
-                        .frame(width: tooltipWidth)
-                        .background(.regularMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
-                        .shadow(radius: 3)
-                        .position(x: adjustedX, y: -25)
-                    }
-                }
-            }
+            chartOverlayView(proxy: proxy)
         }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -293,6 +251,63 @@ struct StatsSettingsView: View {
             }
         }
         .onDisappear { animateChart = false }
+    }
+
+    // MARK: - 차트 툴팁 호버 오버레이 (macOS 14.0+ 완벽 호환 수복)
+    @ViewBuilder
+    private func chartOverlayView(proxy: ChartProxy) -> some View {
+        // 🌟 앵커를 좌표로 풀기 위해 GeometryReader를 부활시켰습니다.
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            // proxy.plotFrame은 Anchor<CGRect>? 이므로 geometry subscript를 통해 변환
+                            guard let anchor = proxy.plotFrame else { return }
+                            let plotFrame = geometry[anchor]
+                            let xPosition = location.x - plotFrame.origin.x
+                            
+                            // 🌟 컴파일 타임아웃 방지를 위해 as: String.self를 명시적으로 주입
+                            if let dateStr = proxy.value(atX: xPosition, as: String.self) {
+                                self.selectedDateString = dateStr
+                            }
+                        case .ended:
+                            self.selectedDateString = nil
+                        }
+                    }
+
+                if let selectedDateString,
+                   let stat = filteredStats.first(where: { $0.dateString == selectedDateString }),
+                   let xPosition = proxy.position(forX: selectedDateString),
+                   let anchor = proxy.plotFrame {
+
+                    let plotFrame = geometry[anchor] // 🌟 Anchor -> CGRect 변환
+                    let tooltipWidth: CGFloat = 140
+                    let plotWidth: CGFloat = plotFrame.width
+                    let minX: CGFloat = tooltipWidth / 2.0
+                    let maxX: CGFloat = plotWidth - (tooltipWidth / 2.0)
+                    let adjustedX: CGFloat = min(max(xPosition, minX), maxX)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(formatAxisDate(parseDate(stat.dateString))).font(.caption.bold())
+                        if showSwitches { Text("\(String(localized: "Switches")): \(stat.languageSwitches)").font(.caption).foregroundColor(.blue) }
+                        if showTypos { Text("\(String(localized: "Typos")): \(stat.typoCorrections)").font(.caption).foregroundColor(.green) }
+                        if showExpansions { Text("\(String(localized: "Expansions")): \(stat.textExpansions)").font(.caption).foregroundColor(.purple) }
+                    }
+                    .padding(8)
+                    .frame(width: tooltipWidth)
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                    .shadow(radius: 3)
+                    // 🌟 툴팁이 차트 위쪽에 예쁘게 뜨도록 plotFrame.origin.y 기준으로 배치
+                    .position(x: adjustedX, y: plotFrame.origin.y - 10)
+                }
+            }
+        }
     }
 
     // MARK: - Actions

@@ -110,53 +110,53 @@ struct AdvancedSettingsView: View {
     }
     
     private var browserTabSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 0) {
-                SettingToggleRow(
-                    title: String(localized: "Remember input source per browser tab (Beta)"),
-                    isOn: $settings.isBrowserTabMemoryEnabled
-                )
-                .onChange(of: settings.isBrowserTabMemoryEnabled) { newValue in
-                    if newValue {
-                        AccessibilityManager.shared.checkAutomationPermissions(prompt: true)
-                        self.showAutomationAlert = true
-                    }
-                }
-                
-                Text(String(localized: "Requires Automation permission on first use. Supports Chrome, Edge, Brave, and Safari. Restores language based on tab ID or domain."))
-                    .font(.caption).foregroundColor(.secondary).lineSpacing(2)
-                    .padding(.horizontal, 15).padding(.bottom, 8).padding(.top, -2)
-
-                if settings.isBrowserTabMemoryEnabled {
-                    Divider().padding(.horizontal, 15)
-
-                    HStack {
-                        Text(String(localized: "Default language for new tabs"))
-                            .font(.body)
-                        Spacer()
-                        
-                        Picker("", selection: $settings.newTabDefaultLanguage) {
-                            Text(String(localized: "Keep Previous")).tag("None")
-                            Divider()
-                            ForEach(InputSourceManager.shared.availableKeyboards, id: \.id) { keyboard in
-                                Text(keyboard.name).tag(keyboard.id)
-                            }
+            GroupBox {
+                VStack(alignment: .leading, spacing: 0) {
+                    SettingToggleRow(
+                        title: String(localized: "Remember input source per browser tab (Beta)"),
+                        isOn: $settings.isBrowserTabMemoryEnabled
+                    )
+                    .onChange(of: settings.isBrowserTabMemoryEnabled) { _, newValue in
+                        if newValue {
+                            AccessibilityManager.shared.checkAutomationPermissions(prompt: true)
+                            self.showAutomationAlert = true
                         }
-                        .pickerStyle(.menu)
-                        .frame(width: 150)
                     }
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 6)
                     
-                    Text(String(localized: "Automatically switches to this language when you open a new tab or window."))
-                        .font(.caption).foregroundColor(.secondary)
-                        .padding(.horizontal, 15).padding(.bottom, 8)
+                    Text(String(localized: "Requires Automation permission on first use. Supports Chrome, Edge, Brave, and Safari. Restores language based on tab ID or domain."))
+                        .font(.caption).foregroundColor(.secondary).lineSpacing(2)
+                        .padding(.horizontal, 15).padding(.bottom, 8).padding(.top, -2)
+
+                    if settings.isBrowserTabMemoryEnabled {
+                        Divider().padding(.horizontal, 15)
+
+                        HStack {
+                            Text(String(localized: "Default language for new tabs"))
+                                .font(.body)
+                            Spacer()
+                            
+                            Picker("", selection: $settings.newTabDefaultLanguage) {
+                                Text(String(localized: "Keep Previous")).tag("None")
+                                Divider()
+                                ForEach(InputSourceManager.shared.availableKeyboards, id: \.id) { keyboard in
+                                    Text(keyboard.name).tag(keyboard.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(width: 150)
+                        }
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 6)
+                        
+                        Text(String(localized: "Automatically switches to this language when you open a new tab or window."))
+                            .font(.caption).foregroundColor(.secondary)
+                            .padding(.horizontal, 15).padding(.bottom, 8)
+                    }
                 }
+            } label: {
+                Text(String(localized: "Browser Tab Management")).font(.headline)
             }
-        } label: {
-            Text(String(localized: "Browser Tab Management")).font(.headline)
         }
-    }
     
     // 🌟 [수정] 프로필 시스템(v0.9.0)에 맞춰 텍스트와 UI 구조를 개선한 백업 섹션
     private var profileBackupRestoreSection: some View {

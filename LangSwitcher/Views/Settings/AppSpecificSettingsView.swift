@@ -112,50 +112,49 @@ struct CustomAppRow: View {
     @State private var currentIconLoadID = UUID()
 
     var body: some View {
-        HStack(spacing: 8) {
             HStack(spacing: 8) {
-                if let icon = appIcon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 20, height: 20)
-                } else {
-                    Image(systemName: "app.dashed")
-                        .resizable()
-                        .frame(width: 20, height: 20)
-                        .foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    if let icon = appIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Image(systemName: "app.dashed")
+                            .resizable()
+                            .frame(width: 20, height: 20)
+                            .foregroundColor(.secondary)
+                    }
+                    Text(customApp.appName).lineLimit(1)
                 }
-                Text(customApp.appName).lineLimit(1)
-            }
-            
-            Spacer()
-            
-            Picker("", selection: $customApp.targetLanguage) {
-                Text(String(localized: "Select Language...")).tag("")
-                ForEach(InputSourceManager.shared.availableKeyboards) { keyboard in
-                    Text(keyboard.name).tag(keyboard.id)
+                
+                Spacer()
+                
+                Picker("", selection: $customApp.targetLanguage) {
+                    Text(String(localized: "Select Language...")).tag("")
+                    ForEach(InputSourceManager.shared.availableKeyboards) { keyboard in
+                        Text(keyboard.name).tag(keyboard.id)
+                    }
                 }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 140)
+                
+                Button(action: {
+                    settings.activeProfile.payload.customApps.removeAll { $0.id == customApp.id }
+                }) {
+                    Image(systemName: "trash").foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 5)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 140)
-            
-            Button(action: {
-                settings.activeProfile.payload.customApps.removeAll { $0.id == customApp.id }
-            }) {
-                Image(systemName: "trash").foregroundColor(.red)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 2)
+            .onAppear { loadIcon() }
+            .onChange(of: customApp.bundleIdentifier) { _, _ in loadIcon() }
+            .onDisappear {
+                self.appIcon = nil
             }
-            .buttonStyle(.plain)
-            .padding(.leading, 5)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 2)
-        .onAppear { loadIcon() }
-        .onChange(of: customApp.bundleIdentifier) { _ in loadIcon() }
-        // 🌟 [핵심 추가] 설정 창 스크롤 및 탭 전환 시 NSImage 메모리를 즉시 해제합니다.
-        .onDisappear {
-            self.appIcon = nil
-        }
-    }
 
     private func loadIcon() {
         let bundleID = customApp.bundleIdentifier
